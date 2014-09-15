@@ -377,7 +377,28 @@ class Request(MutableMapping):
         submsg.set_payload(content)
         return submsg
 
-    def _handle_warnings(self, result):
+    def _post_process(self, result):
+        """Post process the result and return if a retry is not necessary."""
+        if self['action'] == 'query':
+            if 'userinfo' in result.get('query', ()):
+                if hasattr(self.site, '_userinfo'):
+                    self.site._userinfo.update(result['query']['userinfo'])
+                else:
+                    self.site._userinfo = result['query']['userinfo']
+            status = self.site._loginstatus  # save previous login status
+            if (("error" in result
+                 and result["error"]["code"].endswith("limit"))
+                or (status >= 0
+                    and self.site._userinfo['name'] != self.site._username[status])):
+                # user is no longer logged in (session expired?)
+                # reset userinfo, then make user log in again
+                del self.site._userinfo
+                self.site._loginstatus = -1
+                if status < 0:
+                    status = 0  # default to non-sysop login
+                self.site.login(status)
+                # retry the previous query
+                return False
         if 'warnings' in result:
             for mod, warning in result['warnings'].items():
                 if mod == 'info':
@@ -397,6 +418,7 @@ class Request(MutableMapping):
                     if (not callable(self._warning_handler) or
                             not self._warning_handler(mod, single_warning)):
                         pywikibot.warning(u"API warning (%s): %s" % (mod, single_warning))
+        return True
 
     def submit(self):
         """Submit a query and parse the response.
@@ -502,27 +524,8 @@ class Request(MutableMapping):
                                "Unable to process query response of type %s."
                                % type(result),
                                data=result)
-            if self['action'] == 'query':
-                if 'userinfo' in result.get('query', ()):
-                    if hasattr(self.site, '_userinfo'):
-                        self.site._userinfo.update(result['query']['userinfo'])
-                    else:
-                        self.site._userinfo = result['query']['userinfo']
-                status = self.site._loginstatus  # save previous login status
-                if (("error" in result
-                     and result["error"]["code"].endswith("limit"))
-                    or (status >= 0
-                        and self.site._userinfo['name'] != self.site._username[status])):
-                    # user is no longer logged in (session expired?)
-                    # reset userinfo, then make user log in again
-                    del self.site._userinfo
-                    self.site._loginstatus = -1
-                    if status < 0:
-                        status = 0  # default to non-sysop login
-                    self.site.login(status)
-                    # retry the previous query
-                    continue
-            self._handle_warnings(result)
+            if not self._post_process(result):
+                continue
             if "error" not in result:
                 return result
 
@@ -697,7 +700,7 @@ class CachedRequest(Request):
             self._data = super(CachedRequest, self).submit()
             self._write_cache(self._data)
         else:
-            self._handle_warnings(self._data)
+            self._post_process(self._data)
         return self._data
 
 
