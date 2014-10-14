@@ -70,6 +70,8 @@ if sys.version_info[0] == 2:
         script_deps['replicate_wiki.py'] = ['argparse']
         dependencies.append('future')  # provides collections backports
 
+    script_deps['wikibase_csv.py'] = ['unicodecsv']
+
     # tools.ip does not depend on an ipaddress module, as it falls back to
     # using regexes if not available, however the pywikibot package should use
     # the functional backport of py3 ipaddress, which is:

@@ -5626,10 +5626,14 @@ class DataSite(APISite):
         data = req.submit()
         claim.snak = data['claim']['id']
         # Update the item
-        if claim.getID() in item.claims:
-            item.claims[claim.getID()].append(claim)
-        else:
-            item.claims[claim.getID()] = [claim]
+        try:
+            if claim.getID() in item.claims:
+                item.claims[claim.getID()].append(claim)
+            else:
+                item.claims[claim.getID()] = [claim]
+        except AttributeError:
+            # claims were not defined
+            pass
         item.lastrevid = data['pageinfo']['lastrevid']
 
     @must_be(group='user')
