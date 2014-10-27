@@ -674,6 +674,7 @@ class DisambiguationRobot(Bot):
                         if edited:
                             options += ['save in this form [x]']
                         options = concat_options('Option', 72, options)
+                        # TODO: add input_choice which allows numbers
                         choice = pywikibot.input(options)
                     else:
                         choice = self.always

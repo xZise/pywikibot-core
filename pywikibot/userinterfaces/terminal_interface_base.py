@@ -46,14 +46,124 @@ colors = [
 colorTagR = re.compile('\03{(?P<name>%s)}' % '|'.join(colors))
 
 
-class ChoiceException(Exception):
+class Option(object):
+
+    def __init__(self, stop=True):
+        super(Option, self).__init__()
+        self._stop = stop
+
+    @staticmethod
+    def formatted(text, options, default):
+        formatted_options = []
+        for option in options:
+            formatted_options.append(option.format(default))
+        return '{0} ({1})'.format(text, ', '.join(formatted_options))
+
+    @property
+    def stop(self):
+        """Return whether this option stops asking."""
+        return self._stop
+
+    def test(self, value):
+        return self.test_shortcut(value) or self.test_option(value)
+
+class StandardOption(Option):
+
+    def __init__(self, option, shortcut, stop=True):
+        super(StandardOption, self).__init__(stop)
+        self.option = option
+        self.shortcut = shortcut.lower()
+
+    def format(self, default):
+        index = self.option.lower().find(self.shortcut)
+        shortcut = self.shortcut
+        if self.shortcut == default:
+            shortcut = self.shortcut.upper()
+        if index >= 0:
+            return '{0}[{1}]{2}'.format(self.option[:index], shortcut,
+                                         self.option[index + len(self.shortcut):])
+        else:
+            return '{0} [{1}]'.format(self.option, shortcut)
+
+    def test_shortcut(self, shortcut):
+        return self.shortcut.lower() == shortcut.lower()
+
+    def test_option(self, option):
+        return self.option.lower() == option.lower()
+
+    def handled(self, value):
+        if self.test(value):
+            return self
+        else:
+            return None
+
+    def result(self, value):
+        return value
+
+class NestedOption(StandardOption):
+    def __init__(self, option, shortcut, description, options):
+        super(NestedOption, self).__init__(option, shortcut, False)
+        self.description = description
+        self.options = options
+
+    def format(self, default):
+        self.output = UI.Option.formatted(self.description, self.options, default)
+        return super(NestedOption, self).format(default)
+
+    def test(self, value):
+        if self.handled(value) is not None:
+            return True
+        else:
+            return super(NestedOption, self).test(value)
+
+    def handled(self, value):
+        for option in self.options:
+            handled = option.handled(value)
+            if handled is not None:
+                return handled
+        else:
+            return super(NestedOption, self).handled(value)
+
+    def result(self, value):
+        pywikibot.output(self.output)
+
+class IntegerOption(Option):
+    def __init__(self, minimum=1, maximum=None):
+        super(IntegerOption, self).__init__()
+        self.minimum = minimum
+        self.maximum = maximum
+
+    def test_shortcut(self, shortcut):
+        try:
+            value = int(shortcut)
+        except ValueError:
+            return False
+        else:
+            return ((self.minimum is None or value >= self.minimum) and
+                    (self.maximum is None or value <= self.maximum))
+
+    def test_option(self, option):
+        return self.test_shortcut(option)
+
+    def format(self, default):
+        if self.minimum is not None or self.maximum is not None:
+            _min = '' if self.minimum is None else str(self.minimum)
+            _max = '' if self.maximum is None else str(self.maximum)
+            rng = _min + '-' + _max
+        else:
+            rng = 'any'
+        return '<number> [' + rng + ']'
+
+    def result(self, value):
+        return int(value)
+
+
+class ChoiceException(StandardOption, Exception):
 
     """A choice for input_choice which result in this exception."""
 
-    def __init__(self, option, shortcut):
-        """Constructor using the given option and shortcut in input_choice."""
-        self.option = option
-        self.shortcut = shortcut
+    def result(self, value):
+        return self
 
 
 class QuitKeyboardInterrupt(ChoiceException, KeyboardInterrupt):
@@ -287,6 +397,10 @@ class UI:
         """
         Ask the user and returns a value from the options.
 
+        Depending on the options setting return_shortcut to False may not be
+        sensible when the option supports multiple values as it'll return an
+        ambiguous index.
+
         @param question: The question, without trailing whitespace.
         @type question: basestring
         @param options: All available options. Each entry contains the full
@@ -317,57 +431,42 @@ class UI:
             raise ValueError(u'No options are given.')
         if automatic_quit:
             options += [QuitKeyboardInterrupt()]
-        if default:
-            default = default.lower()
-        valid = {}
         default_index = -1
-        formatted_options = []
         for i, option in enumerate(options):
-            if isinstance(option, ChoiceException):
-                option, shortcut = option.option, option.shortcut
-            else:
+            if not isinstance(option, Option):
                 if len(option) != 2:
-                    raise ValueError('Option #{0} does not consist of an '
-                                     'option and shortcut.'.format(i))
-                option, shortcut = option
-            if option.lower() in valid:
-                raise ValueError(
-                    u'Multiple identical options ({0}).'.format(option))
-            shortcut = shortcut.lower()
-            if shortcut in valid:
-                raise ValueError(
-                    u'Multiple identical shortcuts ({0}).'.format(shortcut))
-            valid[option.lower()] = i
-            valid[shortcut] = i
-            index = option.lower().find(shortcut)
-            if shortcut == default:
+                    raise ValueError(u'Option #{0} does not consist of an '
+                                     u'option and shortcut.'.format(i))
+                options[i] = StandardOption(*option)
+
+            if default and options[i].handled(default):
                 default_index = i
-                shortcut = shortcut.upper()
-            if index >= 0:
-                option = u'{0}[{1}]{2}'.format(option[:index], shortcut,
-                                               option[index + len(shortcut):])
-            else:
-                option = u'{0} [{1}]'.format(option, shortcut)
-            formatted_options += [option]
-        question = u'{0} ({1})'.format(question, ', '.join(formatted_options))
-        answer = None
-        while answer is None:
+            # TODO: Test for uniquity
+
+        question = Option.formatted(question, options, default)
+        handled = False
+        while not handled:
             if force:
                 self.output(question + '\n')
+                answer = None
             else:
                 answer = self.input(question)
             if default and not answer:  # nothing entered
-                answer = default_index
+                answer = default
+                index = default_index
             else:
-                answer = valid.get(answer.lower(), None)
-        if isinstance(options[answer], ChoiceException):
-            raise options[answer]
+                for index, option in enumerate(options):
+                    if option.handled(answer):
+                        answer = option.result(answer)
+                        handled = option.stop
+                        break
+
+        if isinstance(answer, ChoiceException):
+            raise answer
         elif not return_shortcut:
-            return answer
-        elif answer < 0:
-            return default
+            return index
         else:
-            return options[answer][1].lower()
+            return answer
 
     @deprecated('input_choice')
     def inputChoice(self, question, options, hotkeys, default=None):

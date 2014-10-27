@@ -907,6 +907,7 @@ class CategoryTidyRobot(pywikibot.Bot):
         for i, subcat in enumerate(subcatlist):
             # layout: we don't expect a cat to have more than 100 subcats
             pywikibot.output(u'%2d - Move down to %s' % (i, subcat.title()))
+        # TODO: → input_choice
         pywikibot.output(' j - Jump to another category\n'
                          ' s - Skip this article\n'
                          ' r - Remove this category tag\n'

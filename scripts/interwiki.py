@@ -1569,6 +1569,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                     self.whereReport(page2, indent=8)
                 while True:
                     # TODO: allow answer to repeat previous or go back after a mistake
+                    # add input_choice which allows numbers
                     answer = pywikibot.input(u"Which variant should be used? (<number>, [n]one, [g]ive up) ").lower()
                     if answer:
                         if answer == 'g':
