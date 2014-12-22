@@ -419,6 +419,66 @@ class Namespace(Iterable, ComparableMixin, UnicodeMixin):
         return None
 
 
+class _File_Repositories(object):
+
+    """
+    Mock up dictionary for **one** remote file repository.
+
+    This assumes that the local repository is called 'local' and that there is
+    one remote repository. When the repository info is requested the first time
+    with a remote repository name, it assumes that this is the repository name
+    and returns the remote repository site.
+
+    If another request is done with neither the local and remote repository
+    name, it'll throw a RuntimeError. For such a case there is
+    Family.get_file_repositories() which does support any number.
+    """
+
+    def __init__(self, remote_repo, local_name='local', remote_name=None):
+        """
+        Create a fake dictionary.
+
+        @param remote_repo: The remote repository
+        @type remote_repo: BaseSite
+        @param local_name: The name of the local repository.
+        @type local_name: str
+        @param remote_name: The name of the remote repository if available.
+        @type remote_name: str or None
+        """
+        self._local_name = local_name
+        self._remote_name = remote_name
+        self._remote_repo = remote_repo
+
+    def __getitem__(self, name):
+        """
+        Return either False if the name is the local name or the remote repo.
+
+        If the remore repo name wasn't set already, it'll be set to the given
+        name. If the name was set but different it'll throw a RuntimeError.
+
+        @param name: The repository name.
+        @type name: str
+        @return: Whether this is a remote repository and which exactly.
+        @rtype: bool or BaseSite
+        """
+        if name == self._local_name:
+            return False
+        elif not self._remote_name:
+            pywikibot.log('The remote repository name has been guessed as '
+                          '{0}'.format(name))
+            self._remote_name = name
+        if name == self._remote_name:
+            return self._remote_site
+        else:
+            # THIS is bad… previously it could've returned
+            # wrong data. But if to lazy to use the more flexible
+            # system!
+            raise RuntimeError(
+                'Only one remote repository was defined but '
+                'got repository names "{0}" and "{1}"'.format(
+                self._remote_name, name))
+
+
 class BaseSite(ComparableMixin):
 
     """Site methods that are independent of the communication interface."""
@@ -2175,6 +2235,7 @@ class APISite(BaseSite):
         return version
 
     @property
+    @deprecated
     def has_image_repository(self):
         """Return True if site has a shared image repository like Commons."""
         code, fam = self.shared_image_repository()
@@ -2192,11 +2253,19 @@ class APISite(BaseSite):
         code, fam = self.shared_data_repository(True)
         return bool(code or fam)
 
-    def image_repository(self):
-        """Return Site object for image repository e.g. commons."""
+    def _image_repository(self):
+        """
+        Return Site object for image repository e.g. commons.
+
+        AVOID USAGE: This is only there to support for backwards compatibility.
+        """
         code, fam = self.shared_image_repository()
         if bool(code or fam):
             return pywikibot.Site(code, fam, self.username())
+
+    @deprecated
+    def image_repository(self):
+        return self._image_repository()
 
     def data_repository(self):
         """Return Site object for data repository e.g. Wikidata."""
@@ -2217,6 +2286,174 @@ class APISite(BaseSite):
         """Return shorter URL path to retrieve page titled 'title'."""
         # 'title' is expected to be URL-encoded already
         return self.siteinfo["articlepath"].replace("$1", title)
+
+    _file_repositories = None
+
+    def _cache_file_repositories(self):
+        def ignore_unrecognised(mod, warning):
+            if mod == 'filerepoinfo':
+                warn_match = re.match(
+                    r"^Unrecognized values? for parameter 'friprop': (.*)",
+                    warning)
+                if warn_match:
+                    return (
+                        set(['server', 'articlepath', 'descBaseUrl']).
+                        issuperset(warn_match.group(1).split(', ')))
+
+        if self._file_repositories is None:
+            file_repositories = dict(self.family.get_file_repositories(self.code))
+            if MediaWikiVersion(self.version()) >= MediaWikiVersion('1.22'):
+                req = api.CachedRequest(site=self, action='query',
+                                        meta='filerepoinfo',
+                                        friprop=['name', 'local', 'server',
+                                                 'articlepath', 'descBaseUrl'],
+                                        expiry=pywikibot.config.API_config_expiry)
+                req._warning_handler = ignore_unrecognised
+                data = req.submit()['query']['repos']
+                for repo in data:
+                    if repo['local']:
+                        if file_repositories.get(repo['name']):
+                            pywikibot.warning(
+                                u'The file repository "{0}" in the family file '
+                                'of "{1}" is defined as non-local while the '
+                                'server returned that it is local. Defining '
+                                'it as local.'.format(repo['name'],
+                                                      self.family.name))
+                        file_repositories[repo['name']] = False
+                    else:
+                        if file_repositories.get(repo['name']):
+                            original_site = pywikibot.Site(
+                                url=file_repositories[repo['name']])
+                        else:
+                            original_site = None
+                        repo_urls = []
+                        if 'articlepath' in repo and 'server' in repo:
+                            repo_urls += [u''.join((repo['server'],
+                                                    repo['articlepath']))]
+                        if 'descBaseUrl' in repo:
+                            repo_url = repo['descBaseUrl']
+                            repo_urls += [
+                                repo_url[:repo_url.rfind('/')] + u'/$1']
+                        repo_sites = set(pywikibot.Site(url=repo_url)
+                                         for repo_url in repo_urls)
+                        if len(repo_sites) > 1:
+                            raise RuntimeError(
+                                u'The server returned multiple different sites '
+                                'for "{0}": {2}'.format(
+                                    repo['name'],
+                                    u', '.join(str(s) for s in repo_sites)))
+                        elif len(repo_sites) == 1:
+                            repo_site = next(iter(repo_sites))
+                            if original_site and repo_site != original_site:
+                                pywikibot.warning(
+                                    u'The file repository "{0}" in the family '
+                                    'file of "{1}" is defined as "{2}" while '
+                                    'the server returned "{3}". Using the '
+                                    'server\'s definition.'.format(
+                                        repo['name'], self.family.name,
+                                        original_site, repo_site))
+                            file_repositories[repo['name']] = repo_site
+
+                remote_repos = [repo['name'] for repo in data if not repo['local']]
+                if (len(remote_repos) == 1 and
+                        isinstance(file_repositories[remote_repos[0]],
+                                   basestring)):
+                    # one remote repo which hasn't been defined
+                    pywikibot.warning('Found only one remote repository and '
+                                      'no data returned by the API/Family.'
+                                      'Falling back to using '
+                                      'shared_image_repository.')
+                    # This call might issue deprecation warnings, but the
+                    # family class is then deprecated anyway
+                    repo_site = self.site._image_repository()
+                    if repo_site:
+                        file_repositories[remote_repos[0]] = repo_site
+
+                # All undefined file repository information for the non-local
+                # repositories
+                undefined = set(repo['name'] for repo in data
+                                if repo['name'] not in file_repositories)
+                if undefined:
+                    raise ValueError(u'The file repositories defined in the '
+                                     'family file of "{1}" do not contain '
+                                     'the URLs of "{2}".'.format(
+                                     self.family.name,
+                                     u'", "'.join(sorted(undefined))))
+                old_entries = set(file_repositories.keys()).difference(
+                    repo['name'] for repo in data)
+                # There are repositories in the family file but not in the
+                # filerepoinfo anymore
+                if old_entries:
+                    pywikibot.warning(u'The family file of "{1}" contains '
+                                      'file repository information for "{2}"'
+                                      'which was not returned by the server.'.
+                                      format(self.family.name,
+                                             u'", "'.join(sorted(old_entries))))
+                    for old_entry in old_entries:
+                        del file_repositories[old_entry]
+            if not file_repositories:
+                # no repositories are predefined, try using image_repository()
+                repo = self.site._image_repository()
+                repo_names = self.site.image_repository_names()
+                if repo_names is None:
+                    repo_names = [None, None] if repo else [None]
+                else:
+                    repo_names = list(repo_names[:2 if repo else 1])
+                if not repo_names[0]:
+                    pywikibot.log('The local repository name has been guessed '
+                                  'as "local".')
+                    repo_names[0] = 'local'
+                if repo_names[1] is None and repo:
+                    self._file_repositories = _File_Repositories(
+                        repo, local_name=repo_names[0])
+                else:
+                    self._file_repositories = {repo_names[0]: False}
+                    if repo:
+                        self._file_repositories[repo_names[1]] = repo
+            else:
+                self._file_repositories = dict(
+                    (name, pywikibot.Site(url=repo))
+                    if isinstance(repo, basestring) else (name, repo)
+                    for name, repo in file_repositories.items())
+                # Verify that the values are not conflicting
+                repo = self.site._image_repository()
+                if repo:
+                    repo_names = self.site.image_repository_names()
+                    if len(repo_names or []) == 2:
+                        searched_name = repo_names[1]
+                    else:
+                        searched_name = None
+                    for name, file_repo in self._file_repositories:
+                        if file_repo == repo:
+                            if searched_name and searched_name != name:
+                                pywikibot.warning(
+                                    'The shared image repository {0} for the '
+                                    'site "{1}" uses the name "{2}" but it is '
+                                    'actually "{3}".'.format(
+                                        repo, self, searched_name, name))
+                            break
+                    else:
+                        pywikibot.warning(
+                            'The shared image repository to {0} for the site '
+                            '"{1}" does not appear on the file repository '
+                            'list.'.format(repo, self))
+
+    def is_remote_file_repository(self, repo_name):
+        """Return True if the file repository is not local."""
+        self._cache_file_repositories()
+        return self._file_repositories[repo_name] is not False
+
+    def get_remote_file_repository(self, repo_name):
+        """Return the Site for the non-local file repository name."""
+        if not self.is_remote_file_repository(repo_name):
+            raise ValueError(u'File repository "{0}" is a local repository'.
+                             format(repo_name))
+        return self._file_repositories[repo_name]
+
+    def get_file_repositories(self):
+        """Return a copy of the file repositories dictionary."""
+        self._cache_file_repositories()
+        return dict(self._file_repositories)
 
     @property
     def namespaces(self):
@@ -2324,6 +2561,7 @@ class APISite(BaseSite):
                     u"loadimageinfo: Query on %s returned data on '%s'"
                     % (page, pageitem['title']))
             api.update_page(page, pageitem, query.props)
+            page._imagerepository = pageitem['imagerepository']
             if "imageinfo" not in pageitem:
                 if "missing" in pageitem:
                     raise NoPage(page)
