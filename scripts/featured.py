@@ -233,7 +233,6 @@ class FeaturedBot(pywikibot.Bot):
         })
 
         super(FeaturedBot, self).__init__(**kwargs)
-        self.editcounter = 0
         self.cache = dict()
         self.filename = None
         self.site = pywikibot.Site()
@@ -332,11 +331,11 @@ class FeaturedBot(pywikibot.Bot):
     def run(self):
         for task in self.tasks:
             self.run_task(task)
-        pywikibot.output(u'%d pages written.' % self.editcounter)
+        pywikibot.output(u'%d pages written.' % self._save_counter)
 
     def run_task(self, task):
         if not self.hastemplate(task):
-            pywikibot.output(u'\nNOTE: %s arcticles are not implemented at %s.'
+            pywikibot.output(u'\nNOTE: %s articles are not implemented at %s.'
                              % (task, self.site))
             return
 
@@ -592,9 +591,10 @@ class FeaturedBot(pywikibot.Bot):
                 pywikibot.output(u"(already removed)")
         if changed:
             comment = i18n.twtranslate(tosite, 'featured-' + task,
-                                       {'page': unicode(source)})
+                                       {'page': source})
             try:
                 dest.put(text, comment)
+                self._save_counter += 1
             except pywikibot.LockedPage:
                 pywikibot.output(u'Page %s is locked!'
                                  % dest.title())

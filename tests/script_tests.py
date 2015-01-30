@@ -19,17 +19,26 @@ from tests.utils import allowed_failure, execute_pwb
 
 scripts_path = os.path.join(_root_dir, 'scripts')
 
+# These dependencies are not always the package name which is in setup.py.
+# e.g. 'PIL.ImageTk' is a object provided by several different pypi packages,
+# and setup.py requests that 'Pillow' is installed to provide 'PIL.ImageTk'.
+# Here, it doesnt matter which pypi package was requested and installed.
+# Here, the name given to the module which will be imported is required.
 script_deps = {
     'script_wui': ['crontab', 'lua'],
     # Note: package 'lunatic-python' provides module 'lua'
 
     'flickrripper': ['flickrapi'],
-
+    'match_images': ['PIL.ImageTk'],
     'states_redirect': ['pycountry'],
 }
+
 if sys.version_info < (2, 7):
     script_deps['replicate_wiki'] = ['argparse']
     script_deps['editarticle'] = ['argparse']
+
+if sys.version_info < (3, 0):
+    script_deps['data_ingestion'] = ['unicodecsv']
 
 
 def check_script_deps(script_name):
@@ -125,6 +134,7 @@ no_args_expected_results = {
     'imageuncat': 'You have to specify the generator ',
     'interwiki': 'does not exist. Skipping.',  # 'Test page' does not exist
     'login': 'Logged in on ',
+    'match_images': 'Require two images to work on.',
     'pagefromfile': 'Please enter the file name',
     'replace': 'Press Enter to use this automatic message',
     'script_wui': 'Pre-loading all relevant page contents',
@@ -297,7 +307,6 @@ class TestScriptMeta(MetaTestCaseClass):
                 test_name = 'test_' + script_name + '_help'
             dct[test_name] = test_execution(script_name, ['-help'])
             if script_name in ['version',
-                               'data_ingestion',  # bug 68611
                                'script_wui',      # Failing on travis-ci
                                ] + failed_dep_script_list:
                 dct[test_name] = unittest.expectedFailure(dct[test_name])
@@ -320,7 +329,6 @@ class TestScriptMeta(MetaTestCaseClass):
                                             no_args_expected_results)
             if script_name in ['catall',          # stdout user interaction
                                'checkimages',     # bug 68613
-                               'data_ingestion',  # bug 68611
                                'flickrripper',    # Requires a flickr api key
                                'lonelypages',     # uses exit code 1
                                'script_wui',      # Error on any user except DrTrigonBot

@@ -338,7 +338,7 @@ that you have to break it off, use "-continue" next time.
 # (C) Daniel Herding, 2004
 # (C) Yuri Astrakhan, 2005-2006
 # (C) xqt, 2009-2014
-# (C) Pywikibot team, 2007-2014
+# (C) Pywikibot team, 2007-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -353,7 +353,6 @@ import datetime
 import codecs
 import pickle
 import socket
-import webbrowser
 import pywikibot
 from pywikibot import config, i18n, pagegenerators, textlib, interwiki_graph, titletranslate
 
@@ -1843,7 +1842,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
             raise SaveError(u'Page doesn\'t exist')
         if page.isEmpty() and not page.isCategory():
             pywikibot.output(u"Not editing %s: page is empty" % page)
-            raise SaveError
+            raise SaveError(u'Page is empty.')
 
         # clone original newPages dictionary, so that we can modify it to the
         # local page's needs
@@ -1987,11 +1986,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                                                  ('Always', 'a')],
                                                 automatic_quit=False)
                 if answer == 'b':
-                    webbrowser.open("http://%s%s" % (
-                        page.site.hostname(),
-                        page.site.nice_get_address(page.title(asUrl=True))
-                    ))
-                    pywikibot.input(u"Press Enter when finished in browser.")
+                    pywikibot.bot.open_webbrowser(page)
                     return True
                 elif answer == 'a':
                     # don't ask for the rest of this subject
@@ -2592,7 +2587,10 @@ def main(*args):
                 pywikibot.output(u"Dump file is empty?! Starting at the beginning.")
                 nextPage = "!"
                 namespace = 0
-            hintlessPageGen = pagegenerators.CombinedPageGenerator([hintlessPageGen, pagegenerators.AllpagesPageGenerator(nextPage, namespace, includeredirects=False)])
+            gen2 = pagegenerators.AllpagesPageGenerator(
+                nextPage, namespace, includeredirects=False)
+            hintlessPageGen = pagegenerators.CombinedPageGenerator(
+                [hintlessPageGen, gen2])
 
     site.login()
     bot = InterwikiBot()
@@ -2601,7 +2599,8 @@ def main(*args):
         hintlessPageGen = genFactory.getCombinedGenerator()
     if hintlessPageGen:
         if len(namespaces) > 0:
-            hintlessPageGen = pagegenerators.NamespaceFilterPageGenerator(hintlessPageGen, namespaces)
+            hintlessPageGen = pagegenerators.NamespaceFilterPageGenerator(
+                hintlessPageGen, namespaces, site)
         # we'll use iter() to create make a next() function available.
         bot.setPageGenerator(iter(hintlessPageGen), number=number, until=until)
     elif warnfile:

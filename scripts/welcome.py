@@ -190,6 +190,9 @@ import pywikibot
 from pywikibot import i18n
 from pywikibot import config
 
+if sys.version_info[0] > 2:
+    unicode = str
+
 locale.setlocale(locale.LC_ALL, '')
 
 # Script uses the method i18n.translate() to find the right
@@ -388,9 +391,15 @@ final_new_text_additions = {
 #
 #
 logpage_header = {
-    '_default': u'{|border="2" cellpadding="4" cellspacing="0" style="margin: 0.5em 0.5em 0.5em 1em; padding: 0.5em; background: #bfcda5; border: 1px #b6fd2c solid; border-collapse: collapse; font-size: 95%;"',
+    '_default': u'{|border="2" cellpadding="4" cellspacing="0" style="margin: '
+                u'0.5em 0.5em 0.5em 1em; padding: 0.5em; background: #bfcda5; '
+                u'border: 1px #b6fd2c solid; border-collapse: collapse; '
+                u'font-size: 95%;"',
     'no': u'[[Kategori:Velkomstlogg|{{PAGENAME}}]]\n{| class="wikitable"',
-    'it': u'[[Categoria:Benvenuto log|{{subst:PAGENAME}}]]\n{|border="2" cellpadding="4" cellspacing="0" style="margin: 0.5em 0.5em 0.5em 1em; padding: 0.5em; background: #bfcda5; border: 1px #b6fd2c solid; border-collapse: collapse; font-size: 95%;"'
+    'it': u'[[Categoria:Benvenuto log|{{subst:PAGENAME}}]]\n{|border="2" '
+          u'cellpadding="4" cellspacing="0" style="margin: 0.5em 0.5em 0.5em '
+          u'1em; padding: 0.5em; background: #bfcda5; border: 1px #b6fd2c '
+          u'solid; border-collapse: collapse; font-size: 95%;"'
 }
 
 # Ok, that's all. What is below, is the rest of code, now the code is fixed
@@ -835,8 +844,8 @@ class WelcomeBot(object):
                                           time.gmtime()),
                             locale.getlocale()[1])
                     else:
-                        strfstr = unicode(time.strftime(
-                            u"%d %b %Y %H:%M:%S (UTC)", time.gmtime()))
+                        strfstr = time.strftime(
+                            u"%d %b %Y %H:%M:%S (UTC)", time.gmtime())
                     pywikibot.output(u'Sleeping %d seconds before rerun. %s'
                                      % (globalvar.timeRecur, strfstr))
                     time.sleep(globalvar.timeRecur)
@@ -916,7 +925,10 @@ def main(*args):
             if len(str(globalvar.offset)) != 14:
                 # upon request, we might want to check for software version here
                 raise ValueError(
-                    "Mediawiki has changed, -offset:# is not supported anymore, but -offset:TIMESTAMP is, assuming TIMESTAMP is yyyymmddhhmmss. -timeoffset is now also supported. Please read this script source header for documentation.")
+                    "Mediawiki has changed, -offset:# is not supported "
+                    "anymore, but -offset:TIMESTAMP is, assuming TIMESTAMP "
+                    "is yyyymmddhhmmss. -timeoffset is now also supported. "
+                    "Please read this script source header for documentation.")
         elif arg.startswith('-file:'):
             globalvar.randomSign = True
             if len(arg) == 6:

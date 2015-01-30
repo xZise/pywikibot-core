@@ -972,14 +972,22 @@ u"Page does not exist, using the first link in page %s."
                     {'from': disambPage.title()}
                 )
             else:
-                self.comment = i18n.twtranslate(self.mysite, 'solve_disambiguation-redirect-resolved', {'from': disambPage.title(), 'to': targets})
+                self.comment = i18n.twtranslate(
+                    self.mysite, 'solve_disambiguation-redirect-resolved',
+                    {'from': disambPage.title(), 'to': targets})
         else:
             if unlink and not new_targets:
-                self.comment = i18n.twtranslate(self.mysite, 'solve_disambiguation-links-removed', {'from': disambPage.title()})
+                self.comment = i18n.twtranslate(
+                    self.mysite, 'solve_disambiguation-links-removed',
+                    {'from': disambPage.title()})
             elif dn and not new_targets:
-                self.comment = i18n.twtranslate(self.mysite, 'solve_disambiguation-adding-dn-template', {'from': disambPage.title()})
+                self.comment = i18n.twtranslate(
+                    self.mysite, 'solve_disambiguation-adding-dn-template',
+                    {'from': disambPage.title()})
             else:
-                self.comment = i18n.twtranslate(self.mysite, 'solve_disambiguation-links-resolved', {'from': disambPage.title(), 'to': targets})
+                self.comment = i18n.twtranslate(
+                    self.mysite, 'solve_disambiguation-links-resolved',
+                    {'from': disambPage.title(), 'to': targets})
 
     def run(self):
         if self.main_only:
@@ -1004,7 +1012,7 @@ u"Page does not exist, using the first link in page %s."
             self.makeAlternativesUnique()
             # sort possible choices
             if config.sort_ignore_case:
-                self.alternatives.sort(lambda x, y: cmp(x.lower(), y.lower()))
+                self.alternatives.sort(key=lambda x: x.lower())
             else:
                 self.alternatives.sort()
             self.listAlternatives()
@@ -1090,15 +1098,9 @@ def main(*args):
             minimum = int(arg[5:])
         elif arg.startswith('-start'):
             try:
-                if len(arg) <= len('-start:'):
-                    generator = pagegenerators.CategorizedPageGenerator(
-                        pywikibot.Site().disambcategory())
-                else:
-                    generator = pagegenerators.CategorizedPageGenerator(
-                        pywikibot.Site().disambcategory(),
-                        start=arg[7:])
-                generator = pagegenerators.NamespaceFilterPageGenerator(
-                    generator, [0])
+                generator = pagegenerators.CategorizedPageGenerator(
+                    pywikibot.Site().disambcategory(),
+                    start=arg[7:], namespaces=[0])
             except pywikibot.NoPage:
                 pywikibot.output("Disambiguation category for your wiki is not known.")
                 raise

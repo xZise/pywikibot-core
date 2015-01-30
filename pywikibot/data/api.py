@@ -187,22 +187,29 @@ class ParamInfo(Container):
             self.paraminfo_keys = frozenset(['modules'])
 
     def _init(self):
+        _mw_ver = MediaWikiVersion(self.site.version())
         # The paraminfo api deprecated the old request syntax of
         # querymodules='info'; to avoid warnings sites with 1.25wmf4+
         # must only use 'modules' parameter.
         if self.modules_only_mode is None:
-            self.modules_only_mode = MediaWikiVersion(self.site.version()) >= MediaWikiVersion('1.25wmf4')
+            self.modules_only_mode = _mw_ver >= MediaWikiVersion('1.25wmf4')
             if self.modules_only_mode:
                 self.paraminfo_keys = frozenset(['modules'])
-            # Assume that by v1.26, it will be desirable to prefetch 'query'
-            if MediaWikiVersion(self.site.version()) > MediaWikiVersion('1.26'):
-                self.preloaded_modules |= set(['query'])
+
+        # v1.18 and earlier paraminfo doesnt include modules; must use 'query'
+        # Assume that by v1.26, it will be desirable to prefetch 'query'
+        if _mw_ver > MediaWikiVersion('1.26') or _mw_ver < MediaWikiVersion('1.19'):
+            self.preloaded_modules |= set(['query'])
 
         self.fetch(self.preloaded_modules, _init=True)
+
+        # paraminfo 'mainmodule' was added 1.15
+        assert('main' in self._paraminfo)
         main_modules_param = self.parameter('main', 'action')
 
         assert(main_modules_param)
         assert('type' in main_modules_param)
+        assert(isinstance(main_modules_param['type'], list))
         self._action_modules = frozenset(main_modules_param['type'])
 
         # While deprecated with warning in 1.25, paraminfo param 'querymodules'
@@ -214,26 +221,35 @@ class ParamInfo(Container):
         assert('limit' in query_modules_param)
         self._limit = query_modules_param['limit']
 
-        if query_modules_param:
-            assert('type' in query_modules_param)
-            self._query_modules = frozenset(query_modules_param['type'])
-        else:
+        if query_modules_param and 'type' in query_modules_param:
+            # 1.19+ 'type' is the list of modules; on 1.18, it is 'string'
+            if isinstance(query_modules_param['type'], list):
+                self._query_modules = frozenset(query_modules_param['type'])
+
+        if not self._query_modules:
             if 'query' not in self._paraminfo:
                 self.fetch(set(['query']), _init=True)
 
+            meta_param = self.parameter('query', 'meta')
             prop_param = self.parameter('query', 'prop')
             list_param = self.parameter('query', 'list')
             generator_param = self.parameter('query', 'generator')
 
+            assert(meta_param)
             assert(prop_param)
             assert(list_param)
             assert(generator_param)
+            assert('type' in meta_param)
             assert('type' in prop_param)
             assert('type' in list_param)
             assert('type' in generator_param)
+            assert(isinstance(meta_param['type'], list))
+            assert(isinstance(prop_param['type'], list))
+            assert(isinstance(list_param['type'], list))
+            assert(isinstance(generator_param['type'], list))
 
             self._query_modules = frozenset(
-                prop_param['type'] + list_param['type'] +
+                meta_param['type'] + prop_param['type'] + list_param['type'] +
                 generator_param['type']
             )
 
@@ -343,7 +359,8 @@ class ParamInfo(Container):
                       for paraminfo_key, modules_data
                       in data['paraminfo'].items()
                       if modules_data and paraminfo_key in cls.paraminfo_keys]
-                     for mod_data in modules_data])
+                     for mod_data in modules_data
+                     if 'missing' not in mod_data])
 
     def __getitem__(self, key):
         """Return a paraminfo property, caching it."""
@@ -377,7 +394,14 @@ class ParamInfo(Container):
         # also params which are common to many modules, such as those provided
         # by the ApiPageSet php class: titles, pageids, redirects, etc.
         self.fetch(set([module]))
-        param_data = [param for param in self._paraminfo[module]['parameters']
+        if module not in self._paraminfo:
+            raise ValueError("paraminfo for '%s' not loaded" % module)
+        if 'parameters' not in self._paraminfo[module]:
+            pywikibot.warning("module '%s' has no parameters" % module)
+            return
+
+        params = self._paraminfo[module]['parameters']
+        param_data = [param for param in params
                       if param['name'] == param_name]
         return param_data[0] if len(param_data) else None
 
@@ -439,6 +463,194 @@ class ParamInfo(Container):
                 [mod for mod in self.query_modules
                  if self.parameter(mod, 'limit')])
         return self._with_limits
+
+
+class OptionSet(MutableMapping):
+
+    """
+    A class to store a set of options which can be either enabled or not.
+
+    If it is instantiated with the associated site, module and parameter it
+    will only allow valid names as options. If instantiated 'lazy loaded' it
+    won't checks  if the names are valid until the site has been set (which
+    isn't required, but recommended). The site can only be set once if it's not
+    None and after setting it, any site (even None) will fail.
+    """
+
+    def __init__(self, site=None, module=None, param=None, dict=None):
+        """
+        Constructor.
+
+        If a site is given, the module and param must be given too.
+
+        @param site: The associated site
+        @type site: APISite
+        @param module: The module name which is used by paraminfo. (Ignored
+            when site is None)
+        @type module: string
+        @param param: The parameter name inside the module. That parameter must
+            have a 'type' entry. (Ignored when site is None)
+        @type param: string
+        @param dict: The initializing dict which is used for L{from_dict}.
+        @type dict: dict
+        """
+        self._site_set = False
+        self._enabled = set()
+        self._disabled = set()
+        self._set_site(site, module, param)
+        if dict:
+            self.from_dict(dict)
+
+    def _set_site(self, site, module, param, clear_invalid=False):
+        """
+        Set the site and valid names.
+
+        As soon as the site has been not None, any subsequent calls will fail,
+        unless there had been invalid names and a KeyError was thrown.
+
+        @param site: The associated site
+        @type site: APISite
+        @param module: The module name which is used by paraminfo.
+        @type module: string
+        @param param: The parameter name inside the module. That parameter must
+            have a 'type' entry.
+        @type param: string
+        @param clear_invalid: Instead of throwing a KeyError, invalid names are
+            silently removed from the options (disabled by default).
+        @type clear_invalid: bool
+        """
+        if self._site_set:
+            raise TypeError('The site can not be set multiple times.')
+        # If the entries written to this are valid, it will never be
+        # overwritten
+        self._valid_enable = set()
+        self._valid_disable = set()
+        if site is None:
+            return
+        for type in site._paraminfo.parameter(module, param)['type']:
+            if type[0] == '!':
+                self._valid_disable.add(type[1:])
+            else:
+                self._valid_enable.add(type)
+        if clear_invalid:
+            self._enabled &= self._valid_enable
+            self._disabled &= self._valid_disable
+        else:
+            invalid_names = ((self._enabled - self._valid_enable) |
+                             (self._disabled - self._valid_disable))
+            if invalid_names:
+                raise KeyError(u'OptionSet already contains invalid name(s) '
+                               u'"{0}"'.format('", "'.join(invalid_names)))
+        self._site_set = True
+
+    def from_dict(self, dict):
+        """
+        Load options from the dict.
+
+        The options are not cleared before. If changes have been made
+        previously, but only the dict values should be applied it needs to be
+        cleared first.
+
+        @param dict: A dictionary containing for each entry either the value
+            False, True or None. The names must be valid depending on whether
+            they enable or disable the option. All names with the value None
+            can be in either of the list.
+        @type dict: dict (keys are strings, values are bool/None)
+        """
+        enabled = set()
+        disabled = set()
+        removed = set()
+        for name, value in dict.items():
+            if value is True:
+                enabled.add(name)
+            elif value is False:
+                disabled.add(name)
+            elif value is None:
+                removed.add(name)
+            else:
+                raise ValueError(u'Dict contains invalid value "{0}"'.format(
+                    value))
+        invalid_names = (
+            (enabled - self._valid_enable) | (disabled - self._valid_disable) |
+            (removed - self._valid_enable - self._valid_disable)
+        )
+        if invalid_names and self._site_set:
+            raise ValueError(u'Dict contains invalid name(s) "{0}"'.format(
+                '", "'.join(invalid_names)))
+        self._enabled = enabled | (self._enabled - disabled - removed)
+        self._disabled = disabled | (self._disabled - enabled - removed)
+
+    def clear(self):
+        """Clear all enabled and disabled options."""
+        self._enabled.clear()
+        self._disabled.clear()
+
+    def __setitem__(self, name, value):
+        """Set option to enabled, disabled or neither."""
+        if value is True:
+            if self._site_set and name not in self._valid_enable:
+                raise KeyError(u'Invalid name "{0}"'.format(name))
+            self._enabled.add(name)
+            self._disabled.discard(name)
+        elif value is False:
+            if self._site_set and name not in self._valid_disable:
+                raise KeyError(u'Invalid name "{0}"'.format(name))
+            self._disabled.add(name)
+            self._enabled.discard(name)
+        elif value is None:
+            if self._site_set and (name not in self._valid_enable or
+                                   name not in self._valid_disable):
+                raise KeyError(u'Invalid name "{0}"'.format(name))
+            self._enabled.discard(name)
+            self._disabled.discard(name)
+        else:
+            raise ValueError(u'Invalid value "{0}"'.format(value))
+
+    def __getitem__(self, name):
+        """
+        Return whether the option is enabled.
+
+        @return: If the name has been set it returns whether it is enabled.
+            Otherwise it returns None. If the site has been set it raises a
+            KeyError if the name is invalid. Otherwise it might return a value
+            even though the name might be invalid.
+        @rtype: bool/None
+        """
+        if name in self._enabled:
+            return True
+        elif name in self._disabled:
+            return False
+        elif (self._site_set or name in self._valid_enable or
+                name in self._valid_disable):
+            return None
+        else:
+            raise KeyError(u'Invalid name "{0}"'.format(name))
+
+    def __delitem__(self, name):
+        """Remove the item by setting it to None."""
+        self[name] = None
+
+    def __contains__(self, name):
+        """Return True if option has been set."""
+        return name in self._enabled or name in self._disabled
+
+    def __iter__(self):
+        """Iterate over each enabled and disabled option."""
+        for enabled in self._enabled:
+            yield enabled
+        for disabled in self._disabled:
+            yield disabled
+
+    def api_iter(self):
+        """Iterate over each option as they appear in the URL."""
+        for enabled in self._enabled:
+            yield enabled
+        for disabled in self._disabled:
+            yield '!{0}'.format(disabled)
+
+    def __len__(self):
+        """Return the number of enabled and disabled options."""
+        return len(self._enabled) + len(self._disabled)
 
 
 class TimeoutError(Error):
@@ -641,14 +853,16 @@ class Request(MutableMapping):
         if isinstance(value, unicode):
             value = value.split("|")
 
-        try:
-            iter(value)
-            values = value
-        except TypeError:
-            # convert any non-iterable value into a single-element list
-            values = [value]
-
-        self._params[key] = [self._format_value(item) for item in values]
+        if hasattr(value, 'api_iter'):
+            self._params[key] = value
+        else:
+            try:
+                iter(value)
+            except TypeError:
+                # convert any non-iterable value into a single-element list
+                self._params[key] = [value]
+            else:
+                self._params[key] = list(value)
 
     def __delitem__(self, key):
         del self._params[key]
@@ -758,8 +972,19 @@ class Request(MutableMapping):
         @rtype: dict with values of either str or bytes
         """
         params = {}
-        for key, value in self._params.items():
-            value = u"|".join(value)
+        for key, values in self._params.items():
+            try:
+                iterator = values.api_iter()
+            except AttributeError:
+                if len(values) == 1:
+                    value = values[0]
+                    if value is True:
+                        values = ['']
+                    elif value is False:
+                        # False booleans are not in the http URI
+                        continue
+                iterator = iter(values)
+            value = u'|'.join(self._format_value(value) for value in iterator)
             # If the value is encodable as ascii, do not encode it.
             # This means that any value which can be encoded as ascii
             # is presumed to be ascii, and servers using a site encoding
@@ -1239,6 +1464,117 @@ class CachedRequest(Request):
         return self._data
 
 
+class APIGenerator(object):
+
+    """Iterator that handle API responses containing lists.
+
+    The iterator will iterate each item in the query response and use the
+    continue request parameter to retrieve the next portion of items
+    automatically. If the limit attribute is set, the iterator will stop
+    after iterating that many values.
+    """
+
+    def __init__(self, action, continue_name='continue', limit_name='limit',
+                 data_name='data', **kwargs):
+        """
+        Construct an APIGenerator object.
+
+        kwargs are used to create a Request object; see that object's
+        documentation for values.
+
+        @param action: API action name.
+        @type action: str
+        @param continue_name: Name of the continue API parameter.
+        @type continue_name: str
+        @param limit_name: Name of the limit API parameter.
+        @type limit_name: str
+        @param data_name: Name of the data in API response.
+        @type data_name: str
+        """
+        kwargs['action'] = action
+        try:
+            self.site = kwargs['site']
+        except KeyError:
+            self.site = pywikibot.Site()
+            kwargs['site'] = self.site
+
+        self.continue_name = continue_name
+        self.limit_name = limit_name
+        self.data_name = data_name
+
+        self.query_increment = 50
+        self.limit = None
+        self.starting_offset = kwargs.pop(self.continue_name, 0)
+        self.request = Request(**kwargs)
+        self.request[self.limit_name] = self.query_increment
+
+    def set_query_increment(self, value):
+        """
+        Set the maximum number of items to be retrieved per API query.
+
+        If not called, the default is 50.
+
+        @param value: The value of maximum number of items to be retrieved
+            per API request to set.
+        @type value: int
+        """
+        self.query_increment = int(value)
+        self.request[self.limit_name] = self.query_increment
+        pywikibot.debug(u"%s: Set query_increment to %i."
+                        % (self.__class__.__name__, self.query_increment),
+                        _logger)
+
+    def set_maximum_items(self, value):
+        """
+        Set the maximum number of items to be retrieved from the wiki.
+
+        If not called, most queries will continue as long as there is
+        more data to be retrieved from the API.
+
+        @param value: The value of maximum number of items to be retrieved
+            in total to set.
+        @type value: int
+        """
+        self.limit = int(value)
+        if self.limit < self.query_increment:
+            self.request[self.limit_name] = self.limit
+            pywikibot.debug(u"%s: Set request item limit to %i"
+                            % (self.__class__.__name__, self.limit), _logger)
+        pywikibot.debug(u"%s: Set limit (maximum_items) to %i."
+                        % (self.__class__.__name__, self.limit), _logger)
+
+    def __iter__(self):
+        """Submit request and iterate the response.
+
+        Continues response as needed until limit (if defined) is reached.
+        """
+        offset = self.starting_offset
+        n = 0
+        while True:
+            self.request[self.continue_name] = offset
+            pywikibot.debug(u"%s: Request: %s" % (self.__class__.__name__,
+                                                  self.request), _logger)
+            data = self.request.submit()
+
+            n_items = len(data[self.data_name])
+            pywikibot.debug(u"%s: Retrieved %d items" % (
+                self.__class__.__name__, n_items), _logger)
+            if n_items > 0:
+                for item in data[self.data_name]:
+                    yield item
+                    n += 1
+                    if self.limit is not None and n >= self.limit:
+                        pywikibot.debug(u"%s: Stopped iterating due to "
+                                        u"exceeding item limit." %
+                                        self.__class__.__name__, _logger)
+                        return
+                offset += n_items
+            else:
+                pywikibot.debug(u"%s: Stopped iterating due to empty list in "
+                                u"response." % self.__class__.__name__, _logger)
+                break
+
+
 class QueryGenerator(object):
 
     """Base class for iterators that handle responses to API action=query.
@@ -1283,7 +1619,7 @@ class QueryGenerator(object):
             raise Error("%s: No query module name found in arguments."
                         % self.__class__.__name__)
 
-        kwargs["indexpageids"] = ""  # always ask for list of pageids
+        kwargs['indexpageids'] = True  # always ask for list of pageids
         if MediaWikiVersion(self.site.version()) < MediaWikiVersion('1.21'):
             self.continue_name = 'query-continue'
             self.continue_update = self._query_continue
@@ -1291,7 +1627,7 @@ class QueryGenerator(object):
             self.continue_name = 'continue'
             self.continue_update = self._continue
             # Explicitly enable the simplified continuation
-            kwargs['continue'] = ''
+            kwargs['continue'] = True
         self.request = Request(**kwargs)
 
         # This forces all paraminfo for all query modules to be bulk loaded.
@@ -1401,8 +1737,15 @@ class QueryGenerator(object):
     def set_namespace(self, namespaces):
         """Set a namespace filter on this query.
 
-        @param namespaces: Either an int or a list of ints
-
+        @param namespaces: namespace identifiers to limit query results
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers. An empty iterator clears any
+            namespace restriction.
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool, or more than one namespace
+            if the API module does not support multiple namespaces
         """
         assert(self.limited_module)  # some modules do not have a prefix
         param = self.site._paraminfo.parameter(self.limited_module, 'namespace')
@@ -1414,17 +1757,19 @@ class QueryGenerator(object):
         if isinstance(namespaces, basestring):
             namespaces = namespaces.split('|')
 
-        try:
-            iter(namespaces)
-        except TypeError:
-            namespaces = [namespaces]
+        # Use Namespace id (int) here; Request will cast int to str
+        namespaces = [ns.id for ns in
+                      pywikibot.site.Namespace.resolve(namespaces,
+                                                       self.site.namespaces)]
 
-        namespaces = [str(namespace) for namespace in namespaces]
         if 'multi' not in param and len(namespaces) != 1:
-            raise pywikibot.Error(u'{0} module does not support multiple '
-                                  'namespaces.'.format(self.limited_module))
+            raise TypeError(u'{0} module does not support multiple namespaces'
+                            .format(self.limited_module))
 
-        self.request[self.prefix + "namespace"] = namespaces
+        if namespaces:
+            self.request[self.prefix + 'namespace'] = namespaces
+        elif self.prefix + 'namespace' in self.request:
+            del self.request[self.prefix + 'namespace']
 
     def _query_continue(self):
         if all(key not in self.data[self.continue_name]

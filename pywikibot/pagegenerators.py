@@ -29,6 +29,7 @@ import sys
 import time
 
 import pywikibot
+
 from pywikibot import date, config, i18n
 from pywikibot.tools import (
     deprecated,
@@ -38,6 +39,7 @@ from pywikibot.tools import (
 )
 from pywikibot.comms import http
 import pywikibot.data.wikidataquery as wdquery
+from pywikibot.site import Namespace
 
 if sys.version_info[0] > 2:
     basestring = (str, )
@@ -106,11 +108,16 @@ parameterHelp = u"""\
 
 -namespaces       Filter the page generator to only yield pages in the
 -namespace        specified namespaces. Separate multiple namespace
--ns               numbers with commas. Example "-ns:0,2,4"
+-ns               numbers or names with commas.
+                  Examples:
+                  -ns:0,2,4
+                  -ns:Help,MediaWiki
                   If used with -newpages, -namepace/ns must be provided
                   before -newpages.
                   If used with -recentchanges, efficiency is improved if
                   -namepace/ns is provided before -recentchanges.
+                  If used with -titleregex, -namepace/ns must be provided
+                  before -titleregex and shall contain only one value.
 
 -interwiki        Work on the given page and all equivalent pages in other
                   languages. This can, for example, be used to fight
@@ -124,6 +131,9 @@ parameterHelp = u"""\
 
 -links            Work on all pages that are linked from a certain page.
                   Argument can also be given as "-links:linkingpagetitle".
+
+-liverecentchanges Work on pages from the live recent changes feed. If used as
+                  -liverecentchanges:x, work on x recent changes.
 
 -imagesused       Work on all images that contained on a certain page.
                   Argument can also be given as "-imagesused:linkingpagetitle".
@@ -191,6 +201,12 @@ parameterHelp = u"""\
 -wikidataquery    Takes a WikidataQuery query string like claim[31:12280]
                   and works on the resulting pages.
 
+-searchitem       Takes a search string and works on Wikibase pages that
+                  contain it.
+                  Argument can be given as "-searchitem:text", where text
+                  is the string to look for, or "-searchitem:lang:text", where
+                  lang is the langauge to search items in.
+
 -random           Work on random pages returned by [[Special:Random]].
                   Can also be given as "-random:n" where n is the number
                   of pages to be returned, otherwise the default is 10 pages.
@@ -227,6 +243,24 @@ parameterHelp = u"""\
                   Case insensitive regular expressions will be used and
                   dot matches any character, including a newline.
 
+-onlyif           A claim the page needs to contain, otherwise the item won't
+                  be returned.
+                  The format is property=value,qualifier=value. Multiple (or
+                  none) qualifiers can be passed, separated by commas.
+                  Examples: P1=Q2 (property P1 must contain value Q2),
+                  P3=Q4,P5=Q6,P6=Q7 (property P3 with value Q4 and
+                  qualifiers: P5 with value Q6 and P6 with value Q7).
+                  Value can be page ID, coordinate in format:
+                  latitude,longitude[,precision] (all values are in decimal
+                  degrees), year, or plain string.
+                  The argument can be provided multiple times and the item
+                  page will be returned only if all of the claims are present.
+                  Argument can be also given as "-onlyif:expression".
+
+-onlyifnot        A claim the page must not contain, otherwise the item won't
+                  be returned.
+                  For usage and examples, see -onlyif above.
+
 -intersect        Work on the intersection of all the provided generators.
 """
 
@@ -258,10 +292,11 @@ class GeneratorFactory(object):
         @type site: L{pywikibot.site.BaseSite}
         """
         self.gens = []
-        self.namespaces = []
+        self._namespaces = []
         self.step = None
         self.limit = None
         self.articlefilter_list = []
+        self.claimfilter_list = []
         self.intersect = False
         self._site = site
 
@@ -270,12 +305,41 @@ class GeneratorFactory(object):
         """
         Generator site.
 
-        @return: Site given to constructor, otherwise the default Site.
+        The generator site should not be accessed until after the global
+        arguments have been handled, otherwise the default Site may be changed
+        by global arguments, which will cause this cached value to be stale.
+
+        @return: Site given to constructor, otherwise the default Site at the
+            time this property is first accessed.
         @rtype: L{pywikibot.site.BaseSite}
         """
         if not self._site:
             self._site = pywikibot.Site()
         return self._site
+
+    @property
+    def namespaces(self):
+        """
+        List of Namespace parameters.
+
+        Converts int or string namespaces to Namespace objects and
+        change the storage to immutable once it has been accessed.
+
+        The resolving and validation of namespace command line arguments
+        is performed in this method, as it depends on the site property
+        which is lazy loaded to avoid being cached before the global
+        arguments are handled.
+
+        @return: namespaces selected using arguments
+        @rtype: list of Namespace
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
+        """
+        if isinstance(self._namespaces, list):
+            self._namespaces = frozenset(
+                Namespace.resolve(self._namespaces, self.site.namespaces))
+        return self._namespaces
 
     def getCombinedGenerator(self, gen=None):
         """Return the combination of all accumulated generators.
@@ -296,7 +360,8 @@ class GeneratorFactory(object):
             else:
                 if self.namespaces:
                     self.gens[i] = NamespaceFilterPageGenerator(self.gens[i],
-                                                                self.namespaces)
+                                                                self.namespaces,
+                                                                self.site)
                 if self.limit:
                     self.gens[i] = itertools.islice(self.gens[i], self.limit)
         if len(self.gens) == 0:
@@ -315,6 +380,13 @@ class GeneratorFactory(object):
             else:
                 gensList = CombinedPageGenerator(self.gens)
                 dupfiltergen = DuplicateFilterPageGenerator(gensList)
+
+        if self.claimfilter_list:
+            dupfiltergen = PreloadingItemGenerator(dupfiltergen)
+            for claim in self.claimfilter_list:
+                dupfiltergen = ItemClaimFilterPageGenerator(dupfiltergen,
+                                                            claim[0], claim[1],
+                                                            claim[2], claim[3])
 
         if self.articlefilter_list:
             return RegexBodyFilterPageGenerator(
@@ -456,6 +528,11 @@ class GeneratorFactory(object):
                                                  total=60,
                                                  site=self.site)
             gen = DuplicateFilterPageGenerator(gen)
+        elif arg.startswith('-liverecentchanges'):
+            if len(arg) >= 19:
+                gen = LiveRCPageGenerator(self.site, total=int(arg[19:]))
+            else:
+                gen = LiveRCPageGenerator(self.site)
         elif arg.startswith('-file'):
             textfilename = arg[6:]
             if not textfilename:
@@ -463,6 +540,11 @@ class GeneratorFactory(object):
                     u'Please enter the local file name:')
             gen = TextfilePageGenerator(textfilename, site=self.site)
         elif arg.startswith('-namespace') or arg.startswith('-ns'):
+            if isinstance(self._namespaces, frozenset):
+                pywikibot.warning('Cannot handle arg %s as namespaces can not '
+                                  'be altered after a generator is created.'
+                                  % arg)
+                return True
             value = None
             if arg.startswith('-ns:'):
                 value = arg[len('-ns:'):]
@@ -473,13 +555,7 @@ class GeneratorFactory(object):
             if not value:
                 value = pywikibot.input(
                     u'What namespace are you filtering on?')
-            try:
-                self.namespaces.extend(
-                    [int(ns) for ns in value.split(",")]
-                )
-            except ValueError:
-                pywikibot.output(u'Invalid namespaces argument: %s' % value)
-                return False
+            self._namespaces += value.split(",")
             return True
         elif arg.startswith('-step'):
             if len(arg) == len('-step'):
@@ -600,6 +676,15 @@ class GeneratorFactory(object):
             imagelinksPage = pywikibot.Page(pywikibot.Link(imagelinkstitle,
                                                            self.site))
             gen = ImagesPageGenerator(imagelinksPage)
+        elif arg.startswith('-searchitem'):
+            text = arg[len('-searchitem:'):]
+            if not text:
+                text = pywikibot.input(u'Text to look for:')
+            params = text.split(':')
+            text = params[-1]
+            lang = params[0] if len(params) == 2 else None
+            gen = WikibaseSearchItemPageGenerator(text, language=lang,
+                                                  site=self.site)
         elif arg.startswith('-search'):
             mediawikiQuery = arg[8:]
             if not mediawikiQuery:
@@ -615,13 +700,35 @@ class GeneratorFactory(object):
                 regex = pywikibot.input(u'What page names are you looking for?')
             else:
                 regex = arg[12:]
-            gen = RegexFilterPageGenerator(self.site.allpages(), regex)
+            # partial workaround for bug T85389
+            # to use -namespace/ns with -newpages, -ns must be given
+            # before -titleregex, otherwise default namespace is 0.
+            # allpages only accepts a single namespace, and will raise a
+            # TypeError if self.namespaces contains more than one namespace.
+            namespaces = self.namespaces or 0
+            gen = RegexFilterPageGenerator(
+                self.site.allpages(namespace=namespaces),
+                regex)
         elif arg.startswith('-grep'):
             if len(arg) == 5:
                 self.articlefilter_list.append(pywikibot.input(
                     u'Which pattern do you want to grep?'))
             else:
                 self.articlefilter_list.append(arg[6:])
+            return True
+        elif arg.startswith('-onlyif') or arg.startswith('-onlyifnot'):
+            ifnot = arg.startswith('-onlyifnot')
+            if (len(arg) == 7 and not ifnot) or (len(arg) == 10 and ifnot):
+                claim = pywikibot.input(u'Which claim do you want to filter?')
+            else:
+                claim = arg[11 if ifnot else 8:]
+
+            p = re.compile(r'(?<!\\),')  # Match "," only if there no "\" before
+            temp = []  # Array to store split argument
+            for arg in p.split(claim):
+                temp.append(arg.replace('\,', ',').split('='))
+            self.claimfilter_list.append((temp[0][0], temp[0][1],
+                                          dict(temp[1:]), ifnot))
             return True
         elif arg.startswith('-yahoo'):
             gen = YahooSearchPageGenerator(arg[7:], site=self.site)
@@ -913,7 +1020,8 @@ def ReferringPageGenerator(referredPage, followRedirects=False,
 
 
 def CategorizedPageGenerator(category, recurse=False, start=None,
-                             step=None, total=None, content=False):
+                             step=None, total=None, content=False,
+                             namespaces=None):
     """Yield all pages in a specific category.
 
     If recurse is True, pages in subcategories are included as well; if
@@ -929,7 +1037,7 @@ def CategorizedPageGenerator(category, recurse=False, start=None,
 
     """
     kwargs = dict(recurse=recurse, step=step, total=total,
-                  content=content)
+                  content=content, namespaces=namespaces)
     if start:
         kwargs['sortby'] = 'sortkey'
         kwargs['startsort'] = start
@@ -1046,35 +1154,36 @@ def NamespaceFilterPageGenerator(generator, namespaces, site=None):
     """
     A generator yielding pages from another generator in given namespaces.
 
-    The namespace list can contain both integers (namespace numbers) and
-    strings/unicode strings (namespace names).
+    If a site is provided, the namespaces are validated using the namespaces
+    of that site, otherwise the namespaces are validated using the default
+    site.
 
     NOTE: API-based generators that have a "namespaces" parameter perform
     namespace filtering more efficiently than this generator.
 
-    @param namespaces: list of namespace numbers to limit results
-    @type namespaces: list of int
-    @param site: Site for generator results, only needed if
-        namespaces contains namespace names.
+    @param namespaces: list of namespace identifiers to limit results
+    @type namespaces: iterable of basestring or Namespace key,
+        or a single instance of those types.
+    @param site: Site for generator results; mandatory if
+        namespaces contains namespace names.  Defaults to the default site.
     @type site: L{pywikibot.site.BaseSite}
+    @raises KeyError: a namespace identifier was not resolved
+    @raises TypeError: a namespace identifier has an inappropriate
+        type such as NoneType or bool, or more than one namespace
+        if the API module does not support multiple namespaces
     """
-    if isinstance(namespaces, (int, basestring)):
-        namespaces = [namespaces]
-    # convert namespace names to namespace numbers
-    for i in range(len(namespaces)):
-        ns = namespaces[i]
-        if isinstance(ns, basestring):
-            try:
-                # namespace might be given as str representation of int
-                index = int(ns)
-            except ValueError:
-                # FIXME: deprecate providing strings as namespaces
-                if site is None:
-                    site = pywikibot.Site()
-                index = site.getNamespaceIndex(ns)
-                if index is None:
-                    raise ValueError(u'Unknown namespace: %s' % ns)
-            namespaces[i] = index
+    # As site was only required if the namespaces contain strings, dont
+    # attempt to use the config selected site unless the initial attempt
+    # at resolving the namespaces fails.
+    try:
+        namespaces = Namespace.resolve(namespaces,
+                                       site.namespaces if site else
+                                       pywikibot.Site().namespaces)
+    except KeyError as e:
+        pywikibot.log('Failed resolving namespaces:')
+        pywikibot.exception(e)
+        raise
+
     for page in generator:
         if page.namespace() in namespaces:
             yield page
@@ -1139,6 +1248,56 @@ def DuplicateFilterPageGenerator(generator):
         if page not in seenPages:
             seenPages[page] = True
             yield page
+
+
+class ItemClaimFilter(object):
+
+    """Item claim filter."""
+
+    @classmethod
+    def __filter_match(cls, page, prop, claim, qualifiers=None):
+        """
+        Return true if the page contains the claim given.
+
+        @param page: the page to check
+        @return: true if page contains the claim, false otherwise
+        @rtype: bool
+        """
+        if not isinstance(page, pywikibot.ItemPage):
+            pywikibot.output(u'%s is not an ItemPage. Skipping.' % page)
+            return False
+        for page_claim in page.get()['claims'][prop]:
+            if page_claim.target_equals(claim):
+                if not qualifiers:
+                    return True
+
+                for prop, val in qualifiers.items():
+                    if not page_claim.has_qualifier(prop, val):
+                        return False
+                return True
+
+    @classmethod
+    def filter(cls, generator, prop, claim, qualifiers=None, negate=False):
+        """
+        Yield all ItemPages which does contain certain claim in a property.
+
+        @param prop: property id to check
+        @type prop: str
+        @param claim: value of the property to check. Can be exact value (for
+            instance, ItemPage instance) or ItemPage ID string (e.g. 'Q37470').
+        @param qualifiers: dict of qualifiers that must be present, or None if
+            qualifiers are irrelevant
+        @type qualifiers: dict or None
+        @param negate: true if pages that does *not* contain specified claim
+            should be yielded, false otherwise
+        @type negate: bool
+        """
+        for page in generator:
+            if cls.__filter_match(page, prop, claim, qualifiers) and not negate:
+                yield page
+
+# name the generator methods
+ItemClaimFilterPageGenerator = ItemClaimFilter.filter
 
 
 class RegexFilter(object):
@@ -1325,7 +1484,7 @@ def FileGenerator(generator):
 ImageGenerator = FileGenerator
 
 
-def PageWithTalkPageGenerator(generator):
+def PageWithTalkPageGenerator(generator, return_talk_only=False):
     """Yield pages and associated talk pages from another generator.
 
     Only yields talk pages if the original generator yields a non-talk page,
@@ -1333,7 +1492,8 @@ def PageWithTalkPageGenerator(generator):
 
     """
     for page in generator:
-        yield page
+        if not return_talk_only or page.isTalkPage():
+            yield page
         if not page.isTalkPage():
             yield page.toggleTalkPage()
 
@@ -1855,6 +2015,31 @@ def UntaggedPageGenerator(untaggedProject, limit=500, site=None):
             yield pywikibot.Page(site, result)
 
 
+def LiveRCPageGenerator(site=None, total=None):
+    """
+    Yield pages from a socket.io RC stream.
+
+    Generates pages based on the socket.io recent changes stream.
+    The Page objects will have an extra property ._rcinfo containing the
+    literal rc data. This can be used to e.g. filter only new pages. See
+    `pywikibot.comms.rcstream.rc_listener` for details on the .rcinfo format.
+
+    @param site: site to return recent changes for
+    @type site: pywikibot.BaseSite
+    @param total: the maximum number of changes to return
+    @type total: int
+    """
+    if site is None:
+        site = pywikibot.Site()
+
+    from pywikibot.comms.rcstream import site_rc_listener
+
+    for entry in site_rc_listener(site, total=total):
+        page = pywikibot.Page(site, entry['title'], entry['namespace'])
+        page._rcinfo = entry
+        yield page
+
+
 # following classes just ported from version 1 without revision; not tested
 
 
@@ -2098,6 +2283,33 @@ def WikidataQueryPageGenerator(query, site=None):
         except pywikibot.NoPage:
             continue
         yield pywikibot.Page(pywikibot.Link(link, site))
+
+
+def WikibaseSearchItemPageGenerator(text, language=None, total=None, site=None):
+    """
+    Generate pages that contain the provided text.
+
+    @param text: Text to look for.
+    @type text: str
+    @param language: Code of the language to search in. If not specified,
+        value from pywikibot.config.data_lang is used.
+    @type language: str
+    @param total: Maximum number of pages to retrieve in total, or None in
+        case of no limit.
+    @type total: int or None
+    @param site: Site for generator results.
+    @type site: L{pywikibot.site.BaseSite}
+    """
+    if site is None:
+        site = pywikibot.Site()
+    if language is None:
+        language = site.lang
+    repo = site.data_repository()
+
+    data = repo.search_entities(text, language, limit=total, site=site)
+    pywikibot.output(u'retrieved %d items' % len(list(data)))
+    for item in data:
+        yield pywikibot.ItemPage(repo, item['id'])
 
 
 if __name__ == "__main__":

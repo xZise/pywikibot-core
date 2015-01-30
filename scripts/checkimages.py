@@ -302,7 +302,9 @@ nothing_notification = {
     'en': u"{{subst:image source|File:%s}} --~~~~",
     'fa': u"{{جا:اخطار نگاره|%s}}",
     'ga': u"{{subst:Foinse na híomhá|File:%s}} --~~~~",
-    'hu': u"{{subst:adjforrást|Kép:%s}} \n Ezt az üzenetet ~~~ automatikusan helyezte el a vitalapodon, kérdéseddel fordulj a gazdájához, vagy a [[WP:KF|Kocsmafalhoz]]. --~~~~",
+    'hu': u"{{subst:adjforrást|Kép:%s}} \n Ezt az üzenetet ~~~ automatikusan "
+          u"helyezte el a vitalapodon, kérdéseddel fordulj a gazdájához, vagy "
+          u"a [[WP:KF|Kocsmafalhoz]]. --~~~~",
     'it': u"{{subst:Progetto:Coordinamento/Immagini/Bot/Messaggi/Senza licenza|%s|__botnick__}} --~~~~",
     'ja': u"\n{{subst:Image copyright|File:%s}}--~~~~",
     'ko': u'\n{{subst:User:Kwjbot IV/untagged|%s}} --~~~~',
@@ -331,8 +333,12 @@ bot_list = {
 # The message that the bot will add the second time that find another license
 # problem.
 second_message_without_license = {
-    'hu': u'\nSzia! Úgy tűnik a [[:Kép:%s]] képpel is hasonló a probléma, mint az előbbivel. Kérlek olvasd el a [[WP:KÉPLIC|feltölthető képek]]ről szóló oldalunk, és segítségért fordulj a [[WP:KF-JO|Jogi kocsmafalhoz]]. Köszönöm --~~~~',
-    'it': u':{{subst:Progetto:Coordinamento/Immagini/Bot/Messaggi/Senza licenza2|%s|__botnick__}} --~~~~',
+    'hu': u'\nSzia! Úgy tűnik a [[:Kép:%s]] képpel is hasonló a probléma, '
+          u'mint az előbbivel. Kérlek olvasd el a [[WP:KÉPLIC|feltölthető '
+          u'képek]]ről szóló oldalunk, és segítségért fordulj a [[WP:KF-JO|'
+          u'Jogi kocsmafalhoz]]. Köszönöm --~~~~',
+    'it': u':{{subst:Progetto:Coordinamento/Immagini/Bot/Messaggi/Senza'
+          u'licenza2|%s|__botnick__}} --~~~~',
 }
 
 # You can add some settings to a wiki page. In this way, you can change them
@@ -1764,7 +1770,7 @@ def main(*args):
                 firstPageTitle = arg[7:]
             firstPageTitle = firstPageTitle.split(":")[1:]
             generator = pywikibot.Site().allpages(start=firstPageTitle,
-                                                     namespace=6)
+                                                  namespace=6)
             repeat = False
         elif arg.startswith('-page'):
             if len(arg) == 5:
@@ -1798,7 +1804,7 @@ def main(*args):
                 catName = str(arg[5:])
             catSelected = pywikibot.Category(pywikibot.Site(),
                                              'Category:%s' % catName)
-            generator = pg.CategorizedPageGenerator(catSelected)
+            generator = catSelected.articles(namespaces=[6])
             repeat = False
         elif arg.startswith('-ref'):
             if len(arg) == 4:
@@ -1806,8 +1812,8 @@ def main(*args):
                     u'The references of what page should I parse?'))
             elif len(arg) > 4:
                 refName = str(arg[5:])
-            generator = pg.ReferringPageGenerator(
-                pywikibot.Page(pywikibot.Site(), refName))
+            ref = pywikibot.Page(pywikibot.Site(), refName)
+            generator = ref.getReferences(namespaces=[6])
             repeat = False
 
     if not generator:
@@ -1856,7 +1862,6 @@ def main(*args):
         Bot.takesettings()
         if waitTime:
             generator = Bot.wait(waitTime, generator, normal, limit)
-        generator = pg.NamespaceFilterPageGenerator(generator, 6, site)
         for image in generator:
             # Setting the image for the main class
             Bot.setParameters(image.title(withNamespace=False))

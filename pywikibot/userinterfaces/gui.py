@@ -9,7 +9,7 @@ Useful for editing the contents of an article.
 # (C) Rob W.W. Hooft, 2003
 # (C) Daniel Herding, 2004
 #     Wikiwichtel
-# (C) pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2014
 #
 # Distributed under the terms of the MIT license.
 #
@@ -386,8 +386,8 @@ class EditBoxWindow(Tkinter.Frame):
         # if the editbox contains ASCII characters only, get() will
         # return string, otherwise unicode (very annoying). We only want
         # it to return unicode, so we work around this.
-        if isinstance(self.text, str):
-            self.text = unicode(self.text)
+        if sys.version[0] == 2 and isinstance(self.text, str):
+            self.text = unicode(self.text)  # noqa
         self.parent.destroy()
 
     def debug(self, event=None):

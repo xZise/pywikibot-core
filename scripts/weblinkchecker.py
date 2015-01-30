@@ -114,6 +114,7 @@ if sys.version_info[0] > 2:
     import urllib.request as urllib
     import http.client as httplib
     basestring = (str, )
+    unicode = str
 else:
     import urlparse
     import urllib
@@ -138,7 +139,8 @@ ignorelist = [
 
     # Other special cases
     re.compile('.*[\./@]gso\.gbv\.de(/.*)?'),  # bot somehow can't handle their redirects
-    re.compile('.*[\./@]berlinonline\.de(/.*)?'),  # a de: user wants to fix them by hand and doesn't want them to be deleted, see [[de:Benutzer:BLueFiSH.as/BZ]].
+    re.compile('.*[\./@]berlinonline\.de(/.*)?'),
+    # above entry to be manually fixed per request at [[de:Benutzer:BLueFiSH.as/BZ]]
     re.compile('.*[\./@]bodo\.kommune\.no(/.*)?'),  # bot can't handle their redirects
     re.compile('.*[\./@]jpl\.nasa\.gov(/.*)?'),  # bot rejected on the site
     re.compile('.*[\./@]itis\.gov(/.*)?'),  # bot rejected on the site
@@ -212,7 +214,7 @@ class XmlDumpPageGenerator:
                         continue
                     self.skipping = False
                 page = pywikibot.Page(self.site, entry.title)
-                if not self.namespaces == []:
+                if self.namespaces:
                     if page.namespace() not in self.namespaces:
                         continue
                 found = False
@@ -413,7 +415,7 @@ class LinkChecker(object):
             wasRedirected = self.resolveRedirect(useHEAD=useHEAD)
         except UnicodeError as error:
             return False, u'Encoding Error: %s (%s)' % (
-                error.__class__.__name__, unicode(error))
+                error.__class__.__name__, error)
         except httplib.error as error:
             return False, u'HTTP Error: %s' % error.__class__.__name__
         except socket.error as error:
@@ -850,9 +852,6 @@ def main(*args):
     """
     gen = None
     xmlFilename = None
-    # Which namespaces should be processed?
-    # default to [] which means all namespaces will be processed
-    namespaces = []
     HTTPignore = []
     day = 7
 
@@ -865,11 +864,6 @@ def main(*args):
             config.report_dead_links_on_talk = True
         elif arg == '-notalk':
             config.report_dead_links_on_talk = False
-        elif arg.startswith('-namespace:'):
-            try:
-                namespaces.append(int(arg[11:]))
-            except ValueError:
-                namespaces.append(arg[11:])
         elif arg == '-repeat':
             gen = RepeatPageGenerator()
         elif arg.startswith('-ignore:'):
@@ -895,13 +889,11 @@ def main(*args):
             xmlStart
         except NameError:
             xmlStart = None
-        gen = XmlDumpPageGenerator(xmlFilename, xmlStart, namespaces)
+        gen = XmlDumpPageGenerator(xmlFilename, xmlStart, genFactory.namespaces)
 
     if not gen:
         gen = genFactory.getCombinedGenerator()
     if gen:
-        if namespaces != []:
-            gen = pagegenerators.NamespaceFilterPageGenerator(gen, namespaces)
         # fetch at least 240 pages simultaneously from the wiki, but more if
         # a high thread number is set.
         pageNumber = max(240, config.max_external_links * 2)

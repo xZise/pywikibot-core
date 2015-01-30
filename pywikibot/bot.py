@@ -1,7 +1,7 @@
 # -*- coding: utf-8  -*-
 """User-interface related functions for building bots."""
 #
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -16,11 +16,12 @@ import logging
 import logging.handlers
 # all output goes thru python std library "logging" module
 
-import os
-import sys
-import re
-import json
 import datetime
+import json
+import os
+import re
+import sys
+import webbrowser
 
 _logger = "bot"
 
@@ -847,6 +848,13 @@ Global arguments available for all bots:
     pywikibot.stdout(globalHelp)
 
 
+def open_webbrowser(page):
+    """Open the web browser displaying the page and wait for input."""
+    from pywikibot import i18n
+    webbrowser.open(page.full_url())
+    i18n.input('pywikibot-enter-finished-browser')
+
+
 class QuitKeyboardInterrupt(KeyboardInterrupt):
 
     """The user has cancelled processing at a prompt."""
@@ -891,6 +899,8 @@ class Bot(object):
         self.setOptions(**kwargs)
         self._site = None
         self._sites = set()
+        self._treat_counter = 0
+        self._save_counter = 0
 
     def setOptions(self, **kwargs):
         """
@@ -1006,19 +1016,37 @@ class Bot(object):
         if 'comment' in kwargs:
             pywikibot.output(u'Comment: %s' % kwargs['comment'])
 
+        page.text = newtext
+        self._save_page(page, page.save, **kwargs)
+
+    def _save_page(self, page, func, *args, **kwargs):
+        """
+        Helper function to handle page save-related option error handling.
+
+        @param page: currently edited page
+        @param func: the function to call
+        @param args: passed to the function
+        @param kwargs: passed to the function
+        @kwarg ignore_server_errors: if True, server errors will be reported
+          and ignored (default: False)
+        @kwtype ignore_server_errors: bool
+        @kwarg ignore_save_related_errors: if True, errors related to
+        page save will be reported and ignored (default: False)
+        @kwtype ignore_save_related_errors: bool
+        """
         if not self.user_confirm('Do you want to accept these changes?'):
             return
 
         if 'async' not in kwargs and self.getOption('always'):
             kwargs['async'] = True
 
-        page.text = newtext
-
-        ignore_save_related_errors = kwargs.pop('ignore_save_related_errors', False)
+        ignore_save_related_errors = kwargs.pop('ignore_save_related_errors',
+                                                False)
         ignore_server_errors = kwargs.pop('ignore_server_errors', False)
 
         try:
-            page.save(**kwargs)
+            func(*args, **kwargs)
+            self._save_counter += 1
         except pywikibot.PageSaveRelatedError as e:
             if not ignore_save_related_errors:
                 raise
@@ -1105,6 +1133,10 @@ class Bot(object):
             log('Bot is managing the %s.site property in run()'
                 % self.__class__.__name__)
 
+        maxint = 0
+        if sys.version_info[0] == 2:
+            maxint = sys.maxint
+
         try:
             for page in self.generator:
                 # When in auto update mode, set the site when it changes,
@@ -1112,7 +1144,17 @@ class Bot(object):
                 if (auto_update_site and
                         (not self._site or page.site != self.site)):
                     self.site = page.site
+
+                # Process the page
                 self.treat(page)
+
+                self._treat_counter += 1
+                if maxint and self._treat_counter == maxint:
+                    # Warn the user that the bot may not function correctly
+                    pywikibot.error(
+                        '\n%s: page count reached Python 2 sys.maxint (%d).\n'
+                        'Python 3 should be used to process very large batches'
+                        % (self.__class__.__name__, sys.maxint))
         except QuitKeyboardInterrupt:
             pywikibot.output('\nUser quit %s bot run...' %
                              self.__class__.__name__)
@@ -1124,6 +1166,135 @@ class Bot(object):
                                  self.__class__.__name__)
 
 
+class CurrentPageBot(Bot):
+
+    """A bot which automatically sets 'current_page' on each treat()."""
+
+    ignore_save_related_errors = True
+    ignore_server_errors = False
+
+    def treat_page(self):
+        """Process one page (Abstract method)."""
+        raise NotImplementedError('Method %s.treat_page() not implemented.'
+                                  % self.__class__.__name__)
+
+    def treat(self, page):
+        """Set page to current page and treat that page."""
+        self.current_page = page
+        self.treat_page()
+
+    def put_current(self, new_text, ignore_save_related_errors=None,
+                    ignore_server_errors=None, **kwargs):
+        """
+        Call L{Bot.userPut} but use the current page.
+
+        It compares the new_text to the current page text.
+
+        @param new_text: The new text
+        @type new_text: basestring
+        @param ignore_save_related_errors: Ignore save related errors and
+            automatically print a message. If None uses this instances default.
+        @type ignore_save_related_errors: bool or None
+        @param ignore_server_errors: Ignore server errors and automatically
+            print a message. If None uses this instances default.
+        @type ignore_server_errors: bool or None
+        @param kwargs: Additional parameters directly given to L{Bot.userPut}.
+        @type kwargs: dict
+        """
+        if ignore_save_related_errors is None:
+            ignore_save_related_errors = self.ignore_save_related_errors
+        if ignore_server_errors is None:
+            ignore_server_errors = self.ignore_server_errors
+        self.userPut(self.current_page, self.current_page.text, new_text,
+                     ignore_save_related_errors=ignore_save_related_errors,
+                     ignore_server_errors=ignore_server_errors,
+                     **kwargs)
+
+
+class ExistingPageBot(CurrentPageBot):
+
+    """A CurrentPageBot class which only treats existing pages."""
+
+    def treat(self, page):
+        """Treat page if it exists and handle NoPage from it."""
+        if not page.exists():
+            pywikibot.warning('Page "{0}" does not exist on {1}.'.format(
+                page.title(), page.site))
+            return
+        try:
+            super(ExistingPageBot, self).treat(page)
+        except pywikibot.NoPage as e:
+            if e.page != page:
+                raise
+            pywikibot.warning(
+                'During handling of page "{0}" on {1} a NoPage exception was '
+                'raised.'.format(page.title(), page.site))
+
+
+class FollowRedirectPageBot(CurrentPageBot):
+
+    """A CurrentPageBot class which follows the redirect."""
+
+    def treat(self, page):
+        """Treat target if page is redirect and the page otherwise."""
+        if page.isRedirectPage():
+            page = page.getRedirectTarget()
+        super(FollowRedirectPageBot, self).treat(page)
+
+
+class CreatingPageBot(CurrentPageBot):
+
+    """A CurrentPageBot class which only treats not exisiting pages."""
+
+    def treat(self, page):
+        """Treat page if doesn't exist."""
+        if page.exists():
+            pywikibot.warning('Page "{0}" does already exist on {1}.'.format(
+                page.title(), page.site))
+            return
+        super(CreatingPageBot, self).treat(page)
+
+
+class RedirectPageBot(CurrentPageBot):
+
+    """A RedirectPageBot class which only treats redirects."""
+
+    def treat(self, page):
+        """Treat only redirect pages and handle IsNotRedirectPage from it."""
+        if not page.isRedirectPage():
+            pywikibot.warning('Page "{0}" on {1} is skipped because it is not '
+                              'a redirect'.format(page.title(), page.site))
+            return
+        try:
+            super(RedirectPageBot, self).treat(page)
+        except pywikibot.IsNotRedirectPage as e:
+            if e.page != page:
+                raise
+            pywikibot.warning(
+                'During handling of page "{0}" on {1} a IsNotRedirectPage '
+                'exception was raised.'.format(page.title(), page.site))
+
+
+class NoRedirectPageBot(CurrentPageBot):
+
+    """A NoRedirectPageBot class which only treats non-redirects."""
+
+    def treat(self, page):
+        """Treat only non-redirect pages and handle IsRedirectPage from it."""
+        if page.isRedirectPage():
+            pywikibot.warning('Page "{0}" on {1} is skipped because it is a '
+                              'redirect'.format(page.title(), page.site))
+            return
+        try:
+            super(NoRedirectPageBot, self).treat(page)
+        except pywikibot.IsRedirectPage as e:
+            if e.page != page:
+                raise
+            pywikibot.warning(
+                'During handling of page "{0}" on {1} a IsRedirectPage '
+                'exception was raised.'.format(page.title(), page.site))
+
+
 class WikidataBot(Bot):
 
     """
@@ -1133,7 +1304,17 @@ class WikidataBot(Bot):
     """
 
     def __init__(self, **kwargs):
-        """Constructor."""
+        """
+        Constructor of the WikidataBot.
+
+        @kwarg use_from_page: If True (default) it will apply ItemPage.fromPage
+            for every item. If False it assumes that the pages are actually
+            already ItemPage (page in treat will be None). If None it'll use
+            ItemPage.fromPage when the page is not in the site's item
+            namespace.
+        @kwtype use_from_page: bool, None
+        """
+        self.use_from_page = kwargs.pop('use_from_page', True)
         super(WikidataBot, self).__init__(**kwargs)
         self.site = pywikibot.Site()
         self.repo = self.site.data_repository()
@@ -1153,6 +1334,67 @@ class WikidataBot(Bot):
             for source_lang in family:
                 self.source_values[family_code][source_lang] = pywikibot.ItemPage(self.repo,
                                                                                   family[source_lang])
+
+    def get_property_by_name(self, property_name):
+        """
+        Find given property and return its ID.
+
+        Method first uses site.search() and if the property isn't found, then
+        asks user to provide the property ID.
+
+        @param property_name: property to find
+        @type property_name: str
+        """
+        ns = self.site.data_repository().property_namespace
+        for page in self.site.search(property_name, step=1, total=1,
+                                     namespaces=ns):
+            page = pywikibot.PropertyPage(self.site.data_repository(),
+                                          page.title())
+            pywikibot.output(u"Assuming that %s property is %s." %
+                             (property_name, page.id))
+            return page.id
+        return pywikibot.input(u'Property %s was not found. Please enter the '
+                               u'property ID (e.g. P123) of it:'
+                               % property_name).upper()
+
+    def user_edit_entity(self, item, data=None, **kwargs):
+        """
+        Edit entity with data provided, with user confirmation as required.
+
+        @param item: page to be edited
+        @type item: ItemPage
+        @param data: data to be saved, or None if the diff should be created
+          automatically
+        @kwarg summary: revision comment, passed to ItemPage.editEntity
+        @kwtype summary: str
+        @kwarg show_diff: show changes between oldtext and newtext (default:
+          True)
+        @kwtype show_diff: bool
+        @kwarg ignore_server_errors: if True, server errors will be reported
+          and ignored (default: False)
+        @kwtype ignore_server_errors: bool
+        @kwarg ignore_save_related_errors: if True, errors related to
+        page save will be reported and ignored (default: False)
+        @kwtype ignore_save_related_errors: bool
+        """
+        self.current_page = item
+
+        show_diff = kwargs.pop('show_diff', True)
+        if show_diff:
+            if data is None:
+                diff = item.toJSON(diffto=(
+                    item._content if hasattr(item, '_content') else None))
+            else:
+                diff = pywikibot.WikibasePage._normalizeData(data)
+            pywikibot.output(json.dumps(diff, indent=4, sort_keys=True))
+
+        if 'summary' in kwargs:
+            pywikibot.output(u'Change summary: %s' % kwargs['summary'])
+
+        # TODO async in editEntity should actually have some effect (bug T86074)
+        # TODO PageSaveRelatedErrors should be actually raised in editEntity
+        # (bug T86083)
+        self._save_page(item, item.editEntity, data, **kwargs)
 
     def getSource(self, site):
         """
@@ -1180,10 +1422,26 @@ class WikidataBot(Bot):
             for page in self.generator:
                 if not page.exists():
                     pywikibot.output('%s doesn\'t exist.' % page)
-                try:
-                    item = pywikibot.ItemPage.fromPage(page)
-                except pywikibot.NoPage:
-                    item = None
+                # FIXME: Hack because 'is_data_repository' doesn't work if
+                #        site is the APISite. See T85483
+                data_site = page.site.data_repository()
+                if (data_site.family == page.site.family and
+                        data_site.code == page.site.code):
+                    is_item = page.namespace() == data_site.item_namespace.id
+                else:
+                    is_item = False
+                if self.use_from_page is not True and is_item:
+                    item = pywikibot.ItemPage(data_site, page.title())
+                    item.get()
+                elif self.use_from_page is False:
+                    pywikibot.error('{0} is not in the item namespace but '
+                                    'must be an item.'.format(page))
+                    continue
+                else:
+                    try:
+                        item = pywikibot.ItemPage.fromPage(page)
+                    except pywikibot.NoPage:
+                        item = None
                 if not item:
                     if not treat_missing_item:
                         pywikibot.output(

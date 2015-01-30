@@ -362,6 +362,8 @@ class RedirectGenerator:
                 continue
             except pywikibot.CircularRedirect:
                 continue
+            except pywikibot.InterwikiRedirectPage:
+                continue
 
 
 class RedirectRobot(Bot):
@@ -487,10 +489,8 @@ class RedirectRobot(Bot):
                         assert targetPage.site == self.site, (
                             u'target page is on different site %s'
                             % targetPage.site)
-                        if (self.has_valid_template(
-                            'redirect-broken-redirect-template') and
-                            i18n.twhas_key(targetPage.site,
-                                           'redirect-remove-broken')):
+                        if self.has_valid_template(
+                                'redirect-broken-redirect-template'):
                             pywikibot.output(u"No sysop in user-config.py, "
                                              u"put page to speedy deletion.")
                             content = redir_page.get(get_redirect=True)
@@ -500,10 +500,15 @@ class RedirectRobot(Bot):
                                 targetPage.site,
                                 'redirect-broken-redirect-template'
                             ) + "\n" + content
-                            redir_page.put(content, reason)
+                            try:
+                                redir_page.put(content, reason)
+                            except pywikibot.PageSaveRelatedError as e:
+                                pywikibot.error(e)
                         else:
                             pywikibot.output(
                                 u'No speedy deletion template available')
+                else:
+                    pywikibot.output(u'Cannot fix or delete the broken redirect')
             except pywikibot.IsRedirectPage:
                 pywikibot.output(u"Redirect target %s is also a redirect! "
                                  u"Won't delete anything."
@@ -514,7 +519,6 @@ class RedirectRobot(Bot):
                 pywikibot.output(
                     u'Redirect target %s does exist! Won\'t delete anything.'
                     % targetPage.title(asLink=True))
-        pywikibot.output(u'')
 
     def fix_double_redirects(self):
         for redir_name in self.generator.retrieve_double_redirects():
@@ -549,7 +553,8 @@ class RedirectRobot(Bot):
                 pywikibot.warning(
                     u"Redirect target section %s doesn't exist."
                     % newRedir.title(asLink=True))
-            except pywikibot.CircularRedirect as e:
+            except (pywikibot.CircularRedirect,
+                    pywikibot.InterwikiRedirectPage) as e:
                 pywikibot.exception(e)
                 pywikibot.output(u"Skipping %s." % newRedir)
                 break
@@ -582,12 +587,6 @@ class RedirectRobot(Bot):
                 pywikibot.output(
                     u'   Links to: %s.'
                     % targetPage.title(asLink=True))
-                if targetPage.site != self.site:
-                    pywikibot.warning(
-                        u'redirect target (%s) is on a different site.'
-                        % targetPage.title(asLink=True))
-                    if self.getOption('always'):
-                        break  # skip if automatic
                 try:
                     mw_msg = targetPage.site.mediawiki_message(
                         'wikieditor-toolbar-tool-redirect-example')

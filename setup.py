@@ -25,11 +25,13 @@ extra_deps = {
     'Google': ['google'],
     'IRC': ['irc'],
     'mwparserfromhell': ['mwparserfromhell>=0.3.3'],
-    'Tkinter': ['Pillow']
+    'Tkinter': ['Pillow'],
+    'rcstream': ['socketIO-client'],
 }
 
 if sys.version_info[0] == 2:
-    extra_deps['wikistats-csv'] = ['unicodecsv']
+    # csv is used by wikistats and script data_ingestion
+    extra_deps['csv'] = ['unicodecsv']
 
 script_deps = {
     'script_wui.py': ['irc', 'lunatic-python', 'crontab'],
@@ -82,10 +84,18 @@ if os.name == 'nt':
     test_deps += ['pywin32>=218', 'pywinauto>=0.4.0']
 
 extra_deps.update(script_deps)
-# Add script dependencies as test dependencies,
-# so scripts can be compiled in test suite.
+
+# Add all script dependencies as test dependencies,
+# so all scripts can be compiled for script_tests, etc.
 if 'PYSETUP_TEST_EXTRAS' in os.environ:
     test_deps += list(itertools.chain(*(script_deps.values())))
+
+# These extra dependencies enable some tests to run on all builds
+if sys.version_info[0] == 2:
+    test_deps += extra_deps['csv']
+else:
+    test_deps += ['six']
+test_deps += extra_deps['rcstream']
 
 # late import of setuptools due to monkey-patching above
 from ez_setup import use_setuptools
@@ -103,7 +113,7 @@ setup(
     version=version,
     description='Python MediaWiki Bot Framework',
     long_description=open('README.rst').read(),
-    maintainer='The pywikibot team',
+    maintainer='The Pywikibot team',
     maintainer_email='pywikipedia-l@lists.wikimedia.org',
     license='MIT License',
     packages=['pywikibot'] + [package

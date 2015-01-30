@@ -118,7 +118,7 @@ class FamilyFileGenerator(object):
             print(u' '.join(sorted([wiki[u'prefix'] for wiki in self.langs])))
         except HTTPError as e:
             self.langs = []
-            print (e, "; continuing...")
+            print(e, "; continuing...")
 
         if len([lang for lang in self.langs if lang['url'] == w.iwpath]) == 0:
             self.langs.append({u'language': w.lang,
@@ -129,7 +129,9 @@ class FamilyFileGenerator(object):
         if len(self.langs) > 1:
             if self.dointerwiki is None:
                 makeiw = raw_input(
-                    "\nThere are %i languages available.\nDo you want to generate interwiki links? This might take a long time. ([y]es/[N]o/[e]dit)"
+                    "\nThere are %i languages available."
+                    "\nDo you want to generate interwiki links?"
+                    "This might take a long time. ([y]es/[N]o/[e]dit)"
                     % len(self.langs)).lower()
             else:
                 makeiw = self.dointerwiki
@@ -185,6 +187,7 @@ Please do not commit this to the Git repository!
 \"\"\"
 
 from pywikibot import family
+from pywikibot.tools import deprecated
 
 class Family(family.Family):
     def __init__(self):
@@ -210,6 +213,7 @@ class Family(family.Family):
         f.write("        }[code]\n")
         f.write("\n")
 
+        f.write("    @deprecated('APISite.version()')\n")
         f.write("    def version(self, code):\n")
         f.write("        return {\n")
         for w in self.wikis.values():

@@ -9,9 +9,13 @@ __version__ = '$Id$'
 
 import sys
 
+import httplib2
+
 import pywikibot
-from pywikibot.comms import http, threadedhttp
+
 from pywikibot import config2 as config
+from pywikibot.comms import http, threadedhttp
+
 from tests.aspects import unittest, TestCase
 from tests.utils import expected_failure_if
 
@@ -65,22 +69,6 @@ class HttpTestCase(TestCase):
         r = http.request(site=None, uri='https://www.wikiquote.org/')
         self.assertIsInstance(r, unicode)
         self.assertIn('<html lang="mul"', r)
-
-
-class HttpServerProblemTestCase(TestCase):
-
-    """Test HTTP status 502 causes this test class to be skipped."""
-
-    sites = {
-        '502': {
-            'hostname': 'http://getstatuscode.com/502',
-        }
-    }
-
-    def test_502(self):
-        """Test a HTTP 502 response using http://getstatuscode.com/502."""
-        self.fail('The test framework should skip this test.')
-        pass
 
 
 class HttpsCertificateTestCase(TestCase):
@@ -145,16 +133,48 @@ class HttpsCertificateTestCase(TestCase):
 
         self.assertEqual(organisation, 'TuxFamily.org non-profit organization')
 
+
+class TestHttpStatus(TestCase):
+
+    """Test HTTP status code handling and errors."""
+
+    sites = {
+        'getstatuscode': {
+            'hostname': 'getstatuscode.com',
+        },
+        'enwp': {
+            'hostname': 'en.wikipedia.org',
+        },
+        'gandi': {
+            'hostname': 'www.gandi.eu',
+        },
+    }
+
     def test_http_504(self):
         """Test that a HTTP 504 raises the correct exception."""
         self.assertRaises(pywikibot.Server504Error,
                           http.fetch,
                           uri='http://getstatuscode.com/504')
 
+    def test_server_not_found(self):
+        """Test server not found exception."""
+        self.assertRaises(httplib2.ServerNotFoundError,
+                          http.fetch,
+                          uri='http://ru-sib.wikipedia.org/w/api.php',
+                          default_error_handling=True)
+
+    def test_invalid_scheme(self):
+        """Test invalid scheme."""
+        # A KeyError is raised within httplib2, in a different thread
+        self.assertRaises(KeyError,
+                          http.fetch,
+                          uri='invalid://url')
+
     def test_follow_redirects(self):
         """Test follow 301 redirects after an exception works correctly."""
-        # to be effective, this exception should be raised in httplib2
-        self.assertRaises(Exception,
+        # It doesnt matter what exception is raised here, provided it
+        # occurs within the httplib2 request method.
+        self.assertRaises(KeyError,
                           http.fetch,
                           uri='invalid://url')
 
@@ -324,6 +344,74 @@ class DefaultUserAgentTestCase(TestCase):
         self.assertNotIn(';)', http.user_agent())
         self.assertIn('httplib2/', http.user_agent())
         self.assertIn('Python/' + str(sys.version_info[0]), http.user_agent())
+
+
+class CharsetTestCase(TestCase):
+
+    """Test that HttpRequest correct handles the charsets given."""
+
+    net = False
+
+    STR = u'äöü'
+    LATIN1_BYTES = STR.encode('latin1')
+    UTF8_BYTES = STR.encode('utf8')
+
+    @staticmethod
+    def _create_request(charset=None, data=UTF8_BYTES):
+        req = threadedhttp.HttpRequest(None, charset=charset)
+        req._data = ({'content-type': 'charset=utf-8'}, data[:])
+        return req
+
+    def test_no_charset(self):
+        """Test decoding without explicit charset."""
+        req = threadedhttp.HttpRequest(None)
+        req._data = ({'content-type': ''}, CharsetTestCase.LATIN1_BYTES[:])
+        self.assertIsNone(req.charset)
+        self.assertEqual('latin1', req.encoding)
+        self.assertEqual(req.raw, CharsetTestCase.LATIN1_BYTES)
+        self.assertEqual(req.content, CharsetTestCase.STR)
+
+    def test_server_charset(self):
+        """Test decoding with server explicit charset."""
+        req = CharsetTestCase._create_request()
+        self.assertIsNone(req.charset)
+        self.assertEqual('utf-8', req.encoding)
+        self.assertEqual(req.raw, CharsetTestCase.UTF8_BYTES)
+        self.assertEqual(req.content, CharsetTestCase.STR)
+
+    def test_same_charset(self):
+        """Test decoding with explicit and equal charsets."""
+        req = CharsetTestCase._create_request('utf-8')
+        self.assertEqual('utf-8', req.charset)
+        self.assertEqual('utf-8', req.encoding)
+        self.assertEqual(req.raw, CharsetTestCase.UTF8_BYTES)
+        self.assertEqual(req.content, CharsetTestCase.STR)
+
+    def test_header_charset(self):
+        """Test decoding with different charsets and valid header charset."""
+        req = CharsetTestCase._create_request('latin1')
+        self.assertEqual('latin1', req.charset)
+        self.assertEqual('utf-8', req.encoding)
+        self.assertEqual(req.raw, CharsetTestCase.UTF8_BYTES)
+        self.assertEqual(req.content, CharsetTestCase.STR)
+
+    def test_code_charset(self):
+        """Test decoding with different charsets and invalid header charset."""
+        req = CharsetTestCase._create_request('latin1',
+                                              CharsetTestCase.LATIN1_BYTES)
+        self.assertEqual('latin1', req.charset)
+        self.assertEqual('latin1', req.encoding)
+        self.assertEqual(req.raw, CharsetTestCase.LATIN1_BYTES)
+        self.assertEqual(req.content, CharsetTestCase.STR)
+
+    def test_invalid_charset(self):
+        """Test decoding with different and invalid charsets."""
+        req = CharsetTestCase._create_request('utf16',
+                                              CharsetTestCase.LATIN1_BYTES)
+        self.assertEqual('utf16', req.charset)
+        self.assertRaises(UnicodeDecodeError, lambda: req.encoding)
+        self.assertEqual(req.raw, CharsetTestCase.LATIN1_BYTES)
+        self.assertRaises(UnicodeDecodeError, lambda: req.content)
 
 
 if __name__ == '__main__':

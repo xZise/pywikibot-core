@@ -56,8 +56,8 @@ November 2013
 
 #
 # (C) Multichill, 2008-2009
-# (C) Xqt, 2009-2014
-# (C) Pywikibot team, 2008-2014
+# (C) Xqt, 2009-2015
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -91,7 +91,6 @@ commonscatTemplates = {
     'da': (u'Commonscat',
            [u'Commons cat', u'Commons category', u'Commonscat left',
             u'Commonscat2']),
-    'de': (u'Commonscat', [u'Commons cat']),
     'en': (u'Commons category',
            [u'Commoncat', u'Commonscat', u'Commons cat', u'Commons+cat',
             u'Commonscategory', u'Commons and category', u'Commonscat-inline',
@@ -218,24 +217,6 @@ ignoreTemplates = {
            u'Tracking category', u'Trackingcatu',
            u'Template category', u'Wikipedia category'
            u'分类重定向', u'追蹤分類', u'共享資源', u'追蹤分類'],
-}
-
-msg_change = {
-    'be-x-old': u'Робат: зьмяніў шаблён [[:Commons:Category:%(oldcat)s|%(oldcat)s]] на [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'cs': u'Robot změnil šablonu Commonscat z [[:Commons:Category:%(oldcat)s|%(oldcat)s]] na [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'da': u'Robot: Ændrer commonscat link fra [[:Commons:Category:%(oldcat)s|%(oldcat)s]] til [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'de': u'Bot: Ändere commonscat link von [[:Commons:Category:%(oldcat)s|%(oldcat)s]] zu [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'en': u'Bot: Changing commonscat link from [[:Commons:Category:%(oldcat)s|%(oldcat)s]] to [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'fa': u'ربات: تغییر پیوند به انبار از [[:Commons:Category:%(oldcat)s|%(oldcat)s]] به [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'fr': u'Robot: Changé commonscat link de [[:Commons:Category:%(oldcat)s|%(oldcat)s]] à [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'frr': u'Bot: Feranere commonscat link faan [[:Commons:Category:%(oldcat)s|%(oldcat)s]] tu [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'is': u'Vélmenni: Breyti Commonscat tengli frá [[:Commons:Category:%(oldcat)s|%(oldcat)s]] í [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'pdc': u'Waddefresser: commonscat Gleecher vun [[:Commons:Category:%(oldcat)s|%(oldcat)s]] nooch [[:Commons:Category:%(newcat)s|%(newcat)s]] geennert',
-    'ru': u'Бот: Изменение commonscat-ссылки с [[:Commons:Category:%(oldcat)s|%(oldcat)s]] на [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'sk': u'Robot zmenil šablónu Commonscat z [[:Commons:Category:%(oldcat)s|%(oldcat)s]] na [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'uk': u'Бот: Зміна commonscat-посилання з [[:Commons:Category:%(oldcat)s|%(oldcat)s]] на [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'th': u'บอต: เปลี่ยนลิงก์หมวดหมู่คอมมอนส์จาก [[:Commons:Category:%(oldcat)s|%(oldcat)s]] เป็น [[:Commons:Category:%(newcat)s|%(newcat)s]]',
-    'zh': u'機器人：更改 commonscat 連結，從 %(oldcat)s 至 %(newcat)s',
 }
 
 
@@ -388,10 +369,9 @@ class CommonscatBot(Bot):
         if self.getOption('summary'):
             comment = self.getOption('summary')
         else:
-            comment = i18n.translate(page.site,
-                                     msg_change,
-                                     fallback=True) % {'oldcat': oldcat,
-                                                       'newcat': newcat}
+            comment = i18n.twtranslate(page.site.code,
+                                       'commonscat-msg_change',
+                                       {'oldcat': oldcat, 'newcat': newcat})
 
         self.userPut(page, page.text, newtext, comment=comment,
                      ignore_save_related_errors=True)
@@ -473,10 +453,12 @@ class CommonscatBot(Bot):
                 pywikibot.output(u'Commons category does not exist. Examining deletion log...')
                 logpages = self.commons.logevents(logtype='delete', page=commonsPage)
                 for logitem in logpages:
-                    logitem = next(logpages)
-                    (logpage, loguser, logtimestamp, logcomment) = logitem
+                    loguser = logitem.user()
+                    logcomment = logitem.comment()
                     # Some logic to extract the target page.
-                    regex = u'moved to \[\[\:?Category:(?P<newcat1>[^\|\}]+)(\|[^\}]+)?\]\]|Robot: Changing Category:(.+) to Category:(?P<newcat2>.+)'
+                    regex = (
+                        r'moved to \[\[\:?Category:(?P<newcat1>[^\|\}]+)(\|[^\}]+)?\]\]|'
+                        r'Robot: Changing Category:(.+) to Category:(?P<newcat2>.+)')
                     m = re.search(regex, logcomment, flags=re.I)
                     if m:
                         if m.group('newcat1'):
@@ -485,9 +467,9 @@ class CommonscatBot(Bot):
                             return self.checkCommonscatLink(m.group('newcat2'))
                     else:
                         pywikibot.output(
-                            u'getCommonscat: Deleted by %s. Couldn\'t find '
+                            u'getCommonscat: %s deleted by %s. Couldn\'t find '
                             u'move target in "%s"'
-                            % (loguser, logcomment))
+                            % (commonsPage, loguser, logcomment))
                         return u''
                 return u''
             elif commonsPage.isRedirectPage():
@@ -520,10 +502,7 @@ def main(*args):
     @type args: list of unicode
     """
     options = {}
-    generator = None
     checkcurrent = False
-    ns = []
-    ns.append(14)
 
     # Process global args and prepare generator args parser
     local_args = pywikibot.handle_args(args)
@@ -543,16 +522,14 @@ def main(*args):
             genFactory.handleArg(arg)
 
     if checkcurrent:
+        site = pywikibot.Site()
         primaryCommonscat, commonscatAlternatives = \
             CommonscatBot.getCommonscatTemplate(
-                pywikibot.Site().code)
-        generator = pagegenerators.NamespaceFilterPageGenerator(
-            pagegenerators.ReferringPageGenerator(
-                pywikibot.Page(pywikibot.Site(),
-                               u'Template:' + primaryCommonscat),
-                onlyTemplateInclusion=True), ns)
-
-    if not generator:
+                site.code)
+        template_page = pywikibot.Page(site, u'Template:' + primaryCommonscat)
+        generator = template_page.getReferences(namespaces=14,
+                                                onlyTemplateInclusion=True)
+    else:
         generator = genFactory.getCombinedGenerator()
 
     if generator:

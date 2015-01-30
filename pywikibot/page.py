@@ -10,19 +10,19 @@ This module also includes objects:
 
 """
 #
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
 __version__ = '$Id$'
 #
 
-import sys
-import logging
-import re
-import unicodedata
 import collections
 import hashlib
+import logging
+import re
+import sys
+import unicodedata
 
 try:
     from collections import OrderedDict
@@ -36,6 +36,7 @@ if sys.version_info[0] > 2:
     from urllib.parse import quote_from_bytes, unquote_to_bytes
     from urllib.request import urlopen
 else:
+    chr = unichr  # noqa
     import htmlentitydefs
     from urllib import quote as quote_from_bytes, unquote as unquote_to_bytes
     from urllib import urlopen
@@ -292,6 +293,11 @@ class BasePage(pywikibot.UnicodeMixin, ComparableMixin):
         representation of an instance can not change after the construction.
         """
         return hash(unicode(self))
+
+    def full_url(self):
+        """Return the full URL."""
+        return self.site.base_url(self.site.nice_get_address(self.title(
+            asUrl=True)))
 
     def autoFormat(self):
         """Return L{date.getAutoFormat} dictName and value, if any.
@@ -671,7 +677,7 @@ class BasePage(pywikibot.UnicodeMixin, ComparableMixin):
         """
         if self.isCategoryRedirect():
             return Category(Link(self._catredirect, self.site))
-        raise pywikibot.IsNotRedirectPage(self.title())
+        raise pywikibot.IsNotRedirectPage(self)
 
     def isEmpty(self):
         """Return True if the page text has less than 4 characters.
@@ -1777,16 +1783,17 @@ class BasePage(pywikibot.UnicodeMixin, ComparableMixin):
                                  u'required.' % self.title(asLink=True))
         return False
 
+    @deprecated('Page.is_flow_page()')
     def isFlowPage(self):
-        """Whether the given title is a Flow page.
+        return self.isFlowPage()
 
-        @return: bool
+    def is_flow_page(self):
         """
-        if not self.site.has_extension('Flow'):
-            return False
-        if not hasattr(self, '_flowinfo'):
-            self.site.loadflowinfo(self)
-        return 'enabled' in self._flowinfo
+        Whether a page is a Flow page.
+
+        @rtype: bool
+        """
+        return self.content_model == 'flow-board'
 
 # ####### DEPRECATED METHODS ########
 
@@ -3959,6 +3966,72 @@ class Claim(Property):
         else:
             self.qualifiers[qualifier.getID()] = [qualifier]
 
+    def target_equals(self, value):
+        """
+        Check whether the Claim's target is equal to specified value.
+
+        The function checks for:
+        - ItemPage ID equality
+        - WbTime year equality
+        - Coordinate equality, regarding precision
+        - direct equality
+
+        @param value: the value to compare with
+        @return: true if the Claim's target is equal to the value provided,
+            false otherwise
+        @rtype: bool
+        """
+        if (isinstance(self.target, pywikibot.ItemPage) and
+                isinstance(value, str) and
+                self.target.id == value):
+            return True
+
+        if (isinstance(self.target, pywikibot.WbTime) and
+                not isinstance(value, pywikibot.WbTime) and
+                self.target.year == int(value)):
+            return True
+
+        if (isinstance(self.target, pywikibot.Coordinate) and
+                isinstance(value, str)):
+            coord_args = [float(x) for x in value.split(',')]
+            if len(coord_args) >= 3:
+                precision = coord_args[2]
+            else:
+                precision = 0.0001  # Default value (~10 m at equator)
+            try:
+                if self.target.precision is not None:
+                    precision = max(precision, self.target.precision)
+            except TypeError:
+                pass
+
+            if (abs(self.target.lat - coord_args[0]) <= precision and
+                    abs(self.target.lon - coord_args[1]) <= precision):
+                return True
+
+        if self.target == value:
+            return True
+
+        return False
+
+    def has_qualifier(self, qualifier_id, target):
+        """
+        Check whether Claim contains specified qualifier.
+
+        @param qualifier_id: id of the qualifier
+        @type qualifier_id: str
+        @param target: qualifier target to check presence of
+        @return: true if the qualifier was found, false otherwise
+        @rtype: bool
+        """
+        if self.isQualifier or self.isReference:
+            raise ValueError(u'Qualifiers and references cannot have '
+                             u'qualifiers.')
+
+        for qualifier in self.qualifiers.get(qualifier_id, []):
+            if qualifier.target_equals(target):
+                return True
+        return False
+
     def _formatValue(self):
         """
         Format the target into the proper JSON value that Wikibase wants.
@@ -4546,7 +4619,7 @@ def html2unicode(text, ignore=None):
     entityR = re.compile(
         r'&(?:amp;)?(#(?P<decimal>\d+)|#x(?P<hex>[0-9a-fA-F]+)|(?P<name>[A-Za-z]+));')
     # These characters are Html-illegal, but sadly you *can* find some of
-    # these and converting them to unichr(decimal) is unsuitable
+    # these and converting them to chr(decimal) is unsuitable
     convertIllegalHtmlEntities = {
         128: 8364,  # €
         130: 8218,  # ‚
@@ -4577,7 +4650,7 @@ def html2unicode(text, ignore=None):
         159: 376    # Ÿ
     }
     # ensuring that illegal &#129; &#141; and &#157, which have no known values,
-    # don't get converted to unichr(129), unichr(141) or unichr(157)
+    # don't get converted to chr(129), chr(141) or chr(157)
     ignore = set(ignore) | set([129, 141, 157])
     result = u''
     i = 0
@@ -4602,14 +4675,12 @@ def html2unicode(text, ignore=None):
             except KeyError:
                 pass
             if unicodeCodepoint and unicodeCodepoint not in ignore:
-                if sys.version_info[0] > 2:
-                    result += chr(unicodeCodepoint)
-                elif unicodeCodepoint > sys.maxunicode:
+                if unicodeCodepoint > sys.maxunicode:
                     # solve narrow Python 2 build exception (UTF-16)
                     unicode_literal = lambda n: eval(r"u'\U%08x'" % n)
                     result += unicode_literal(unicodeCodepoint)
                 else:
-                    result += unichr(unicodeCodepoint)
+                    result += chr(unicodeCodepoint)
             else:
                 # Leave the entity unchanged
                 result += text[match.start():match.end()]

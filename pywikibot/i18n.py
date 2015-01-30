@@ -347,19 +347,25 @@ def translate(code, xdict, parameters=None, fallback=False):
     return trans
 
 
-def twtranslate(code, twtitle, parameters=None):
+def twtranslate(code, twtitle, parameters=None, fallback=True):
     """
     Translate a message.
 
     The translations are retrieved from i18n.<package>, based on the callers
     import table.
 
+    fallback parameter must be True for i18n and False for L10N or testing
+    purposes.
+
     @param code: The language code
     @param twtitle: The TranslateWiki string title, in <package>-<key> format
     @param parameters: For passing parameters.
+    @param fallback: Try an alternate language code
+    @type fallback: boolean
     """
     package = twtitle.split("-")[0]
-    transdict = getattr(__import__(messages_package_name, fromlist=[package]), package).msg
+    transdict = getattr(__import__(messages_package_name, fromlist=[package]),
+                        package).msg
 
     code_needed = False
     # If a site is given instead of a code, use its language
@@ -381,17 +387,19 @@ def twtranslate(code, twtitle, parameters=None):
         trans = transdict[lang][twtitle]
     except KeyError:
         # try alternative languages and English
-        for alt in _altlang(lang) + ['en']:
-            try:
-                trans = transdict[alt][twtitle]
-                if code_needed:
-                    lang = alt
-                break
-            except KeyError:
-                continue
-        if trans is None:
-            raise TranslationError("No English translation has been defined "
-                                   "for TranslateWiki key %r" % twtitle)
+        if fallback:
+            for alt in _altlang(lang) + ['en']:
+                try:
+                    trans = transdict[alt][twtitle]
+                    if code_needed:
+                        lang = alt
+                    break
+                except KeyError:
+                    continue
+            if trans is None:
+                raise TranslationError(
+                    "No English translation has been defined "
+                    "for TranslateWiki key %r" % twtitle)
     # send the language code back via the given list
     if code_needed:
         code.append(lang)
@@ -490,11 +498,24 @@ def twhas_key(code, twtitle):
     @param twtitle: The TranslateWiki string title, in <package>-<key> format
     """
     package = twtitle.split("-")[0]
-    transdict = getattr(__import__("i18n", fromlist=[package]), package).msg
+    transdict = getattr(__import__(messages_package_name, fromlist=[package]),
+                        package).msg
     # If a site is given instead of a code, use its language
     if hasattr(code, 'code'):
         code = code.code
     return code in transdict and twtitle in transdict[code]
+
+
+def twget_keys(twtitle):
+    """
+    Return all language codes for a special message.
+
+    @param twtitle: The TranslateWiki string title, in <package>-<key> format
+    """
+    package = twtitle.split("-")[0]
+    transdict = getattr(__import__(messages_package_name, fromlist=[package]),
+                        package).msg
+    return (lang for lang in sorted(transdict.keys()) if lang != 'qqq')
 
 
 def input(twtitle, parameters=None, password=False):

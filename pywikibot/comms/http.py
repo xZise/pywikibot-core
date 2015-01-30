@@ -45,7 +45,6 @@ if StrictVersion(httplib2.__version__) < StrictVersion("0.6.0"):
 if sys.version_info[0] > 2:
     from ssl import SSLError as SSLHandshakeError
     import queue as Queue
-    import urllib.parse as urlparse
     from http import cookiejar as cookielib
     from urllib.parse import quote
 else:
@@ -55,7 +54,6 @@ else:
         from httplib2 import ServerNotFoundError as SSLHandshakeError
 
     import Queue
-    import urlparse
     import cookielib
     from urllib2 import quote
 
@@ -222,7 +220,7 @@ def user_agent(site=None, format_string=None):
 
 
 @deprecate_arg('ssl', None)
-def request(site=None, uri=None, *args, **kwargs):
+def request(site=None, uri=None, charset=None, *args, **kwargs):
     """
     Request to Site with default error handling and response decoding.
 
@@ -237,8 +235,12 @@ def request(site=None, uri=None, *args, **kwargs):
     @type site: L{pywikibot.site.BaseSite}
     @param uri: the URI to retrieve
     @type uri: str
+    @param charset: Either a valid charset (usable for str.decode()) or None
+        to automatically chose the charset from the returned header (defaults
+        to latin-1)
+    @type charset: CodecInfo, str, None
     @return: The received data
-    @rtype: unicode
+    @rtype: a unicode string
     """
     assert(site or uri)
     if not site:
@@ -247,19 +249,14 @@ def request(site=None, uri=None, *args, **kwargs):
         r = fetch(uri, *args, **kwargs)
         return r.content
 
-    proto = site.protocol()
-    if proto == 'https':
-        host = site.ssl_hostname()
-        uri = site.ssl_pathprefix() + uri
-    else:
-        host = site.hostname()
-    baseuri = urlparse.urljoin("%s://%s" % (proto, host), uri)
+    baseuri = site.base_url(uri)
 
     kwargs.setdefault("disable_ssl_certificate_validation",
                       site.ignore_certificate_error())
 
     format_string = kwargs.setdefault("headers", {}).get("user-agent")
     kwargs["headers"]["user-agent"] = user_agent(site, format_string)
+    kwargs['charset'] = charset
 
     r = fetch(baseuri, *args, **kwargs)
     return r.content

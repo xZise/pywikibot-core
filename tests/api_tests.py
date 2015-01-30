@@ -69,16 +69,16 @@ class TestParamInfo(DefaultSiteTestCase):
         self.assertIn('main', pi)
         self.assertIn('paraminfo', pi)
         self.assertEqual(len(pi),
-                         len(pi.init_modules))
+                         len(pi.preloaded_modules))
 
         self.assertIn('info', pi._query_modules)
+        self.assertIn('login', pi._action_modules)
 
     def test_init_pageset(self):
         site = self.get_site()
         self.assertNotIn('query', api.ParamInfo.init_modules)
         pi = api.ParamInfo(site, set(['pageset']))
         self.assertNotIn('query', api.ParamInfo.init_modules)
-        self.assertNotIn('query', pi.preloaded_modules)
         self.assertEqual(len(pi), 0)
         pi._init()
 
@@ -86,12 +86,10 @@ class TestParamInfo(DefaultSiteTestCase):
         self.assertIn('paraminfo', pi)
         self.assertIn('pageset', pi)
 
-        if pi.modules_only_mode:
-            self.assertIn('query', pi.preloaded_modules)
+        if 'query' in pi.preloaded_modules:
             self.assertIn('query', pi)
             self.assertEqual(len(pi), 4)
         else:
-            self.assertNotIn('query', pi.preloaded_modules)
             self.assertNotIn('query', pi)
             self.assertEqual(len(pi), 3)
 
@@ -229,6 +227,10 @@ class TestParamInfo(DefaultSiteTestCase):
 
     def test_new_mode(self):
         site = self.get_site()
+        if MediaWikiVersion(site.version()) < MediaWikiVersion('1.25wmf4'):
+            raise unittest.SkipTest(
+                "version %s doesn't support the new paraminfo api"
+                % site.version())
         pi = api.ParamInfo(site, modules_only_mode=True)
         pi.fetch(['info'])
         self.assertIn('info', pi)
@@ -239,6 +241,69 @@ class TestParamInfo(DefaultSiteTestCase):
                          1 + len(pi.preloaded_modules))
 
         self.assertIn('revisions', pi.prefixes)
+
+
+class TestOptionSet(TestCase):
+
+    """OptionSet class test class."""
+
+    family = 'wikipedia'
+    code = 'en'
+
+    def test_non_lazy_load(self):
+        """Test OptionSet with initialised site."""
+        options = api.OptionSet(self.get_site(), 'recentchanges', 'show')
+        self.assertRaises(KeyError, options.__setitem__, 'invalid_name', True)
+        self.assertRaises(ValueError, options.__setitem__, 'anon', 'invalid_value')
+        options['anon'] = True
+        self.assertCountEqual(['anon'], options._enabled)
+        self.assertEqual(set(), options._disabled)
+        self.assertEqual(1, len(options))
+        self.assertEqual(['anon'], list(options))
+        self.assertEqual(['anon'], list(options.api_iter()))
+        options['bot'] = False
+        self.assertCountEqual(['anon'], options._enabled)
+        self.assertCountEqual(['bot'], options._disabled)
+        self.assertEqual(2, len(options))
+        self.assertEqual(['anon', 'bot'], list(options))
+        self.assertEqual(['anon', '!bot'], list(options.api_iter()))
+        options.clear()
+        self.assertEqual(set(), options._enabled)
+        self.assertEqual(set(), options._disabled)
+        self.assertEqual(0, len(options))
+        self.assertEqual([], list(options))
+        self.assertEqual([], list(options.api_iter()))
+
+    def test_lazy_load(self):
+        """Test OptionSet with delayed site initialisation."""
+        options = api.OptionSet()
+        options['invalid_name'] = True
+        options['anon'] = True
+        self.assertIn('invalid_name', options._enabled)
+        self.assertEqual(2, len(options))
+        self.assertRaises(KeyError, options._set_site, self.get_site(),
+                          'recentchanges', 'show')
+        self.assertEqual(2, len(options))
+        options._set_site(self.get_site(), 'recentchanges', 'show', True)
+        self.assertEqual(1, len(options))
+        self.assertRaises(TypeError, options._set_site, self.get_site(),
+                          'recentchanges', 'show')
+
+
+class TestDryOptionSet(DefaultDrySiteTestCase):
+
+    """OptionSet class test class."""
+
+    def test_mutable_mapping(self):
+        """Test keys, values and items from MutableMapping."""
+        options = api.OptionSet()
+        options['a'] = True
+        options['b'] = False
+        options['c'] = None
+        self.assertCountEqual(['a', 'b'], list(options.keys()))
+        self.assertCountEqual([True, False], list(options.values()))
+        self.assertEqual(set(), set(options.values()) - set([True, False]))
+        self.assertCountEqual([('a', True), ('b', False)], list(options.items()))
 
 
 class TestDryPageGenerator(TestCase):

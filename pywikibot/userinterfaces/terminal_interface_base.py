@@ -189,7 +189,7 @@ class UI:
         if sys.version_info[0] > 2:
             return input()
         else:
-            return raw_input()
+            return raw_input()  # noqa
 
     def input(self, question, password=False):
         """
@@ -331,7 +331,7 @@ class UI:
         @rtype: unicode or None
         """
         try:
-            import gui
+            from pywikibot.userinterfaces import gui
         except ImportError as e:
             print('Could not load GUI modules: %s' % e)
             return text

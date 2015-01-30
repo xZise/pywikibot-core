@@ -15,9 +15,9 @@ import collections
 import imp
 
 if sys.version_info[0] > 2:
-    from urllib.parse import urlparse
+    import urllib.parse as urlparse
 else:
-    from urlparse import urlparse
+    import urlparse
 
 import pywikibot
 from pywikibot import config2 as config
@@ -713,6 +713,8 @@ class Family(object):
         # String used as separator between category links and the text
         self.category_text_separator = config.line_separator * 2
         # When both at the bottom should categories come after interwikilinks?
+        # TODO: T86284 Needed on Wikia sites, as it uses the CategorySelect
+        # extension which puts categories last on all sites.  TO BE DEPRECATED!
         self.categories_last = []
 
         # Which languages have a special order for putting interlanguage
@@ -1042,6 +1044,15 @@ class Family(object):
         # Override this ONLY if the wiki family requires a path prefix
         return ''
 
+    def base_url(self, code, uri):
+        protocol = self.protocol(code)
+        if protocol == 'https':
+            host = self.ssl_hostname(code)
+            uri = self.ssl_pathprefix(code) + uri
+        else:
+            host = self.hostname(code)
+        return urlparse.urljoin('{0}://{1}'.format(protocol, host), uri)
+
     def path(self, code):
         return '%s/index.php' % self.scriptpath(code)
 
@@ -1053,6 +1064,9 @@ class Family(object):
 
     def nicepath(self, code):
         return '/wiki/'
+
+    def rcstream_host(self, code):
+        raise NotImplementedError("This family does not support RCStream")
 
     def nice_get_address(self, code, title):
         return '%s%s' % (self.nicepath(code), title)
@@ -1090,9 +1104,9 @@ class Family(object):
         """
         Return whether this family matches the given url.
 
-        The protocol must match, if it is present in the URL. It must match
-        URLs generated via C{self.langs} and L{Family.nice_get_address} or
-        L{Family.path}.
+        It must match URLs generated via C{self.langs} and
+        L{Family.nice_get_address} or L{Family.path}. If the protocol doesn't
+        match but is present in the interwikimap it'll log this.
 
         It uses L{Family._get_path_regex} to generate a regex defining the path
         after the domain.
@@ -1111,9 +1125,10 @@ class Family(object):
         else:
             return None
         if url_match.group(1) and url_match.group(1) != self.protocol(code):
-            return None
-        else:
-            return code
+            pywikibot.log('The entry in the interwikimap uses {0} but the '
+                          'family is configured to use {1}'.format(
+                url_match.group(1), self.protocol(code)))
+        return code
 
     def maximum_GET_length(self, code):
         return config.maximum_GET_length
@@ -1123,6 +1138,7 @@ class Family(object):
         return '%s%s' % (code, self.name)
 
     # Which version of MediaWiki is used?
+    @deprecated('APISite.version()')
     def version(self, code):
         """ Return MediaWiki version number as a string.
 
@@ -1131,7 +1147,27 @@ class Family(object):
         # Here we return the latest mw release for downloading
         return '1.24.1'
 
-    @deprecated("version()")
+    def force_version(self, code):
+        """
+        Return a manual version number.
+
+        The site is usually using the version number from the servers'
+        siteinfo, but if there is a problem with that it's possible to return
+        a non-empty string here representing another version number.
+
+        For example, L{pywikibot.tools.MediaWikiVersion} treats version
+        numbers ending with 'alpha', 'beta' or 'rc' as newer than any version
+        ending with 'wmf<number>'. But if that causes breakage it's possible
+        to override it here to a version number which doesn't cause breakage.
+
+        @return: A version number which can be parsed using
+            L{pywikibot.tools.MediaWikiVersion}. If empty/None it uses the
+            version returned via siteinfo.
+        @rtype: str
+        """
+        return None
+
+    @deprecated("APISite.version()")
     def versionnumber(self, code):
         """ DEPRECATED, use version() instead.
 
@@ -1260,6 +1296,9 @@ class WikimediaFamily(Family):
         """Return 'https' as the protocol."""
         return 'https'
 
+    def rcstream_host(self, code):
+        return 'stream.wikimedia.org'
+
 
 class AutoFamily(Family):
 
@@ -1269,7 +1308,7 @@ class AutoFamily(Family):
         """Constructor."""
         super(AutoFamily, self).__init__()
         self.name = name
-        self.url = urlparse(url)
+        self.url = urlparse.urlparse(url)
         self.langs = {
             name: self.url.netloc
         }
