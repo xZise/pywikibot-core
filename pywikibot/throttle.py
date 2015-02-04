@@ -1,28 +1,25 @@
 # -*- coding: utf-8  -*-
-"""Mechanics to slow down wiki read and/or write rate."""
+"""
+Mechanics to slow down wiki read and/or write rate.
+
+To avoid race conditions it's using a sqlite database and writes for each site
+the next time a request can be issued.
+"""
 #
-# (C) Pywikibot team, 2008
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
-__version__ = '$Id$'
-#
 
-import math
+import sqlite3
 import threading
 import time
 
 import pywikibot
 from pywikibot import config
+from pywikibot.tools import deprecated_args, deprecated
 
 _logger = "wiki.throttle"
-
-# global process identifier
-#
-# When the first Throttle is instantiated, it will set this variable to a
-# positive integer, which will apply to all throttle objects created by this
-# process.
-pid = False
 
 
 class Throttle(object):
@@ -37,197 +34,117 @@ class Throttle(object):
 
     """
 
-    def __init__(self, site, mindelay=None, maxdelay=None, writedelay=None,
-                 multiplydelay=True):
+    @deprecated_args(mindelay='read_delay', maxdelay=None,
+                     writedelay='write_delay', multiplydelay=None)
+    def __init__(self, site, read_delay=None, write_delay=None):
         """Constructor."""
         self.lock = threading.RLock()
         self.mysite = str(site)
-        self.ctrlfilename = config.datafilepath('throttle.ctrl')
-        self.mindelay = mindelay
-        if self.mindelay is None:
-            self.mindelay = config.minthrottle
-        self.maxdelay = maxdelay
-        if self.maxdelay is None:
-            self.maxdelay = config.maxthrottle
-        self.writedelay = writedelay
-        if self.writedelay is None:
-            self.writedelay = config.put_throttle
-        self.last_read = 0
-        self.last_write = 0
-        self.next_multiplicity = 1.0
+        self._database = sqlite3.connect(config.datafilepath('throttle.db'))
+        self._database.create_function('now', 0, time.time)
+        with self._database:
+            cursor = self._database.cursor()
+            cursor.execute('SELECT name FROM sqlite_master WHERE type="table" AND name="throttle"')
+            if not cursor.fetchall():
+                cursor.execute('CREATE TABLE "throttle" ('
+                               'site TEXT, '
+                               'expiry INTEGER, '
+                               'read INT CHECK (read IS 0 OR read IS 1), '
+                               'UNIQUE (site, read))')
 
-        # Check logfile again after this many seconds:
-        self.checkdelay = 300
+        self._last_read = 0
+        self._last_write = 0
 
-        # Ignore processes that have not made a check in this many seconds:
-        self.dropdelay = 600
-
-        # Free the process id after this many seconds:
-        self.releasepid = 1200
-
-        self.lastwait = 0.0
         self.delay = 0
-        self.checktime = 0
-        self.multiplydelay = multiplydelay
-        if self.multiplydelay:
-            self.checkMultiplicity()
-        self.setDelays()
+        self.set_delays(read_delay, write_delay)
 
+    @property
+    def last_read(self):
+        """Last time a read request has been send to the server."""
+        return self._last_read
+
+    @property
+    def last_write(self):
+        """Last time a write request has been send to the server."""
+        return self._last_write
+
+    @deprecated
     def checkMultiplicity(self):
-        """Count running processes for site and set process_multiplicity."""
-        global pid
-        self.lock.acquire()
-        mysite = self.mysite
-        pywikibot.debug(u"Checking multiplicity: pid = %(pid)s" % globals(),
-                        _logger)
-        try:
-            processes = []
-            my_pid = pid or 1  # start at 1 if global pid not yet set
-            count = 1
-            # open throttle.log
-            try:
-                f = open(self.ctrlfilename, 'r')
-            except IOError:
-                if not pid:
-                    pass
-                else:
-                    raise
-            else:
-                now = time.time()
-                for line in f.readlines():
-                    # parse line; format is "pid timestamp site"
-                    try:
-                        line = line.split(' ')
-                        this_pid = int(line[0])
-                        ptime = int(line[1].split('.')[0])
-                        this_site = line[2].rstrip()
-                    except (IndexError, ValueError):
-                        # Sometimes the file gets corrupted ignore that line
-                        continue
-                    if now - ptime > self.releasepid:
-                        continue    # process has expired, drop from file
-                    if now - ptime <= self.dropdelay \
-                       and this_site == mysite \
-                       and this_pid != pid:
-                        count += 1
-                    if this_site != self.mysite or this_pid != pid:
-                        processes.append({'pid': this_pid,
-                                          'time': ptime,
-                                          'site': this_site})
-                    if not pid and this_pid >= my_pid:
-                        my_pid = this_pid + 1  # next unused process id
-                f.close()
+        """DEPRECATED: This method call is not necessary anymore."""
+        pass
 
-            if not pid:
-                pid = my_pid
-            self.checktime = time.time()
-            processes.append({'pid': pid,
-                              'time': self.checktime,
-                              'site': mysite})
-            processes.sort(key=lambda p: (p['pid'], p['site']))
-            try:
-                f = open(self.ctrlfilename, 'w')
-                for p in processes:
-                    f.write("%(pid)s %(time)s %(site)s\n" % p)
-            except IOError:
-                pass
-            else:
-                f.close()
-            self.process_multiplicity = count
-            pywikibot.log(u"Found %(count)s %(mysite)s processes "
-                          u"running, including this one." % locals())
-        finally:
-            self.lock.release()
-
+    @deprecated('Throttle.set_delays')
     def setDelays(self, delay=None, writedelay=None, absolute=False):
+        """Set the nominal delays in seconds. Defaults to config values."""
+        self.set_delays(delay, writedelay)
+
+    def set_delays(self, read_delay=None, write_delay=None):
         """Set the nominal delays in seconds. Defaults to config values."""
         self.lock.acquire()
         try:
-            if delay is None:
-                delay = self.mindelay
-            if writedelay is None:
-                writedelay = config.put_throttle
-            if absolute:
-                self.maxdelay = delay
-                self.mindelay = delay
-            self.delay = delay
-            self.writedelay = min(max(self.mindelay, writedelay),
-                                  self.maxdelay)
+            if read_delay is None:
+                read_delay = config.minthrottle
+            if write_delay is None:
+                write_delay = config.put_throttle
+            self._read_delay = read_delay
+            self._write_delay = write_delay
             # Start the delay count now, not at the next check
-            self.last_read = self.last_write = time.time()
+            self._last_read = self._last_write = time.time()
         finally:
             self.lock.release()
 
+    @deprecated('Throttle.get_delay()')
     def getDelay(self, write=False):
+        """DEPRECATED: Return waiting time in seconds."""
+        return self.get_delay(write=write)
+
+    @deprecated('Throttle.get_delay()')
+    def waittime(self, write=False):
+        """DEPRECATED: Return waiting time in seconds."""
+        return self.get_delay(write=write)
+
+    @deprecated
+    def drop(self):
+        """DEPRECATED: This method call is not necessary anymore."""
+        pass
+
+    def get_delay(self, write=False):
         """Return the actual delay, accounting for multiple processes.
 
         This value is the maximum wait between reads/writes, not taking
         account of how much time has elapsed since the last access.
 
         """
-        if write:
-            thisdelay = self.writedelay
-        else:
-            thisdelay = self.delay
-        if self.multiplydelay:  # We're checking for multiple processes
-            if time.time() > self.checktime + self.checkdelay:
-                self.checkMultiplicity()
-            if thisdelay < (self.mindelay * self.next_multiplicity):
-                thisdelay = self.mindelay * self.next_multiplicity
-            elif thisdelay > self.maxdelay:
-                thisdelay = self.maxdelay
-            thisdelay *= self.process_multiplicity
-        return thisdelay
-
-    def waittime(self, write=False):
-        """Return waiting time in seconds if a query would be made right now."""
-        # Take the previous requestsize in account calculating the desired
-        # delay this time
-        thisdelay = self.getDelay(write=write)
-        now = time.time()
-        if write:
-            ago = now - self.last_write
-        else:
-            ago = now - self.last_read
-        if ago < thisdelay:
-            delta = thisdelay - ago
-            return delta
-        else:
-            return 0.0
-
-    def drop(self):
-        """Remove me from the list of running bot processes."""
-        # drop all throttles with this process's pid, regardless of site
-        self.checktime = 0
-        processes = []
+        self.lock.acquire()
         try:
-            f = open(self.ctrlfilename, 'r')
-        except IOError:
-            return
-        else:
-            now = time.time()
-            for line in f.readlines():
-                try:
-                    line = line.split(' ')
-                    this_pid = int(line[0])
-                    ptime = int(line[1].split('.')[0])
-                    this_site = line[2].rstrip()
-                except (IndexError, ValueError):
-                    # Sometimes the file gets corrupted ignore that line
-                    continue
-                if now - ptime <= self.releasepid \
-                   and this_pid != pid:
-                    processes.append({'pid': this_pid,
-                                      'time': ptime,
-                                      'site': this_site})
-        processes.sort(key=lambda p: p['pid'])
-        try:
-            f = open(self.ctrlfilename, 'w')
-            for p in processes:
-                f.write("%(pid)s %(time)s %(site)s\n" % p)
-        except IOError:
-            return
-        f.close()
+            delay = self._write_delay if write else self._read_delay
+            read = 0 if write else 1
+            with self._database:
+                cursor = self._database.cursor()
+                cursor.execute('BEGIN TRANSACTION')
+                # make sure there is an entry
+                cursor.execute('INSERT OR IGNORE INTO throttle '
+                               '(site, expiry, read) '
+                               'VALUES (?, now(), ?) ',
+                               (self.mysite, read))
+                cursor.execute('UPDATE throttle '
+                               'SET expiry=max(now(), expiry) + ? '
+                               'WHERE site=? AND read=?',
+                               (delay, self.mysite, read))
+                # remove all expired entries
+                cursor.execute('DELETE FROM throttle '
+                               'WHERE expiry < now() AND site != ?',
+                               (self.mysite, ))
+                cursor.execute('SELECT expiry FROM throttle '
+                               'WHERE site = ? AND read = ?',
+                               (self.mysite, read))
+                result = cursor.fetchall()
+            assert(len(result) == 1)
+            assert(len(result[0]) == 1)
+            # It reads the expiry, this one can execute immediately
+            return max(result[0][0] - delay - time.time(), 0.0)
+        finally:
+            self.lock.release()
 
     def wait(self, seconds):
         """Wait for seconds seconds.
@@ -262,20 +179,13 @@ class Throttle(object):
         """
         self.lock.acquire()
         try:
-            wait = self.waittime(write=write)
-            # Calculate the multiplicity of the next delay based on how
-            # big the request is that is being posted now.
-            # We want to add "one delay" for each factor of two in the
-            # size of the request. Getting 64 pages at once allows 6 times
-            # the delay time for the server.
-            self.next_multiplicity = math.log(1 + requestsize) / math.log(2.0)
-
+            wait = self.get_delay(write=write)
             self.wait(wait)
 
             if write:
-                self.last_write = time.time()
+                self._last_write = time.time()
             else:
-                self.last_read = time.time()
+                self._last_read = time.time()
         finally:
             self.lock.release()
 

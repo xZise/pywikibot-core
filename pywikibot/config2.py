@@ -51,7 +51,7 @@ _imported_modules = ('os', 'sys', 'collections')
 
 _private_values = ['authenticate', 'proxy', 'db_password']
 _deprecated_variables = ['use_SSL_onlogin', 'use_SSL_always',
-                         'available_ssl_project']
+                         'available_ssl_project', 'maxthrottle']
 
 # ############# ACCOUNT SETTINGS ##############
 
@@ -503,7 +503,7 @@ upload_to_commons = False
 # control the rate of server access.  Set minthrottle to non-zero to use a
 # throttle on read access.
 minthrottle = 0
-maxthrottle = 60
+maxthrottle = 60  # deprecated/unused, there is no maximum delay anymore
 
 # Slow down the robot such that it never makes a second page edit within
 # 'put_throttle' seconds.

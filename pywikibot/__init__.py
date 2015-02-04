@@ -686,12 +686,6 @@ def stopme():
                             % remaining(), default=False, automatic_quit=False):
                     return
 
-    # only need one drop() call because all throttles use the same global pid
-    try:
-        list(_sites.values())[0].throttle.drop()
-        log(u"Dropped throttle(s).")
-    except IndexError:
-        pass
 
 import atexit
 atexit.register(stopme)
