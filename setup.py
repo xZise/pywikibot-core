@@ -14,7 +14,7 @@ import itertools
 
 test_deps = []
 
-dependencies = ['httplib2>=0.9.0']
+dependencies = ['httplib2>=0.9']
 
 extra_deps = {
     # Core library dependencies
@@ -51,7 +51,7 @@ script_deps['flickrripper.py'].append('flickrapi' if sys.version_info[0] > 2
                                       else 'flickrapi>=1.4.5')
 
 dependency_links = [
-    'https://git.wikimedia.org/zip/?r=pywikibot/externals/httplib2.git&format=gz#egg=httplib2-0.8-pywikibot1',
+    'https://git.wikimedia.org/zip/?r=pywikibot/externals/httplib2.git&format=gz#egg=httplib2-0.9+pywikibot2',
     'git+https://github.com/AlereDevices/lunatic-python.git#egg=lunatic-python',
 ]
 
@@ -66,7 +66,7 @@ if sys.version_info[0] == 2:
             sys.modules['unittest'] = unittest2
 
         script_deps['replicate_wiki.py'] = ['argparse']
-        dependencies.append('ordereddict')
+        dependencies.append('future')  # provides collections backports
 
 if sys.version_info[0] == 3:
     if sys.version_info[1] < 3:

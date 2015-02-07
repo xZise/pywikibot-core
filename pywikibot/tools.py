@@ -16,9 +16,8 @@ import threading
 import time
 import types
 
-from warnings import warn
-
 from distutils.version import Version
+from warnings import warn
 
 if sys.version_info[0] > 2:
     import queue as Queue
@@ -42,6 +41,48 @@ class _NotImplementedWarning(RuntimeWarning):
     """Feature that is no longer implemented."""
 
     pass
+
+
+class NotImplementedClass(object):
+
+    """No implementation is available."""
+
+    def __init__(self, *args, **kwargs):
+        """Constructor."""
+        raise NotImplementedError(
+            '%s: %s' % (self.__class__.__name__, self.__doc__))
+
+
+if sys.version_info < (2, 7):
+    try:
+        from future.backports.misc import Counter, OrderedDict
+    except ImportError:
+        warn("""
+pywikibot support of Python 2.6 relies on package future for many features.
+Please upgrade to Python 2.7+ or Python 3.3+, or run:
+    "pip install future"
+""", RuntimeWarning)
+        try:
+            from ordereddict import OrderedDict
+        except ImportError:
+            class OrderedDict(NotImplementedClass):
+
+                """OrderedDict not found."""
+
+                pass
+
+        try:
+            from counter import Counter
+        except ImportError:
+            class Counter(NotImplementedClass):
+
+                """Counter not found."""
+
+                pass
+
+else:
+    from collections import Counter  # noqa ; unused
+    from collections import OrderedDict
 
 
 def empty_iterator():
@@ -793,7 +834,8 @@ def deprecated_args(**arg_pairs):
 
         if wrapper.__signature__:
             # Build a new signature with deprecated args added.
-            params = collections.OrderedDict()
+            # __signature__ is only available in Python 3 which has OrderedDict
+            params = OrderedDict()
             for param in wrapper.__signature__.parameters.values():
                 params[param.name] = param.replace()
             for old_arg, new_arg in arg_pairs.items():
