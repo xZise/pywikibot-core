@@ -31,10 +31,12 @@ __version__ = '$Id$'
 import re
 import pywikibot
 from pywikibot.editor import TextEditor
-from pywikibot import pagegenerators, i18n, Bot
+from pywikibot import i18n, Bot
 
 
 class UnlinkBot(Bot):
+
+    """Page unlinking bot."""
 
     def __init__(self, pageToUnlink, **kwargs):
         self.availableOptions.update({
@@ -47,10 +49,8 @@ class UnlinkBot(Bot):
         self.pageToUnlink = pageToUnlink
         linktrail = self.pageToUnlink.site.linktrail()
 
-        gen = pagegenerators.ReferringPageGenerator(pageToUnlink)
-        if self.getOption('namespaces') != []:
-            gen = pagegenerators.NamespaceFilterPageGenerator(gen, self.getOption('namespaces'))
-        self.generator = pagegenerators.PreloadingGenerator(gen)
+        self.generator = pageToUnlink.getReferences(
+            namespaces=self.getOption('namespaces'), content=True)
         # The regular expression which finds links. Results consist of four
         # groups:
         #
@@ -73,7 +73,7 @@ class UnlinkBot(Bot):
 
     def handleNextLink(self, text, match, context=100):
         """
-        Returns a tuple (text, jumpToBeginning).
+        Return a tuple (text, jumpToBeginning).
 
         text is the unicode string after the current link has been processed.
         jumpToBeginning is a boolean which specifies if the cursor position
@@ -99,14 +99,13 @@ class UnlinkBot(Bot):
                 choice = 'a'
             else:
                 pywikibot.output(
-                    text[max(0, match.start() - context):match.start()]
-                    + '\03{lightred}' + text[match.start():match.end()]
-                    + '\03{default}' + text[match.end():match.end() + context])
-                choice = pywikibot.inputChoice(
+                    text[max(0, match.start() - context):match.start()] +
+                    '\03{lightred}' + text[match.start():match.end()] +
+                    '\03{default}' + text[match.end():match.end() + context])
+                choice = pywikibot.input_choice(
                     u'\nWhat shall be done with this link?\n',
-                    ['unlink', 'skip', 'edit', 'more context',
-                     'unlink all', 'quit'],
-                    ['U', 's', 'e', 'm', 'a', 'q'], 'u')
+                    [('unlink', 'u'), ('skip', 's'), ('edit', 'e'),
+                     ('more context', 'm'), ('unlink all', 'a')], 'u')
                 pywikibot.output(u'')
 
                 if choice == 's':
@@ -126,8 +125,6 @@ class UnlinkBot(Bot):
                                                context=context + 100)
                 elif choice == 'a':
                     self.options['always'] = True
-                elif choice == 'q':
-                    self.quit()
             new = match.group('label') or match.group('title')
             new += match.group('linktrail')
             return text[:match.start()] + new + text[match.end():], False
@@ -164,13 +161,21 @@ class UnlinkBot(Bot):
             pywikibot.output(u"Page %s is locked?!" % page.title(asLink=True))
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     # This temporary string is used to read the title
     # of the page that should be unlinked.
     page_title = None
     options = {}
 
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         if arg.startswith('-namespace:'):
             if 'namespaces' not in options:
                 options['namespaces'] = []

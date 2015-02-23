@@ -4,6 +4,7 @@
 __version__ = '$Id$'
 
 from pywikibot import family
+from pywikibot.tools import deprecated
 
 
 class Family(family.Family):
@@ -49,20 +50,19 @@ class Family(family.Family):
             'zh': 'zh.wow.wikia.com'
         }
 
-        self.content_id = "article"
-
         self.disambiguationTemplates['en'] = ['disambig', 'disambig/quest',
                                               'disambig/quest2',
                                               'disambig/achievement2']
         self.disambcatname['en'] = "Disambiguations"
 
         # Wikia's default CategorySelect extension always puts categories last
-        self.categories_last = ['cs', 'da', 'de', 'el', 'en', 'es', 'fa', 'fi', 'fr', 'he', 'hr', 'hu', 'is', 'it', 'ja', 'ko', 'lt', 'lv', 'nl', 'no', 'pl', 'pt', 'pt-br', 'ro', 'ru', 'sk', 'sr', 'sv', 'tr', 'zh-tw', 'zh']
+        self.categories_last = self.langs.keys()
 
     def scriptpath(self, code):
         """Return the script path for this family."""
         return ''
 
+    @deprecated('APISite.version()')
     def version(self, code):
         """Return the version for this family."""
-        return '1.19.18'
+        return '1.19.20'

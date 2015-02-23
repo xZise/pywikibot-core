@@ -4,28 +4,40 @@ Module to define and load pywikibot configuration.
 
 Provides two family class methods which can be used in
 the user-config:
-- register_family_file
-- register_families_folder
+ - register_family_file
+ - register_families_folder
 
 Sets module global base_dir and provides utility methods to
 build paths relative to base_dir:
-- makepath
-- datafilepath
-- shortpath
+ - makepath
+ - datafilepath
+ - shortpath
 """
 #
 # (C) Rob W.W. Hooft, 2003
-# (C) Pywikibot team, 2003-2014
+# (C) Pywikibot team, 2003-2015
 #
 # Distributed under the terms of the MIT license.
 #
 __version__ = '$Id$'
 #
 
+import collections
 import os
 import sys
+
+from warnings import warn
+
+
+class _ConfigurationDeprecationWarning(UserWarning):
+
+    """Feature that is no longer supported."""
+
+    pass
+
+
 # Please keep _imported_modules in sync with the imports above
-_imported_modules = ('os', 'sys')
+_imported_modules = ('os', 'sys', 'collections')
 
 # IMPORTANT:
 # Do not change any of the variables in this file. Instead, make
@@ -39,16 +51,18 @@ _imported_modules = ('os', 'sys')
 
 _private_values = ['authenticate', 'proxy', 'db_password']
 _deprecated_variables = ['use_SSL_onlogin', 'use_SSL_always',
-                         'available_ssl_project_comment']
+                         'available_ssl_project']
 
 # ############# ACCOUNT SETTINGS ##############
 
-# The family of sites we are working on. wikipedia.py will import
+# The family of sites we are working on. pywikibot will import
 # families/xxx_family.py so if you want to change this variable,
-# you need to write such a file.
+# you need to write such a file if one does not exist.
 family = 'wikipedia'
 # The language code of the site we're working on.
 mylang = 'language'
+# If family and mylang are not modified from the above, the default is changed
+# to test:test, which is test.wikipedia.org, at the end of this module.
 
 # The dictionary usernames should contain a username for each site where you
 # have a bot account. Please set your usernames by adding such lines to your
@@ -71,9 +85,9 @@ mylang = 'language'
 # If you have a unique syop account for all languages of a family,
 # you can use '*'
 # sysopnames['myownwiki']['*'] = 'mySingleUsername'
-usernames = {}
-sysopnames = {}
-disambiguation_comment = {}
+usernames = collections.defaultdict(dict)
+sysopnames = collections.defaultdict(dict)
+disambiguation_comment = collections.defaultdict(dict)
 
 # User agent format.
 # For the meaning and more help in customization see:
@@ -85,6 +99,14 @@ user_agent_format = '{script_product} ({script_comments}) {pwb} ({revision}) {ht
 site_interface = 'APISite'
 # number of days to cache namespaces, api configuration, etc.
 API_config_expiry = 30
+
+# The maximum number of bytes which uses a GET request, if not positive
+# it'll always use POST requests
+maximum_GET_length = 255
+# Some networks modify GET requests when they are not encrypted, to avoid
+# bug reports related to that disable those. If we are confident that bug
+# related to this are really because of the network this could be changed.
+enable_GET_without_SSL = False
 
 # Solve captchas in the webbrowser. Setting this to False will result in the
 # exception CaptchaError being thrown if a captcha is encountered.
@@ -127,75 +149,108 @@ password_file = None
 # edit summary to use if not supplied by bot script
 # WARNING: this should NEVER be used in practice, ALWAYS supply a more
 #          relevant summary for bot edits
-default_edit_summary = u'Wikipedia python library v.2'
+default_edit_summary = u'Pywikibot v.2'
 
 
-def _get_base_dir():
+def get_base_dir(test_directory=None):
     r"""Return the directory in which user-specific information is stored.
 
-    This is determined in the following order -
-    1.  If the script was called with a -dir: argument, use the directory
-        provided in this argument
-    2.  If the user has a PYWIKIBOT2_DIR environment variable, use the value
-        of it
-    3.  If user-config presents in current directory, use the current directory
-    4.  Use (and if necessary create) a 'pywikibot' folder under
-        'Application Data' or 'AppData\Roaming' (Windows) or
-        '.pywikibot' directory (Unix and similar) under the user's home
-        directory.
+    This is determined in the following order:
+     1.  If the script was called with a -dir: argument, use the directory
+         provided in this argument.
+     2.  If the user has a PYWIKIBOT2_DIR environment variable, use the value
+         of it.
+     3.  If user-config is present in current directory, use the current
+         directory.
+     4.  If user-config is present in pwb.py directory, use that directory
+     5.  Use (and if necessary create) a 'pywikibot' folder under
+         'Application Data' or 'AppData\Roaming' (Windows) or
+         '.pywikibot' directory (Unix and similar) under the user's home
+         directory.
 
     Set PYWIKIBOT2_NO_USER_CONFIG=1 to disable loading user-config.py
 
+    @param test_directory: Assume that a user config file exists in this
+        directory. Used to test whether placing a user config file in this
+        directory will cause it to be selected as the base directory.
+    @type test_directory: str or None
+    @rtype: unicode
     """
-    NAME = "pywikibot"
+    def exists(directory):
+        directory = os.path.abspath(directory)
+        if directory == test_directory:
+            return True
+        else:
+            return os.path.exists(os.path.join(directory, 'user-config.py'))
+
+    if test_directory is not None:
+        test_directory = os.path.abspath(test_directory)
+
+    DIRNAME_WIN = u"Pywikibot"
+    DIRNAME_WIN_FBCK = u"pywikibot"
+    DIRNAME_UNIX = u".pywikibot"
+
     base_dir = ""
     for arg in sys.argv[1:]:
         if arg.startswith("-dir:"):
             base_dir = arg[5:]
-            sys.argv.remove(arg)
+            base_dir = os.path.expanduser(base_dir)
             break
-    current_exists = os.path.exists(
-        os.path.join(os.path.abspath("."), "user-config.py"))
-    if current_exists and "PYWIKIBOT2_DIR" not in os.environ and not base_dir:
-        base_dir = os.path.abspath(".")
-        return base_dir
     else:
-        if "PYWIKIBOT2_DIR" in os.environ:
-            base_dir = os.environ["PYWIKIBOT2_DIR"]
-        elif not base_dir:
-            is_windows = sys.platform == 'win32'
+        if ('PYWIKIBOT2_DIR' in os.environ and
+                exists(os.path.abspath(os.environ['PYWIKIBOT2_DIR']))):
+            base_dir = os.path.abspath(os.environ['PYWIKIBOT2_DIR'])
+        elif exists('.'):
+            base_dir = os.path.abspath('.')
+        elif ('PYWIKIBOT2_DIR_PWB' in os.environ and
+                exists(os.path.abspath(os.environ['PYWIKIBOT2_DIR_PWB']))):
+            base_dir = os.path.abspath(os.environ['PYWIKIBOT2_DIR_PWB'])
+        else:
+            base_dir_cand = []
             home = os.path.expanduser("~")
-            if is_windows:
+            if sys.platform == 'win32':
                 import platform
-                _win_version = int(platform.version()[0])
-                if _win_version == 5:
-                    base_dir = os.path.join(home, "Application Data", NAME)
-                elif _win_version == 6:
-                    base_dir = os.path.join(home, "AppData\\Roaming", NAME)
+                win_version = int(platform.version()[0])
+                if win_version == 5:
+                    sub_dir = ["Application Data"]
+                elif win_version == 6:
+                    sub_dir = ["AppData", "Roaming"]
+                else:
+                    raise WindowsError(u'Windows version %s not supported yet.'
+                                       % win_version)
+                base_dir_cand.extend([[home] + sub_dir + [DIRNAME_WIN],
+                                     [home] + sub_dir + [DIRNAME_WIN_FBCK]])
             else:
-                base_dir = os.path.join(home, "." + NAME)
-            if not os.path.isdir(base_dir):
-                os.makedirs(base_dir, mode=0o700)
+                base_dir_cand.append([home, DIRNAME_UNIX])
+
+            for dir in base_dir_cand:
+                dir = os.path.join(*dir)
+                if not os.path.isdir(dir):
+                    os.makedirs(dir, mode=0o700)
+                if exists(dir):
+                    base_dir = dir
+                    break
+
     if not os.path.isabs(base_dir):
         base_dir = os.path.normpath(os.path.join(os.getcwd(), base_dir))
     # make sure this path is valid and that it contains user-config file
     if not os.path.isdir(base_dir):
-        raise RuntimeError("Directory '%(base_dir)s' does not exist."
-                           % locals())
-    if not os.path.exists(os.path.join(base_dir, "user-config.py")):
-        exc_text = ("No user-config.py found in directory '%(base_dir)s'.\n"
-                    % locals())
+        raise RuntimeError("Directory '%s' does not exist." % base_dir)
+    # check if user-config.py is in base_dir
+    if not exists(base_dir):
+        exc_text = "No user-config.py found in directory '%s'.\n" % base_dir
         if os.environ.get('PYWIKIBOT2_NO_USER_CONFIG', '0') == '1':
             print(exc_text)
         else:
             exc_text += "  Please check that user-config.py is stored in the correct location.\n"
             exc_text += "  Directory where user-config.py is searched is determined as follows:\n\n"
-            exc_text += "    " + _get_base_dir.__doc__
+            exc_text += "    " + get_base_dir.__doc__
             raise RuntimeError(exc_text)
 
     return base_dir
 
-_base_dir = _get_base_dir()
+_get_base_dir = get_base_dir  # for backward compatibility
+_base_dir = get_base_dir()
 # Save base_dir for use by other modules
 base_dir = _base_dir
 
@@ -221,9 +276,11 @@ def register_families_folder(folder_path):
             family_name = file_name[:-len("_family.py")]
             register_family_file(family_name, os.path.join(folder_path, file_name))
 
+
 # Get the names of all known families, and initialize with empty dictionaries.
 # ‘families/’ is a subdirectory of the directory in which config2.py is found.
 register_families_folder(os.path.join(os.path.dirname(__file__), 'families'))
+register_family_file('wikiapiary', 'https://wikiapiary.com')
 
 # Set to True to override the {{bots}} exclusion protocol (at your own risk!)
 ignore_bot_templates = False
@@ -297,9 +354,15 @@ try:
 except:
     colorized_output = False
 
+# An indication of the size of your screen, or rather the size of the screen
+# to be shown, for flickrripper
+tkhorsize = 1600
+tkvertsize = 1000
+
 # ############# EXTERNAL EDITOR SETTINGS ##############
 # The command for the editor you want to use. If set to None, a simple Tkinter
 # editor will be used.
+editor = os.environ.get('EDITOR', None)
 # On Windows systems, this script tries to determine the default text editor.
 if sys.platform == 'win32':
     try:
@@ -313,15 +376,13 @@ if sys.platform == 'win32':
         _key2 = _winreg.OpenKey(_winreg.HKEY_CLASSES_ROOT,
                                 '%s\shell\open\command' % _progID)
         _cmd = _winreg.QueryValueEx(_key2, None)[0]
-        editor = _cmd.replace('%1', '')
+        _cmd = _cmd.replace('%1', '')
         # Notepad is even worse than our Tkinter editor.
-        if editor.lower().endswith('notepad.exe'):
-            editor = None
+        if not _cmd.lower().endswith('notepad.exe'):
+            editor = _cmd
     except WindowsError:
         # Catch any key lookup errors
-        editor = None
-else:
-    editor = None
+        pass
 
 # Warning: DO NOT use an editor which doesn't support Unicode to edit pages!
 # You will BREAK non-ASCII symbols!
@@ -494,9 +555,17 @@ max_external_links = 50
 report_dead_links_on_talk = False
 
 # ############# DATABASE SETTINGS ##############
+# Setting to connect the database or replica of the database of the wiki.
+# db_name_format can be used to manipulate the dbName of site.
+# Example for a pywikibot running on wmflabs:
+# db_hostname = 'enwiki.labsdb'
+# db_name_format = '{0}_p'
+# db_connect_file = '~/replica.my.cnf'
 db_hostname = 'localhost'
-db_username = 'wikiuser'
+db_username = ''
 db_password = ''
+db_name_format = '{0}'
+db_connect_file = os.path.expanduser('~/.my.cnf')
 
 # ############# SEARCH ENGINE SETTINGS ##############
 
@@ -508,6 +577,16 @@ yahoo_appid = ''
 # To use Windows Live Search web service you must get an AppID from
 # http://www.bing.com/dev/en-us/dev-center
 msn_appid = ''
+
+# ############# FLICKR RIPPER SETTINGS ##############
+
+# Using the Flickr api
+flickr = {
+    'api_key': u'',  # Provide your key!
+    'api_secret': u'',  # Api secret of your key (optional)
+    'review': False,  # Do we use automatically make our uploads reviewed?
+    'reviewer': u'',  # If so, under what reviewer name?
+}
 
 # ############# COPYRIGHT SETTINGS ##############
 
@@ -622,7 +701,7 @@ cosmetic_changes_deny_script = ['category_redirect', 'cosmetic_changes',
 #            'wikipedia:li': {'Hoofdpagina': 'Veurblaad'}
 # }
 #
-# to replace all occurences of 'Hoofdpagina' with 'Veurblaad' when writing to
+# to replace all occurrences of 'Hoofdpagina' with 'Veurblaad' when writing to
 # liwiki. Note that this does not take the origin wiki into account.
 replicate_replace = {}
 
@@ -667,6 +746,13 @@ line_separator = LS = u'\n'
 # if the user has already installed the library.
 use_mwparserfromhell = True
 
+# Pickle protocol version to use for storing dumps.
+# This config variable is not used for loading dumps.
+# Version 2 is common to both Python 2 and 3, and should
+# be used when dumps are accessed by both versions.
+# Version 4 is only available for Python 3.4
+pickle_protocol = 2
+
 # End of configuration section
 # ============================
 
@@ -674,12 +760,11 @@ use_mwparserfromhell = True
 def makepath(path):
     """Return a normalized absolute version of the path argument.
 
-    - if the given path already exists in the filesystem
-      the filesystem is not modified.
-
-    - otherwise makepath creates directories along the given path
-      using the dirname() of the path. You may append
-      a '/' to the path if you want it to be a directory path.
+     - if the given path already exists in the filesystem
+       the filesystem is not modified.
+     - otherwise makepath creates directories along the given path
+       using the dirname() of the path. You may append
+       a '/' to the path if you want it to be a directory path.
 
     from holger@trillke.net 2002/03/18
 
@@ -713,8 +798,7 @@ _glv = dict((_key, _val) for _key, _val in globals().items()
 _gl = list(_glv.keys())
 _tp = {}
 for _key in _gl:
-    if _key[0] != '_':
-        _tp[_key] = type(globals()[_key])
+    _tp[_key] = type(globals()[_key])
 
 # Create an environment for user-config.py which is
 # a shallow copy of the core config settings, so that
@@ -722,8 +806,11 @@ for _key in _gl:
 _uc = {}
 for _key, _val in _glv.items():
     if isinstance(_val, dict):
-        _uc[_key] = {}
-        if len(_val.keys()) > 0:
+        if isinstance(_val, collections.defaultdict):
+            _uc[_key] = collections.defaultdict(dict)
+        else:
+            _uc[_key] = {}
+        if len(_val) > 0:
             _uc[_key].update(_val)
     else:
         _uc[_key] = _val
@@ -743,7 +830,8 @@ for _filename in _fns:
         _fileuid = _filestatus[4]
         if sys.platform == 'win32' or _fileuid in [os.getuid(), 0]:
             if sys.platform == 'win32' or _filemode & 0o02 == 0:
-                exec(compile(open(_filename).read(), _filename, 'exec'), _uc)
+                with open(_filename, 'rb') as f:
+                    exec(compile(f.read(), _filename, 'exec'), _uc)
             else:
                 print("WARNING: Skipped '%(fn)s': writeable by others."
                       % {'fn': _filename})
@@ -787,8 +875,9 @@ for _key in _modified:
     globals()[_key] = _uc[_key]
 
     if _key in _deprecated_variables:
-        print("WARNING: '%s' is no longer a supported configuration variable."
-              "\nPlease inform the maintainers if you depend on it." % _key)
+        warn("'%s' is no longer a supported configuration variable.\n"
+             "Please inform the maintainers if you depend on it." % _key,
+             _ConfigurationDeprecationWarning)
 
 # Fix up default console_encoding
 if console_encoding is None:
@@ -810,6 +899,22 @@ if transliteration_target == 'not set':
 elif transliteration_target in ('None', 'none'):
     transliteration_target = None
 
+if sys.platform == 'win32' and editor:
+    # single character string literals from
+    # https://docs.python.org/2/reference/lexical_analysis.html#string-literals
+    # encode('unicode-escape') also changes Unicode characters
+    if set(editor) & set('\a\b\f\n\r\t\v'):
+        print('WARNING: The editor path contains probably invalid escaped '
+              'characters. Make sure to use a raw-string (r"..." or r\'...\'), '
+              'forward slashs as a path delimiter or to escape the normal '
+              'path delimiter.')
+
+
+# Fix up default site
+if family == 'wikipedia' and mylang == 'language':
+    print("WARNING: family and mylang are not set.\n"
+          "Defaulting to family='test' and mylang='test'.")
+    family = mylang = 'test'
 
 #
 # When called as main program, list all configuration variables

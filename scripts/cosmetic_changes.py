@@ -1,9 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
-This module can do slight modifications to a wiki page source code such that
-the code looks cleaner. The changes are not supposed to change the look of the
-rendered wiki page.
+This module can do slight modifications to tidy a wiki page's source code.
+
+The changes are not supposed to change the look of the rendered wiki page.
 
 The following parameters are supported:
 
@@ -74,11 +74,13 @@ __version__ = '$Id$'
 #
 
 import re
-from distutils.version import LooseVersion as LV
+from pywikibot.tools import MediaWikiVersion
 import pywikibot
 import isbn
-from pywikibot import config, i18n, textlib, pagegenerators, Bot
+from pywikibot import config, i18n, textlib, pagegenerators
+from pywikibot.bot import ExistingPageBot, NoRedirectPageBot
 from pywikibot.page import url2unicode
+from pywikibot.tools import deprecate_arg
 
 warning = """
 ATTENTION: You can run this script as a stand-alone for testing purposes.
@@ -141,10 +143,10 @@ moved_links = {
 deprecatedTemplates = {
     'wikipedia': {
         'de': [
-            (u'Belege', u'Belege fehlen\g<parameters>'),
-            (u'Quelle', u'Belege fehlen\g<parameters>'),
-            (u'Quellen', u'Belege fehlen\g<parameters>'),
-            (u'Quellen fehlen', u'Belege fehlen\g<parameters>'),
+            (u'Belege', u'Belege fehlen\\g<parameters>'),
+            (u'Quelle', u'Belege fehlen\\g<parameters>'),
+            (u'Quellen', u'Belege fehlen\\g<parameters>'),
+            (u'Quellen fehlen', u'Belege fehlen\\g<parameters>'),
         ],
     }
 }
@@ -157,10 +159,13 @@ CANCEL_METHOD = 2
 
 class CosmeticChangesToolkit:
 
-    def __init__(self, site, debug=False, redirect=False, namespace=None,
+    """Cosmetic changes toolkit."""
+
+    @deprecate_arg('debug', 'diff')
+    def __init__(self, site, diff=False, redirect=False, namespace=None,
                  pageTitle=None, ignore=CANCEL_ALL):
         self.site = site
-        self.debug = debug
+        self.diff = diff
         self.redirect = redirect
         self.namespace = namespace
         self.template = (self.namespace == 10)
@@ -177,10 +182,9 @@ class CosmeticChangesToolkit:
             self.cleanUpSectionHeaders,
             self.putSpacesInLists,
             self.translateAndCapitalizeNamespaces,
-##            self.translateMagicWords,
+# FIXME:    self.translateMagicWords,
             self.replaceDeprecatedTemplates,
-##            self.resolveHtmlEntities,
-            self.validXhtml,
+# FIXME:    self.resolveHtmlEntities,
             self.removeUselessSpaces,
             self.removeNonBreakingSpaceBeforePercent,
 
@@ -191,6 +195,12 @@ class CosmeticChangesToolkit:
 
             self.fixArabicLetters,
         )
+
+    @classmethod
+    def from_page(cls, page, diff, ignore):
+        """Create toolkit based on the page."""
+        return cls(page.site, diff=diff, namespace=page.namespace(),
+                   pageTitle=page.title(), ignore=ignore)
 
     def safe_execute(self, method, text):
         """Execute the method and catch exceptions if enabled."""
@@ -204,7 +214,7 @@ class CosmeticChangesToolkit:
                 pywikibot.exception(e)
             else:
                 raise
-        return text if result is None else text
+        return text if result is None else result
 
     @staticmethod
     def isbn_execute(text):
@@ -234,13 +244,14 @@ class CosmeticChangesToolkit:
             else:
                 raise
         else:
-            if self.debug:
+            if self.diff:
                 pywikibot.showDiff(text, new_text)
             return new_text
 
     def fixSelfInterwiki(self, text):
         """
         Interwiki links to the site itself are displayed like local links.
+
         Remove their language code prefix.
         """
         if not self.talkpage and pywikibot.calledModuleName() != 'interwiki':
@@ -251,6 +262,8 @@ class CosmeticChangesToolkit:
 
     def standardizePageFooter(self, text):
         """
+        Standardize page footer.
+
         Makes sure that interwiki links, categories and star templates are
         put to the correct position and into the right order. This combines the
         old instances standardizeInterwiki and standardizeCategories
@@ -324,7 +337,7 @@ class CosmeticChangesToolkit:
             # Removing the stars' issue
             starstext = textlib.removeDisabledParts(text)
             for star in starsList:
-                regex = re.compile('(\{\{(?:template:|)%s\|.*?\}\}[\s]*)'
+                regex = re.compile(r'(\{\{(?:template:|)%s\|.*?\}\}[\s]*)'
                                    % star, re.I)
                 found = regex.findall(starstext)
                 if found != []:
@@ -333,10 +346,10 @@ class CosmeticChangesToolkit:
 
         # Adding categories
         if categories:
-            ##Sorting categories in alphabetic order. beta test only on Persian Wikipedia, TODO fix bug for sorting
-            #if self.site.code == 'fa':
-            #   categories.sort()
-            ##Taking main cats to top
+            # TODO: Sorting categories in alphabetic order.
+            # e.g. using categories.sort()
+
+            # TODO: Taking main cats to top
             #   for name in categories:
             #       if re.search(u"(.+?)\|(.{,1}?)",name.title()) or name.title()==name.title().split(":")[0]+title:
             #            categories.remove(name)
@@ -359,7 +372,7 @@ class CosmeticChangesToolkit:
         return text
 
     def translateAndCapitalizeNamespaces(self, text):
-        """Makes sure that localized namespace names are used."""
+        """Use localized namespace names."""
         # arz uses english stylish codes
         if self.site.sitename() == 'wikipedia:arz':
             return text
@@ -377,7 +390,7 @@ class CosmeticChangesToolkit:
             thisNs = namespaces.pop(0)
             if nsNumber == 6 and family.name == 'wikipedia':
                 if self.site.code in ('en', 'fr') and \
-                   LV(self.site.version()) >= LV('1.14'):
+                   MediaWikiVersion(self.site.version()) >= MediaWikiVersion('1.14'):
                     # do not change "Image" on en-wiki and fr-wiki
                     assert u'Image' in namespaces
                     namespaces.remove(u'Image')
@@ -404,7 +417,7 @@ class CosmeticChangesToolkit:
         return text
 
     def translateMagicWords(self, text):
-        """Makes sure that localized namespace names are used."""
+        """Use localized magic words."""
         # not wanted at ru
         # arz uses english stylish codes
         if self.site.code not in ['arz', 'ru']:
@@ -418,8 +431,8 @@ class CosmeticChangesToolkit:
                 text = textlib.replaceExcept(
                     text,
                     r'\[\[(?P<left>.+?:.+?\..+?\|) *(' + '|'.join(aliases) +
-                    ') *(?P<right>(\|.*?)?\]\])',
-                    r'[[\g<left>' + aliases[0] + '\g<right>', exceptions)
+                    r') *(?P<right>(\|.*?)?\]\])',
+                    r'[[\g<left>' + aliases[0] + r'\g<right>', exceptions)
         return text
 
     def cleanUpLinks(self, text):
@@ -508,9 +521,10 @@ class CosmeticChangesToolkit:
                                                 label[len(titleWithSection):])
                     else:
                         # Try to capitalize the first letter of the title.
-                        # Maybe this feature is not useful for languages that
-                        # don't capitalize nouns...
-                        #if not self.site.nocapitalize:
+                        # Not useful for languages that don't capitalize nouns.
+                        # TODO: Add a configuration variable for each site,
+                        # which determines if the link target is written in
+                        # uppercase
                         if self.site.sitename() == 'wikipedia:de':
                             titleWithSection = (titleWithSection[0].upper() +
                                                 titleWithSection[1:])
@@ -571,11 +585,6 @@ class CosmeticChangesToolkit:
         text = pywikibot.html2unicode(text, ignore=ignore)
         return text
 
-    def validXhtml(self, text):
-        text = textlib.replaceExcept(text, r'(?i)<br[ /]*>', r'<br />',
-                                     ['comment', 'math', 'nowiki', 'pre'])
-        return text
-
     def removeUselessSpaces(self, text):
         multipleSpacesR = re.compile('  +')
         spaceAtLineEndR = re.compile(' $')
@@ -587,10 +596,13 @@ class CosmeticChangesToolkit:
 
     def removeNonBreakingSpaceBeforePercent(self, text):
         """
+        Remove a non-breaking space between number and percent sign.
+
         Newer MediaWiki versions automatically place a non-breaking space in
         front of a percent sign, so it is no longer required to place it
         manually.
 
+        FIXME: which version should this be run on?
         """
         text = textlib.replaceExcept(text, r'(\d)&nbsp;%', r'\1 %',
                                      ['timeline'])
@@ -598,8 +610,8 @@ class CosmeticChangesToolkit:
 
     def cleanUpSectionHeaders(self, text):
         """
-        For better readability of section header source code, puts a space
-        between the equal signs and the title.
+        Add a space between the equal signs and the section title.
+
         Example: ==Section title== becomes == Section title ==
 
         NOTE: This space is recommended in the syntax help on the English and
@@ -614,8 +626,7 @@ class CosmeticChangesToolkit:
 
     def putSpacesInLists(self, text):
         """
-        For better readability of bullet list and enumeration wiki source code,
-        puts a space between the * or # and the text.
+        Add a space between the * or # and the text.
 
         NOTE: This space is recommended in the syntax help on the English,
         German, and French Wikipedia. It might be that it is not wanted on other
@@ -627,7 +638,7 @@ class CosmeticChangesToolkit:
             text = textlib.replaceExcept(
                 text,
                 r'(?m)^(?P<bullet>[:;]*(\*+|#+)[:;\*#]*)(?P<char>[^\s\*#:;].+?)',
-                '\g<bullet> \g<char>',
+                r'\g<bullet> \g<char>',
                 exceptions)
         return text
 
@@ -643,7 +654,7 @@ class CosmeticChangesToolkit:
                     new = ''
                 else:
                     new = '{{%s}}' % new
-                if not self.site.nocapitalize:
+                if self.namespaces[10].case == 'first-letter':
                     old = '[' + old[0].upper() + old[0].lower() + ']' + old[1:]
                 text = textlib.replaceExcept(
                     text,
@@ -651,17 +662,18 @@ class CosmeticChangesToolkit:
                     new, exceptions)
         return text
 
-    #from fixes.py
+    # from fixes.py
     def fixSyntaxSave(self, text):
         exceptions = ['nowiki', 'comment', 'math', 'pre', 'source',
                       'startspace']
         # link to the wiki working on
-        ## TODO: disable this for difflinks and titled links
-        ## https://de.wikipedia.org/w/index.php?title=Wikipedia%3aVandalismusmeldung&diff=103109563&oldid=103109271
-##        text = textlib.replaceExcept(text,
-##                                     r'\[https?://%s\.%s\.org/wiki/(?P<link>\S+)\s+(?P<title>.+?)\s?\]'
-##                                     % (self.site.code, self.site.family.name),
-##                                     r'[[\g<link>|\g<title>]]', exceptions)
+        # TODO: disable this for difflinks and titled links,
+        # to prevent edits like this:
+        # https://de.wikipedia.org/w/index.php?title=Wikipedia%3aVandalismusmeldung&diff=103109563&oldid=103109271
+#        text = textlib.replaceExcept(text,
+#                                     r'\[https?://%s\.%s\.org/wiki/(?P<link>\S+)\s+(?P<title>.+?)\s?\]'
+#                                     % (self.site.code, self.site.family.name),
+#                                     r'[[\g<link>|\g<title>]]', exceptions)
         # external link in double brackets
         text = textlib.replaceExcept(
             text,
@@ -721,13 +733,13 @@ class CosmeticChangesToolkit:
         return text
 
     def fixReferences(self, text):
-        #https://en.wikipedia.org/wiki/User:AnomieBOT/source/tasks/OrphanReferenceFixer.pm
+        # See also https://en.wikipedia.org/wiki/User:AnomieBOT/source/tasks/OrphanReferenceFixer.pm
         exceptions = ['nowiki', 'comment', 'math', 'pre', 'source',
                       'startspace']
 
         # it should be name = " or name=" NOT name   ="
         text = re.sub(r'(?i)<ref +name(= *| *=)"', r'<ref name="', text)
-        #remove empty <ref/>-tag
+        # remove empty <ref/>-tag
         text = textlib.replaceExcept(text,
                                      r'(?i)(<ref\s*/>|<ref *>\s*</ref>)',
                                      r'', exceptions)
@@ -774,8 +786,8 @@ class CosmeticChangesToolkit:
             'gallery',
             'hyperlink',
             'interwiki',
-            # but changes letters inside wikilinks
-            #'link',
+            # FIXME: but changes letters inside wikilinks
+            # 'link',
             'math',
             'pre',
             'template',
@@ -785,6 +797,7 @@ class CosmeticChangesToolkit:
             'startspace',
             'inputbox',
         ]
+        # FIXME: use textlib.NON_LATIN_DIGITS
         # valid digits
         digits = {
             'ckb': u'٠١٢٣٤٥٦٧٨٩',
@@ -797,10 +810,10 @@ class CosmeticChangesToolkit:
         # do not change inside file links
         namespaces = list(self.site.namespace(6, all=True))
         pattern = re.compile(
-            u'\[\[(' + '|'.join(namespaces) +
-            '):.+?\.\w+? *(\|((\[\[.*?\]\])|.)*)?\]\]',
+            u'\\[\\[(%s):.+?\\.\\w+? *(\\|((\\[\\[.*?\\]\\])|.)*)?\\]\\]'
+            % u'|'.join(namespaces),
             re.UNICODE)
-        #not to let bot edits in latin content
+        # not to let bot edits in latin content
         exceptions.append(re.compile(u"[^%(fa)s] *?\"*? *?, *?[^%(fa)s]"
                                      % {'fa': faChrs}))
         exceptions.append(pattern)
@@ -813,13 +826,16 @@ class CosmeticChangesToolkit:
             text = textlib.replaceExcept(text, u'ه', u'ھ', exceptions)
         text = textlib.replaceExcept(text, u'ك', u'ک', exceptions)
         text = textlib.replaceExcept(text, u'[ىي]', u'ی', exceptions)
+
         return text
+
+        # FIXME: split this function into two.
         # replace persian/arabic digits
         # deactivated due to bug 55185
         for i in range(0, 10):
             text = textlib.replaceExcept(text, old[i], new[i], exceptions)
         # do not change digits in class, style and table params
-        pattern = re.compile(u'\w+=(".+?"|\d+)', re.UNICODE)
+        pattern = re.compile(r'\w+=(".+?"|\d+)', re.UNICODE)
         exceptions.append(pattern)
         # do not change digits inside html-tags
         pattern = re.compile(u'<[/]*?[^</]+?[/]*?>', re.UNICODE)
@@ -883,7 +899,10 @@ class CosmeticChangesToolkit:
         return text
 
 
-class CosmeticChangesBot(Bot):
+class CosmeticChangesBot(ExistingPageBot, NoRedirectPageBot):
+
+    """Cosmetic changes bot."""
+
     def __init__(self, generator, **kwargs):
         self.availableOptions.update({
             'async': False,
@@ -894,37 +913,37 @@ class CosmeticChangesBot(Bot):
 
         self.generator = generator
 
-    def treat(self, page):
+    def treat_page(self):
+        """Treat page with the cosmetic toolkit."""
         try:
-            self.current_page = page
-            ccToolkit = CosmeticChangesToolkit(page.site, debug=True,
-                                               namespace=page.namespace(),
-                                               pageTitle=page.title(),
-                                               ignore=self.getOption('ignore'))
-            changedText = ccToolkit.change(page.get())
+            ccToolkit = CosmeticChangesToolkit.from_page(
+                self.current_page, True, self.getOption('ignore'))
+            changedText = ccToolkit.change(self.current_page.get())
             if changedText is not False:
-                self.userPut(page, page.text, changedText,
-                             comment=self.getOption('comment'),
-                             async=self.getOption('async'))
-        except pywikibot.NoPage:
-            pywikibot.output("Page %s does not exist?!"
-                             % page.title(asLink=True))
-        except pywikibot.IsRedirectPage:
-            pywikibot.output("Page %s is a redirect; skipping."
-                             % page.title(asLink=True))
+                self.put_current(newtext=changedText,
+                                 comment=self.getOption('comment'),
+                                 async=self.getOption('async'))
         except pywikibot.LockedPage:
-            pywikibot.output("Page %s is locked?!" % page.title(asLink=True))
+            pywikibot.output("Page %s is locked?!"
+                             % self.current_page.title(asLink=True))
         except pywikibot.EditConflict:
             pywikibot.output("An edit conflict has occured at %s."
-                             % page.title(asLink=True))
+                             % self.current_page.title(asLink=True))
 
 
-def main():
-    answer = 'y'
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     options = {}
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     for arg in local_args:
@@ -954,11 +973,9 @@ def main():
 
     gen = genFactory.getCombinedGenerator()
     if gen:
-        if not options.get('always'):
-            answer = pywikibot.inputChoice(
+        if options.get('always') or pywikibot.input_yn(
                 warning + '\nDo you really want to continue?',
-                ['yes', 'no'], ['y', 'n'], 'n')
-        if answer == 'y':
+                default=False, automatic_quit=False):
             site.login()
             preloadingGen = pagegenerators.PreloadingGenerator(gen)
             bot = CosmeticChangesBot(preloadingGen, **options)
@@ -967,7 +984,4 @@ def main():
         pywikibot.showHelp()
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        pywikibot.stopme()
+    main()

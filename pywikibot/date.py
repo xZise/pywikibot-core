@@ -7,13 +7,16 @@
 # (C) Andre Engels, 2004-2005
 # (C) Yuri Astrakhan, 2005-2006  (<Firstname><Lastname>@gmail.com)
 #       (years/decades/centuries/millenniums  str <=> int  conversions)
-# (C) Pywikibot team, 2004-2014
+# (C) Pywikibot team, 2004-2015
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import division
 __version__ = '$Id$'
 #
 
+import calendar
+import datetime
 import re
 import sys
 
@@ -176,7 +179,7 @@ def encNoConv(i):
 
 def encDec0(i):
     # round to the nearest decade, decade starts with a '0'-ending year
-    return (i/10) * 10
+    return (i // 10) * 10
 
 
 def encDec1(i):
@@ -185,16 +188,19 @@ def encDec1(i):
 
 
 def slh(value, lst):
-    """This function helps in simple list value matching.
+    """Helper function for simple list value matching.
 
     !!!!! The index starts at 1, so 1st element has index 1, not 0 !!!!!
-        Usually it will be used as a lambda call in a map:
-            lambda v: slh(v, [u'January',u'February',...])
 
-        Usage scenarios:
-            formats['MonthName']['en'](1) => u'January'
-            formats['MonthName']['en'](u'January') => 1
-            formats['MonthName']['en'](u'anything else') => raise ValueError
+    Usually it will be used as a lambda call in a map::
+
+        lambda v: slh(v, [u'January',u'February',...])
+
+    Usage scenarios::
+
+        formats['MonthName']['en'](1) => u'January'
+        formats['MonthName']['en'](u'January') => 1
+        formats['MonthName']['en'](u'anything else') => raise ValueError
 
     """
     if isinstance(value, basestring):
@@ -208,7 +214,7 @@ def dh_singVal(value, match):
 
 
 def dh_constVal(value, ind, match):
-    """This function helps with matching a single value to a constant.
+    """Helper function to match a single value to a constant.
 
     formats['CurrEvents']['en'](ind) => u'Current Events'
     formats['CurrEvents']['en'](u'Current Events') => ind
@@ -327,7 +333,7 @@ _digitDecoders = {
     'G': (_guDigits, lambda v: intToLocalDigitsStr(v, _guDigitsToLocal),
           lambda v: localDigitsStrToInt(v, _guDigitsToLocal, _guLocalToDigits)),
     # %T is a year in TH: -- all years are shifted: 2005 => 'พ.ศ. 2548'
-    'T': (_decimalDigits, lambda v: unicode(v+543), lambda v: int(v)-543),
+    'T': (_decimalDigits, lambda v: unicode(v + 543), lambda v: int(v) - 543),
 }
 
 # Allows to search for '(%%)|(%d)|(%R)|...", and allows one digit 1-9 to set
@@ -349,7 +355,6 @@ def escapePattern2(pattern):
     Allows matching of any _digitDecoders inside the string.
     Returns a compiled regex object and a list of digit decoders.
     """
-
     if pattern not in _escPtrnCache2:
         newPattern = u'^'  # begining of the string
         strPattern = u''
@@ -398,29 +403,31 @@ def escapePattern2(pattern):
 
 
 def dh(value, pattern, encf, decf, filter=None):
-    """This function helps in year parsing.
+    """Function to help with year parsing.
 
-    Usually it will be used as a lambda call in a map:
-        lambda v: dh(v, u'pattern string', encodingFunc, decodingFunc)
+    Usually it will be used as a lambda call in a map::
 
-    encodingFunc:
+        lambda v: dh(v, u'pattern string', encf, decf)
+
+    @param encf:
         Converts from an integer parameter to another integer or a tuple of
         integers. Depending on the pattern, each integer will be converted to a
         proper string representation, and will be passed as a format argument
-        to the pattern:
-                    pattern % encodingFunc(value)
-        This function is a complement of decodingFunc.
+        to the pattern::
 
-    decodingFunc:
+                    pattern % encf(value)
+
+        This function is a complement of decf.
+
+    @param decf:
         Converts a tuple/list of non-negative integers found in the original
         value string
         into a normalized value. The normalized value can be passed right back
         into dh() to produce the original string. This function is a complement
-        of encodingFunc. dh() interprets %d as a decimal and %s as a roman
+        of encf. dh() interprets %d as a decimal and %s as a roman
         numeral number.
 
     """
-
     compPattern, strPattern, decoders = escapePattern2(pattern)
     if isinstance(value, basestring):
         m = compPattern.match(value)
@@ -472,7 +479,7 @@ def MakeParameter(decoder, param):
         # force parameter length by taking the first digit in the list and
         # repeating it required number of times
         # This converts "205" into "0205" for "%4d"
-        newValue = decoder[0][0] * (decoder[3]-len(newValue)) + newValue
+        newValue = decoder[0][0] * (decoder[3] - len(newValue)) + newValue
     return newValue
 
 #
@@ -995,7 +1002,7 @@ formats = {
         'su': dh_simpleYearAD,
         'ta': dh_simpleYearAD,
         'te': dh_simpleYearAD,
-        #2005 => 'พ.ศ. 2548'
+        # 2005 => 'พ.ศ. 2548'
         'th': lambda v: dh_yearAD(v, u'พ.ศ. %T'),
         'tl': dh_simpleYearAD,
         'tpi': dh_simpleYearAD,
@@ -1139,7 +1146,7 @@ formats = {
         'hu': lambda m: multi(m, [
             (lambda v: dh_constVal(v, 1, u'0-s évek'), lambda p: p == 1),
             (lambda v: dh_decAD(v, u'%d-as évek'),
-             lambda p: (p % 100 / 10) in (0, 2, 3, 6, 8)),
+             lambda p: (p % 100 // 10) in (0, 2, 3, 6, 8)),
             (lambda v: dh_decAD(v, u'%d-es évek'), alwaysTrue)]),
         'io': lambda v: dh_decAD(v, u'%da yari'),
 
@@ -1155,19 +1162,19 @@ formats = {
 
         # 1970s => 'Decennium 198' (1971-1980)
         'la': lambda v: dh(v, u'Decennium %d',
-                           lambda i: encDec1(i)/10 + 1,
-                           lambda ii: (ii[0]-1) * 10),
+                           lambda i: encDec1(i) // 10 + 1,
+                           lambda ii: (ii[0] - 1) * 10),
 
         # 1970s => 'XX amžiaus 8-as dešimtmetis' (1971-1980)
         'lt': lambda v: dh(v, u'%R amžiaus %d-as dešimtmetis',
-                           lambda i: (encDec1(i)/100 + 1,
-                                      encDec1(i) % 100/10 + 1),
-                           lambda v: (v[0]-1)*100 + (v[1]-1)*10),
+                           lambda i: (encDec1(i) // 100 + 1,
+                                      encDec1(i) % 100 // 10 + 1),
+                           lambda v: (v[0] - 1) * 100 + (v[1] - 1) * 10),
 
         # 1970s => 'Ngahurutanga 198' (1971-1980)
         'mi': lambda v: dh(v, u'Ngahurutanga %d',
-                           lambda i: encDec0(i)/10 + 1,
-                           lambda ii: (ii[0]-1) * 10),
+                           lambda i: encDec0(i) // 10 + 1,
+                           lambda ii: (ii[0] - 1) * 10),
 
         'mhr': lambda v: dh_decAD(v, u'%d ийла'),
 
@@ -1188,8 +1195,8 @@ formats = {
                           lambda i: (encDec0(i), encDec0(i) + 9), decSinglVal),
              lambda p: p % 100 >= 0 and p % 100 < 20),
             (lambda v: dh(v, u'Lata %d. %R wieku',
-                          lambda i: (encDec0(i) % 100, encDec0(i)/100 + 1),
-                          lambda ii: (ii[1]-1)*100 + ii[0]),
+                          lambda i: (encDec0(i) % 100, encDec0(i) // 100 + 1),
+                          lambda ii: (ii[1] - 1) * 100 + ii[0]),
              alwaysTrue)]),
         'pt': lambda v: dh_decAD(v, u'Década de %d'),
         'ro': lambda v: dh_decAD(v, u'Anii %d'),
@@ -1203,8 +1210,8 @@ formats = {
 
         # 1970 => '70. roky 20. storočia'
         'sk': lambda v: dh(v, u'%d. roky %d. storočia',
-                           lambda i: (encDec0(i) % 100, encDec0(i)/100 + 1),
-                           lambda ii: (ii[1]-1) * 100 + ii[0]),
+                           lambda i: (encDec0(i) % 100, encDec0(i) // 100 + 1),
+                           lambda ii: (ii[1] - 1) * 100 + ii[0]),
 
         'sl': lambda v: dh_decAD(v, u'%d.'),
         'sq': lambda v: dh_decAD(v, u'Vitet %d'),
@@ -1248,11 +1255,12 @@ formats = {
             (lambda v: dh_constVal(v, 0, u'i. e. 0-s évek'),
              lambda p: p == 0),
             (lambda v: dh_decBC(v, u'i. e. %d-as évek'),
-             lambda p: (p % 100 / 10) in (0, 2, 3, 6, 8)),
+             lambda p: (p % 100 // 10) in (0, 2, 3, 6, 8)),
             (lambda v: dh_decBC(v, u'i. e. %d-es évek'), alwaysTrue)]),
         'it': lambda v: dh_decBC(v, u'Anni %d a.C.'),
         'ka': lambda v: dh_decBC(v, u'ძვ. წ. %d-ები'),
-        'ksh': lambda v: dh_decBC(v, u'%d-er Joohre füür Krėßtůß'),  # uncertain if that's right. might go to redirect.
+        'ksh': lambda v: dh_decBC(v, u'%d-er Joohre füür Krėßtůß'),
+        # uncertain if ksh is right. might go to redirect.
 
         # '19-10 v. Chr.'
         'nl': lambda m: multi(m, [
@@ -1476,7 +1484,8 @@ formats = {
         'ja': lambda v: dh_centuryBC(v, u'紀元前%d世紀'),
         'ka': lambda v: dh_centuryBC(v, u'ძვ. წ. %R საუკუნე'),
         'ko': lambda v: dh_centuryBC(v, u'기원전 %d세기'),
-        'ksh': lambda v: dh_centuryBC(v, u'%d. Joohunndot füür Kreůßtůß'),  # uncertain if that's right. might go to redirect.
+        'ksh': lambda v: dh_centuryBC(v, u'%d. Joohunndot füür Kreůßtůß'),
+        # uncertain if ksh is right. might go to redirect.
         'la': lambda v: dh_centuryBC(v, u'Saeculum %d a.C.n.'),
         'lb': lambda v: dh_centuryBC(v, u'%d. Joerhonnert v. Chr.'),
         'nl': lambda v: dh_centuryBC(v, u'%de eeuw v.Chr.'),
@@ -1512,14 +1521,14 @@ formats = {
         'cs': lambda v: dh_centuryAD(v, u'%d. století'),
         'da': lambda v: dh_centuryAD(v, u'%d. århundrede'),
         'no': lambda v: dh(v, u'%d-tallet',
-                           lambda i: (i-1) * 100, lambda ii: ii[0]/100 + 1),
+                           lambda i: (i - 1) * 100, lambda ii: ii[0] // 100 + 1),
     },
 
     'CenturyBC_Cat': {
         'cs': lambda v: dh_centuryBC(v, u'%d. století př. n. l.'),
         'de': lambda v: dh_centuryBC(v, u'Jahr (%d. Jh. v. Chr.)'),
         'no': lambda v: dh(v, u'%d-tallet f.Kr.',
-                           lambda i: (i-1) * 100, lambda ii: ii[0]/100 + 1),
+                           lambda i: (i - 1) * 100, lambda ii: ii[0] // 100 + 1),
     },
 
     'MillenniumAD': {
@@ -1552,7 +1561,9 @@ formats = {
             (lambda v: dh_constVal(v, 5, u'Viides vuosituhat'),
              lambda p: p == 5),
             (lambda v: dh(v, u'%d000-vuosituhat',
-                          lambda i: i - 1, lambda ii: ii[0]+1), alwaysTrue)]),
+                          lambda i: i - 1,
+                          lambda ii: ii[0] + 1),
+             alwaysTrue)]),
 
         'fr': lambda m: multi(m, [
             (lambda v: dh_millenniumAD(v, u'%Rer millénaire'),
@@ -1985,10 +1996,10 @@ addFmt1('an', False, [u"%d de chinero", u"%d de frebero", u"%d de marzo",
                       u"%d d'abril", u"%d de mayo", u"%d de chunio",
                       u"%d de chulio", u"%d d'agosto", u"%d de setiembre",
                       u"%d d'otubre", u"%d de nobiembre", u"%d d'abiento"])
-##addFmt1('ang',False, [u"%d Æfterra Gēola", u"%d Solmōnaþ", u"%d Hréþmónaþ",
-##                      u"%d Éastermónaþ", u"%d Þrimilcemónaþ", u"%d Séremónaþ",
-##                      u"%d Mǽdmónaþ", u"%d Wéodmónaþ", u"%d Háligmónaþ",
-##                      u"%d Winterfylleþ", u"%d Blótmónaþ", u"%d Gēolmōnaþ"])
+# addFmt1('ang',False, [u"%d Æfterra Gēola", u"%d Solmōnaþ", u"%d Hréþmónaþ",
+#                       u"%d Éastermónaþ", u"%d Þrimilcemónaþ", u"%d Séremónaþ",
+#                       u"%d Mǽdmónaþ", u"%d Wéodmónaþ", u"%d Háligmónaþ",
+#                       u"%d Winterfylleþ", u"%d Blótmónaþ", u"%d Gēolmōnaþ"])
 addFmt2('ang', False, u"%%d %s", True)
 addFmt1('ar', False, [u"%d يناير", u"%d فبراير", u"%d مارس", u"%d أبريل",
                       u"%d مايو", u"%d يونيو", u"%d يوليو", u"%d أغسطس",
@@ -2002,7 +2013,7 @@ addFmt1('be', False, [u"%d студзеня", u"%d лютага", u"%d сака�
                       u"%d ліпеня", u"%d жніўня", u"%d верасьня",
                       u"%d кастрычніка", u"%d лістапада", u"%d сьнежня"])
 addFmt2('bg', False, u"%%d %s", False)
-##addFmt2('br', False, u"%%d %s", True) # See bellow for br initialization
+# addFmt2('br', False, u"%%d %s", True) # See bellow for br initialization
 addFmt2('bn', False, u"%s %%B")
 addFmt2('bs', False, u"%%d. %s", False)
 addFmt1('ca', False, [u"%d de gener", u"%d de febrer", u"%d de març",
@@ -2045,7 +2056,10 @@ addFmt1('ga', False, [u"%d Eanáir", u"%d Feabhra", u"%d Márta", u"%d Aibreán"
                       u"%d Lúnasa", u"%d Meán Fómhair", u"%d Deireadh Fómhair",
                       u"%d Samhain", u"%d Mí na Nollag"])
 addFmt2('gl', False, u"%%d de %s", False)
-addFmt2('he', False, u"%%d ב%s")  # [u"%d בינואר", u"%d בפברואר", u"%d במרץ", u"%d באפריל", u"%d במאי", u"%d ביוני", u"%d ביולי", u"%d באוגוסט", u"%d בספטמבר", u"%d באוקטובר", u"%d בנובמבר", u"%d בדצמבר"])
+addFmt2('he', False, u"%%d ב%s")
+# [u"%d בינואר", u"%d בפברואר", u"%d במרץ", u"%d באפריל", u"%d במאי",
+#  u"%d ביוני", u"%d ביולי", u"%d באוגוסט", u"%d בספטמבר", u"%d באוקטובר",
+#  u"%d בנובמבר", u"%d בדצמבר"])
 addFmt1('hr', False, [u"%d. siječnja", u"%d. veljače", u"%d. ožujka",
                       u"%d. travnja", u"%d. svibnja", u"%d. lipnja",
                       u"%d. srpnja", u"%d. kolovoza", u"%d. rujna",
@@ -2241,23 +2255,34 @@ addFmt1('zh-min-nan', True, makeMonthList(u"%%d nî %d goe̍h"))
 
 
 # This table defines the limits for each type of format data.
-# Each item is a tuple with a predicate function
-# (returns True if the value falls within acceptable limits, False otherwise),
-# In addition, tuple contains start, end, and step values that will be used to
-# test the formats table for internal consistency.
+# Each item is a tuple with
+# - a predicate function which returns True if the value falls
+#   within acceptable limits, False otherwise,
+# - start value
+# - end value
+#
+# TODO: Before compat 19d1cf9e (2006), there was a 'step' in the tuple,
+# used exclusively by DecadeAD and DecadeBC to increment by 10 years.
+# "and v%10==0" should be added to the limitation predicate for those two.
 formatLimits = {
     'MonthName':     (lambda v: 1 <= v and v < 13,      1, 13),
     'Number':        (lambda v: 0 <= v and v < 1000000, 0, 1001),
     'YearAD':        (lambda v: 0 <= v and v < 2501,    0, 2501),
     'YearBC':        (lambda v: 0 <= v and v < 4001,    0, 501),   # zh: has years as old as 前1700年
-    'DecadeAD':      (lambda v: 0 <= v and v < 2501,    0, 2501),  # At some point need to re-add  "and v%10==0" to the limitation
+    'DecadeAD':      (lambda v: 0 <= v and v < 2501,    0, 2501),
     'DecadeBC':      (lambda v: 0 <= v and v < 4001,    0, 501),   # zh: has decades as old as 前1700年代
-    'CenturyAD':     (lambda v: 1 <= v and v < 41,      1, 23),    # Some centuries use Roman numerals or a given list - do not exceed them in testing
-    'CenturyBC':     (lambda v: 1 <= v and v < 91,      1, 23),    # Some centuries use Roman numerals or a given list - do not exceed them in testing
-    'MillenniumAD':  (lambda v: 1 <= v and v < 6,       1, 4),     # For millenniums, only test first 3 AD Millenniums,
-    'MillenniumBC':  (lambda v: 1 <= v and v < 20,      1, 2),     # And only 1 BC Millennium
-    'CenturyAD_Cat': (lambda v: 1 <= v and v < 41,      1, 23),    # Some centuries use Roman numerals or a given list - do not exceed them in testing
-    'CenturyBC_Cat': (lambda v: 1 <= v and v < 41,      1, 23),    # Some centuries use Roman numerals or a given list - do not exceed them in testing
+
+    # Some centuries use Roman numerals or a given list
+    # do not exceed them in testing
+    'CenturyAD':     (lambda v: 1 <= v and v < 41,      1, 23),
+    'CenturyBC':     (lambda v: 1 <= v and v < 91,      1, 23),
+    'CenturyAD_Cat': (lambda v: 1 <= v and v < 41,      1, 23),
+    'CenturyBC_Cat': (lambda v: 1 <= v and v < 41,      1, 23),
+
+    # For millenniums, only test first 3 AD Millenniums and 1 BC Millennium
+    'MillenniumAD':  (lambda v: 1 <= v and v < 6,       1, 4),
+    'MillenniumBC':  (lambda v: 1 <= v and v < 20,      1, 2),
+
     'Cat_Year_MusicAlbums': (lambda v: 1950 <= v and v < 2021, 1950, 2021),
     'Cat_BirthsAD':  (lambda v: 0 <= v and v < 2501,    0, 2501),
     'Cat_DeathsAD':  (lambda v: 0 <= v and v < 2501,    0, 2501),
@@ -2278,7 +2303,7 @@ for monthId in range(12):
     if (monthId + 1) in (1, 3, 5, 7, 8, 10, 12):
         # 31 days a month
         formatLimits[dayMnthFmts[monthId]] = _formatLimit_DayOfMonth31
-    elif (monthId+1) == 2:  # February
+    elif (monthId + 1) == 2:  # February
         # 29 days a month
         formatLimits[dayMnthFmts[monthId]] = _formatLimit_DayOfMonth29
     else:
@@ -2288,7 +2313,7 @@ for monthId in range(12):
 
 def getNumberOfDaysInMonth(month):
     """Return the number of days in a given month, 1 being January, etc."""
-    return formatLimits[dayMnthFmts[month-1]][2]-1
+    return formatLimits[dayMnthFmts[month - 1]][2] - 1
 
 
 def getAutoFormat(lang, title, ignoreFirstLetterCase=True):
@@ -2323,11 +2348,15 @@ def getAutoFormat(lang, title, ignoreFirstLetterCase=True):
 
 class FormatDate(object):
 
+    """Format a date."""
+
     def __init__(self, site):
+        """Constructor."""
         self.site = site
 
     def __call__(self, m, d):
-        return formats['Day_' + enMonthNames[m-1]][self.site.code](d)
+        """Return a formatted month and day."""
+        return formats['Day_' + enMonthNames[m - 1]][self.site.lang](d)
 
 
 def formatYear(lang, year):
@@ -2335,6 +2364,53 @@ def formatYear(lang, year):
         return formats['YearBC'][lang](-year)
     else:
         return formats['YearAD'][lang](year)
+
+
+def apply_month_delta(date, month_delta=1, add_overlap=False):
+    """
+    Add or subtract months from the date.
+
+    By default if the new month has less days then the day of the date it
+    chooses the last day in the new month. For example a date in the March 31st
+    added by one month will result in April 30th.
+
+    When the overlap is enabled, and there is overlap, then the new_date will be
+    one month off and get_month_delta will report a number one higher.
+
+    It does only work on calendars with 12 months per year, and where the months
+    are numbered consecutively beginning by 1.
+
+    @param date: The starting date
+    @type date: date
+    @param month_delta: The amount of months added or subtracted.
+    @type month_delta: int
+    @param add_overlap: Add any missing days to the date, increasing the month
+        once more.
+    @type add_overlap: bool
+    @return: The end date
+    @rtype: type of date
+    """
+    if int(month_delta) != month_delta:
+        raise ValueError('Month delta must be an integer')
+    month = (date.month - 1) + month_delta
+    year = date.year + month // 12
+    month = month % 12 + 1
+    day = min(date.day, calendar.monthrange(year, month)[1])
+    new_date = date.replace(year, month, day)
+    if add_overlap and day != date.day:
+        assert(date.day > day)
+        new_date += datetime.timedelta(days=date.day - day)
+    return new_date
+
+
+def get_month_delta(date1, date2):
+    """
+    Return the difference between to dates in months.
+
+    It does only work on calendars with 12 months per year, and where the months
+    are consecutive and non-negative numbers.
+    """
+    return date2.month - date1.month + (date2.year - date1.year) * 12
 
 
 if __name__ == "__main__":

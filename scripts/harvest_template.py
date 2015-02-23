@@ -1,13 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
+Template harvesting script.
+
 Usage:
 
-python harvest_template.py -transcludes:"..." template_parameter PID [template_parameter PID]
-
-   or
-
-python harvest_template.py [generators] -template:"..." template_parameter PID [template_parameter PID]
+* harvest_template.py -transcludes:"..." template_parameter PID [template_parameter PID]
+* harvest_template.py [generators] -template:"..." template_parameter PID [template_parameter PID]
 
 This will work on all pages that transclude the template in the article
 namespace
@@ -18,7 +17,7 @@ These command line parameters can be used to specify which pages to work on:
 
 Examples:
 
-python harvest_template.py -lang:nl -cat:Sisoridae -template:"Taxobox straalvinnige" -namespace:0 orde P70 familie P71 geslacht P74
+* harvest_template.py -lang:nl -cat:Sisoridae -template:"Taxobox straalvinnige" -namespace:0 orde P70 familie P71 geslacht P74
 
 """
 #
@@ -38,35 +37,29 @@ docuReplacements = {'&params;': pywikibot.pagegenerators.parameterHelp}
 
 
 class HarvestRobot(WikidataBot):
-    """
-    A bot to add Wikidata claims
-    """
+
+    """A bot to add Wikidata claims."""
+
     def __init__(self, generator, templateTitle, fields):
         """
+        Constructor.
+
         Arguments:
             * generator     - A generator that yields Page objects.
             * templateTitle - The template to work on
             * fields        - A dictionary of fields that are of use to us
 
         """
+        super(HarvestRobot, self).__init__()
         self.generator = pg.PreloadingGenerator(generator)
         self.templateTitle = templateTitle.replace(u'_', u' ')
         # TODO: Make it a list which also includes the redirects to the template
         self.fields = fields
-        self.repo = pywikibot.Site().data_repository()
         self.cacheSources()
-
-    def run(self):
-        """Starts the robot."""
         self.templateTitles = self.getTemplateSynonyms(self.templateTitle)
-        for page in self.generator:
-            try:
-                self.processPage(page)
-            except Exception as e:
-                pywikibot.exception(msg=e, tb=True)
 
     def getTemplateSynonyms(self, title):
-        """Fetches redirects of the title, so we can check against them."""
+        """Fetch redirects of the title, so we can check against them."""
         temp = pywikibot.Page(pywikibot.Site(), title, ns=10)
         if not temp.exists():
             pywikibot.error(u'Template %s does not exist.' % temp.title())
@@ -94,9 +87,12 @@ class HarvestRobot(WikidataBot):
         if linked_page.isRedirectPage():
             linked_page = linked_page.getRedirectTarget()
 
-        linked_item = pywikibot.ItemPage.fromPage(linked_page)
+        try:
+            linked_item = pywikibot.ItemPage.fromPage(linked_page)
+        except pywikibot.NoPage:
+            linked_item = None
 
-        if not linked_item.exists():
+        if not linked_item or not linked_item.exists():
             pywikibot.output(u'%s doesn\'t have a wikidata item to link with. Skipping' % (linked_page))
             return
 
@@ -106,91 +102,97 @@ class HarvestRobot(WikidataBot):
 
         return linked_item
 
-    def processPage(self, page):
-        """Process a single page."""
-        item = pywikibot.ItemPage.fromPage(page)
+    def treat(self, page, item):
+        """Process a single page/item."""
         self.current_page = page
-        if not item.exists():
-            pywikibot.output('%s doesn\'t have a wikidata item :(' % page)
-            #TODO FIXME: We should provide an option to create the page
-            return
         item.get()
         if set(self.fields.values()) <= set(item.claims.keys()):
             pywikibot.output(u'%s item %s has claims for all properties. Skipping' % (page, item.title()))
-        else:
-            pagetext = page.get()
-            templates = textlib.extract_templates_and_params(pagetext)
-            for (template, fielddict) in templates:
-                # Clean up template
-                try:
-                    template = pywikibot.Page(page.site, template,
-                                              ns=10).title(withNamespace=False)
-                except pywikibot.exceptions.InvalidTitle:
-                    pywikibot.error(u"Failed parsing template; '%s' should be the template name." % template)
-                    continue
-                # We found the template we were looking for
-                if template in self.templateTitles:
-                    for field, value in fielddict.items():
-                        field = field.strip()
-                        value = value.strip()
-                        if not field or not value:
-                            continue
+            return
 
-                        # This field contains something useful for us
-                        if field in self.fields:
-                            # Check if the property isn't already set
-                            claim = pywikibot.Claim(self.repo, self.fields[field])
-                            if claim.getID() in item.get().get('claims'):
-                                pywikibot.output(
-                                    u'A claim for %s already exists. Skipping'
-                                    % claim.getID())
-                                # TODO: Implement smarter approach to merging
-                                # harvested values with existing claims esp.
-                                # without overwriting humans unintentionally.
-                            else:
-                                if claim.type == 'wikibase-item':
-                                    # Try to extract a valid page
-                                    match = re.search(pywikibot.link_regex, value)
-                                    if not match:
-                                        pywikibot.output(u'%s field %s value %s isnt a wikilink. Skipping' % (claim.getID(), field, value))
-                                        continue
+        pagetext = page.get()
+        templates = textlib.extract_templates_and_params(pagetext)
+        for (template, fielddict) in templates:
+            # Clean up template
+            try:
+                template = pywikibot.Page(page.site, template,
+                                          ns=10).title(withNamespace=False)
+            except pywikibot.exceptions.InvalidTitle:
+                pywikibot.error(u"Failed parsing template; '%s' should be the template name." % template)
+                continue
+            # We found the template we were looking for
+            if template in self.templateTitles:
+                for field, value in fielddict.items():
+                    field = field.strip()
+                    value = value.strip()
+                    if not field or not value:
+                        continue
 
-                                    link_text = match.group(1)
-                                    linked_item = self._template_link_target(item, link_text)
-                                    if not linked_item:
-                                        continue
-
-                                    claim.setTarget(linked_item)
-                                elif claim.type == 'string':
-                                    claim.setTarget(value.strip())
-                                elif claim.type == 'commonsMedia':
-                                    commonssite = pywikibot.Site("commons", "commons")
-                                    imagelink = pywikibot.Link(value, source=commonssite, defaultNamespace=6)
-                                    image = pywikibot.FilePage(imagelink)
-                                    if image.isRedirectPage():
-                                        image = pywikibot.FilePage(image.getRedirectTarget())
-                                    if not image.exists():
-                                        pywikibot.output('[[%s]] doesn\'t exist so I can\'t link to it' % (image.title(),))
-                                        continue
-                                    claim.setTarget(image)
-                                else:
-                                    pywikibot.output("%s is not a supported datatype." % claim.type)
+                    # This field contains something useful for us
+                    if field in self.fields:
+                        # Check if the property isn't already set
+                        claim = pywikibot.Claim(self.repo, self.fields[field])
+                        if claim.getID() in item.get().get('claims'):
+                            pywikibot.output(
+                                u'A claim for %s already exists. Skipping'
+                                % claim.getID())
+                            # TODO: Implement smarter approach to merging
+                            # harvested values with existing claims esp.
+                            # without overwriting humans unintentionally.
+                        else:
+                            if claim.type == 'wikibase-item':
+                                # Try to extract a valid page
+                                match = re.search(pywikibot.link_regex, value)
+                                if not match:
+                                    pywikibot.output(
+                                        u'%s field %s value %s isnt a wikilink. Skipping'
+                                        % (claim.getID(), field, value))
                                     continue
 
-                                pywikibot.output('Adding %s --> %s' % (claim.getID(), claim.getTarget()))
-                                item.addClaim(claim)
-                                # A generator might yield pages from multiple sites
-                                source = self.getSource(page.site)
-                                if source:
-                                    claim.addSource(source, bot=True)
+                                link_text = match.group(1)
+                                linked_item = self._template_link_target(item, link_text)
+                                if not linked_item:
+                                    continue
+
+                                claim.setTarget(linked_item)
+                            elif claim.type == 'string':
+                                claim.setTarget(value.strip())
+                            elif claim.type == 'commonsMedia':
+                                commonssite = pywikibot.Site("commons", "commons")
+                                imagelink = pywikibot.Link(value, source=commonssite, defaultNamespace=6)
+                                image = pywikibot.FilePage(imagelink)
+                                if image.isRedirectPage():
+                                    image = pywikibot.FilePage(image.getRedirectTarget())
+                                if not image.exists():
+                                    pywikibot.output('[[%s]] doesn\'t exist so I can\'t link to it' % (image.title(),))
+                                    continue
+                                claim.setTarget(image)
+                            else:
+                                pywikibot.output("%s is not a supported datatype." % claim.type)
+                                continue
+
+                            pywikibot.output('Adding %s --> %s' % (claim.getID(), claim.getTarget()))
+                            item.addClaim(claim)
+                            # A generator might yield pages from multiple sites
+                            source = self.getSource(page.site)
+                            if source:
+                                claim.addSource(source, bot=True)
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     commandline_arguments = list()
     template_title = u''
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     gen = pg.GeneratorFactory()
 
     for arg in local_args:

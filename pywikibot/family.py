@@ -1,29 +1,51 @@
 # -*- coding: utf-8  -*-
-
+"""Objects representing MediaWiki families."""
 #
-# (C) Pywikibot team, 2004-2014
+# (C) Pywikibot team, 2004-2015
 #
 # Distributed under the terms of the MIT license.
 #
 __version__ = '$Id$'
 #
 
+import sys
 import logging
 import re
 import collections
+import imp
+import string
+import warnings
+
+if sys.version_info[0] > 2:
+    import urllib.parse as urlparse
+else:
+    import urlparse
+
+from warnings import warn
 
 import pywikibot
+
 from pywikibot import config2 as config
-from pywikibot.tools import deprecated
+from pywikibot.tools import deprecated, deprecate_arg, issue_deprecation_warning
+from pywikibot.exceptions import Error, UnknownFamily, FamilyMaintenanceWarning
 
 logger = logging.getLogger("pywiki.wiki.family")
 
+# Legal characters for Family.name and Family.langs keys
+NAME_CHARACTERS = string.ascii_letters + string.digits
+CODE_CHARACTERS = string.ascii_lowercase + string.digits + '-'
 
-# Parent class for all wiki families
+
 class Family(object):
+
+    """Parent class for all wiki families."""
+
     def __init__(self):
         if not hasattr(self, 'name'):
             self.name = None
+
+        if not hasattr(self, 'langs'):
+            self.langs = {}
 
         # For interwiki sorting order see
         # https://meta.wikimedia.org/wiki/Interwiki_sorting_order
@@ -103,8 +125,6 @@ class Family(object):
         self.fyinterwiki.remove('nb')
         self.fyinterwiki.sort(key=lambda x:
                               x.replace("y", "i") + x.count("y") * "!")
-
-        self.langs = {}
 
         self.namespacesWithSubpage = [2] + list(range(1, 16, 2))
 
@@ -247,11 +267,6 @@ class Family(object):
             'yi': u'[a-zא-ת]*',
             'zea': u'[a-zäöüïëéèà]*',
         }
-
-        # Wikimedia wikis all use "bodyContent" as the id of the <div>
-        # element that contains the actual page content; change this for
-        # wikis that use something else (e.g., mozilla family)
-        self.content_id = "bodyContent"
 
         # A dictionary where keys are family codes that can be used in
         # inter-family interwiki links. Do not use it directly but
@@ -686,8 +701,8 @@ class Family(object):
         # 'en': "Disambiguation"
         self.disambcatname = {}
 
-        # On most wikis page names must start with a capital letter, but some
-        # languages don't use this.
+        # DEPRECATED, stores the code of the site which have a case sensitive
+        # main namespace. Use the Namespace given from the Site instead
         self.nocapitalize = []
 
         # attop is a list of languages that prefer to have the interwiki
@@ -707,6 +722,8 @@ class Family(object):
         # String used as separator between category links and the text
         self.category_text_separator = config.line_separator * 2
         # When both at the bottom should categories come after interwikilinks?
+        # TODO: T86284 Needed on Wikia sites, as it uses the CategorySelect
+        # extension which puts categories last on all sites.  TO BE DEPRECATED!
         self.categories_last = []
 
         # Which languages have a special order for putting interlanguage
@@ -834,6 +851,81 @@ class Family(object):
         #       'pt': { '_default': [0]}
         #   }
 
+    _families = {}
+
+    def __getattribute__(self, name):
+        """
+        Check if attribute is deprecated and warn accordingly.
+
+        This is necessary as subclasses could prevent that message by using a
+        class variable. Only penalize getting it because it must be set so that
+        the backwards compatibility is still available.
+        """
+        if name == 'nocapitalize':
+            issue_deprecation_warning('nocapitalize',
+                                      "APISite.siteinfo['case'] or "
+                                      "Namespace.case == 'case-sensitive'", 2)
+        return super(Family, self).__getattribute__(name)
+
+    @staticmethod
+    @deprecate_arg('fatal', None)
+    def load(fam=None):
+        """Import the named family.
+
+        @param fam: family name (if omitted, uses the configured default)
+        @type fam: str
+        @return: a Family instance configured for the named family.
+        @raises UnknownFamily: family not known
+        """
+        if fam is None:
+            fam = config.family
+
+        assert(all(x in NAME_CHARACTERS for x in fam))
+
+        if fam in Family._families:
+            return Family._families[fam]
+
+        if fam in config.family_files:
+            family_file = config.family_files[fam]
+
+            if family_file.startswith('http://') or family_file.startswith('https://'):
+                myfamily = AutoFamily(fam, family_file)
+                Family._families[fam] = myfamily
+                return Family._families[fam]
+        elif fam == 'lockwiki':
+            raise UnknownFamily(
+                "Family 'lockwiki' has been removed as it not a public wiki.\n"
+                "You may install your own family file for this wiki, and a "
+                "old family file may be found at:\n"
+                "http://git.wikimedia.org/commitdiff/pywikibot%2Fcore.git/dfdc0c9150fa8e09829bb9d236")
+
+        try:
+            # Ignore warnings due to dots in family names.
+            # TODO: use more specific filter, so that family classes can use
+            #     RuntimeWarning's while loading.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                mod = imp.load_source(fam, config.family_files[fam])
+        except (ImportError, KeyError):
+            raise UnknownFamily(u'Family %s does not exist' % fam)
+        cls = mod.Family()
+        if cls.name != fam:
+            warn(u'Family name %s does not match family module name %s'
+                 % (cls.name, fam), FamilyMaintenanceWarning)
+        # Family 'name' and the 'langs' codes must be ascii, and the
+        # codes must be lower-case due to the Site loading algorithm.
+        if not all(x in NAME_CHARACTERS for x in cls.name):
+            warn(u'Family name %s contains non-ascii characters' % cls.name,
+                 FamilyMaintenanceWarning)
+        # FIXME: wikisource uses code '-' for www.wikisource.org
+        if not all(all(x in CODE_CHARACTERS for x in code) and
+                   (cls.name == 'wikisource' or code[0] != '-')
+                   for code in cls.langs.keys()):
+            warn(u'Family %s codes contains non-ascii characters',
+                 FamilyMaintenanceWarning)
+        Family._families[fam] = cls
+        return cls
+
     @property
     def iwkeys(self):
         if self.interwiki_forward:
@@ -917,7 +1009,9 @@ class Family(object):
     # Methods
     def protocol(self, code):
         """
-        Can be overridden to return 'https'. Other protocols are not supported.
+        The protocol to use to connect to the site.
+
+        May be overridden to return 'https'. Other protocols are not supported.
 
         @param code: language code
         @type code: string
@@ -925,6 +1019,17 @@ class Family(object):
         @rtype: string
         """
         return 'http'
+
+    def ignore_certificate_error(self, code):
+        """
+        Return whether a HTTPS certificate error should be ignored.
+
+        @param code: language code
+        @type code: string
+        @return: flag to allow access if certificate has an error.
+        @rtype: bool
+        """
+        return False
 
     def hostname(self, code):
         """The hostname to use for standard http connections."""
@@ -952,6 +1057,15 @@ class Family(object):
         # Override this ONLY if the wiki family requires a path prefix
         return ''
 
+    def base_url(self, code, uri):
+        protocol = self.protocol(code)
+        if protocol == 'https':
+            host = self.ssl_hostname(code)
+            uri = self.ssl_pathprefix(code) + uri
+        else:
+            host = self.hostname(code)
+        return urlparse.urljoin('{0}://{1}'.format(protocol, host), uri)
+
     def path(self, code):
         return '%s/index.php' % self.scriptpath(code)
 
@@ -964,27 +1078,113 @@ class Family(object):
     def nicepath(self, code):
         return '/wiki/'
 
+    def rcstream_host(self, code):
+        raise NotImplementedError("This family does not support RCStream")
+
     def nice_get_address(self, code, title):
         return '%s%s' % (self.nicepath(code), title)
+
+    def _get_path_regex(self):
+        """
+        Return a regex matching the path after the domain.
+
+        It is using L{path} and L{nicepath} with code set to
+        'None'. If that returns a KeyError (L{scriptpath} probably
+        using the C{langs} dictionary) it retries it with the key from
+        C{langs} if it only contains one entry and throws an Error
+        otherwise. In that case the Family instance should overwrite this
+        method or supply code independent methods.
+
+        @raise Error: If it's not possible to automatically get a code
+            independent regex.
+        """
+        def _get_coded_path_regex(code):
+            return ('(?:' + re.escape(self.path(code) + '/') + '|' +
+                    re.escape(self.nicepath(code)) + ')')
+        try:
+            return _get_coded_path_regex(None)
+        except KeyError:
+            # Probably automatically generated family
+            if len(self.langs) == 1:
+                return _get_coded_path_regex(next(iter(self.langs.keys())))
+            else:
+                raise Error('Pywikibot is unable to generate an automatic '
+                            'path regex for the family {0}. It is recommended '
+                            'to overwrite "_get_path_regex" in that '
+                            'family.'.format(self.name))
+
+    def from_url(self, url):
+        """
+        Return whether this family matches the given url.
+
+        It must match URLs generated via C{self.langs} and
+        L{Family.nice_get_address} or L{Family.path}. If the protocol doesn't
+        match but is present in the interwikimap it'll log this.
+
+        It uses L{Family._get_path_regex} to generate a regex defining the path
+        after the domain.
+
+        @return: The language code of the url. None if that url is not from
+            this family.
+        @rtype: str or None
+        """
+        url_match = re.match(r'(?:(https?)://|//)?(.*){0}'
+                             '\$1'.format(self._get_path_regex()), url)
+        if not url_match:
+            return None
+        for code, domain in self.langs.items():
+            if domain == url_match.group(2):
+                break
+        else:
+            return None
+        if url_match.group(1) and url_match.group(1) != self.protocol(code):
+            pywikibot.log('The entry in the interwikimap uses {0} but the '
+                          'family is configured to use {1}'.format(
+                url_match.group(1), self.protocol(code)))
+        return code
+
+    def maximum_GET_length(self, code):
+        return config.maximum_GET_length
 
     def dbName(self, code):
         # returns the name of the MySQL database
         return '%s%s' % (code, self.name)
 
     # Which version of MediaWiki is used?
+    @deprecated('APISite.version()')
     def version(self, code):
-        """ Return MediaWiki version number as a string.
+        """Return MediaWiki version number as a string.
 
-        Use LooseVersion from distutils.version to compare version strings.
+        Use L{pywikibot.tools.MediaWikiVersion} to compare version strings.
         """
         # Here we return the latest mw release for downloading
-        return '1.23.2'
+        return '1.24.1'
 
-    @deprecated("version()")
+    def force_version(self, code):
+        """
+        Return a manual version number.
+
+        The site is usually using the version number from the servers'
+        siteinfo, but if there is a problem with that it's possible to return
+        a non-empty string here representing another version number.
+
+        For example, L{pywikibot.tools.MediaWikiVersion} treats version
+        numbers ending with 'alpha', 'beta' or 'rc' as newer than any version
+        ending with 'wmf<number>'. But if that causes breakage it's possible
+        to override it here to a version number which doesn't cause breakage.
+
+        @return: A version number which can be parsed using
+            L{pywikibot.tools.MediaWikiVersion}. If empty/None it uses the
+            version returned via siteinfo.
+        @rtype: str
+        """
+        return None
+
+    @deprecated("APISite.version()")
     def versionnumber(self, code):
-        """ DEPRECATED, use version() instead.
+        """DEPRECATED, use version() instead.
 
-        Use distutils.version.LooseVersion to compare version strings.
+        Use L{pywikibot.tools.MediaWikiVersion} to compare version strings.
         Return an int identifying MediaWiki version.
 
         Currently this is implemented as returning the minor version
@@ -1014,11 +1214,23 @@ class Family(object):
         """Return list of historical encodings for a specific language Wiki."""
         return self.code2encodings(code)
 
-    def __cmp__(self, otherfamily):
+    def __eq__(self, other):
+        """Compare self with other.
+
+        If other is not a Family() object, try to create one.
+        """
+        if not isinstance(other, Family):
+            other = self.load(other)
         try:
-            return cmp(self.name, otherfamily.name)
+            return self.name == other.name
         except AttributeError:
-            return cmp(id(self), id(otherfamily))
+            return id(self) == id(other)
+
+    def __ne__(self, other):
+        try:
+            return not self.__eq__(other)
+        except UnknownFamily:
+            return False
 
     def __hash__(self):
         return hash(self.name)
@@ -1028,10 +1240,6 @@ class Family(object):
 
     def __repr__(self):
         return 'Family("%s")' % self.name
-
-    def has_query_api(self, code):
-        """Check query.php installed in the wiki."""
-        return False
 
     def shared_image_repository(self, code):
         """Return the shared image repository, if any."""
@@ -1073,8 +1281,10 @@ class Family(object):
         return putText
 
 
-# Parent class for all wikimedia families
 class WikimediaFamily(Family):
+
+    """#Class for all wikimedia families."""
+
     def __init__(self):
         super(WikimediaFamily, self).__init__()
 
@@ -1087,17 +1297,37 @@ class WikimediaFamily(Family):
             'wikisource', 'wikiversity', 'wiktionary',
         ]
 
-    def version(self, code):
-        """
-        Return Wikimedia projects version number as a string.
-
-        Use LooseVersion from distutils.version to compate versions.
-        """
-        # Here we return the latest mw release of wikimedia projects
-        return '1.24wmf17'
-
     def shared_image_repository(self, code):
         return ('commons', 'commons')
 
     def protocol(self, code):
+        """Return 'https' as the protocol."""
         return 'https'
+
+    def rcstream_host(self, code):
+        return 'stream.wikimedia.org'
+
+
+class AutoFamily(Family):
+
+    """Family that automatically loads the site configuration."""
+
+    def __init__(self, name, url, site=None):
+        """Constructor."""
+        super(AutoFamily, self).__init__()
+        self.name = name
+        self.url = urlparse.urlparse(url)
+        self.langs = {
+            name: self.url.netloc
+        }
+
+    def protocol(self, code):
+        """Return the protocol of the URL."""
+        return self.url.scheme
+
+    def scriptpath(self, code):
+        """Extract the script path from the URL."""
+        if self.url.path.endswith('/api.php'):
+            return self.url.path[0:-8]
+        else:
+            return super(AutoFamily, self).scriptpath(code)

@@ -1,11 +1,11 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
-This is a script originally written by Wikihermit and then rewritten by Filnik,
-to delete the templates used to warn in the pages that a page is blocked, when
-the page isn't blocked at all. Indeed, very often sysops block the pages for a
-setted time but then the forget to delete the warning! This script is useful if
-you want to delete those useless warning left in these pages.
+A bot to remove stale protection templates from pages that are not protected.
+
+Very often sysops block the pages for a setted time but then the forget to
+remove the warning! This script is useful if you want to remove those useless
+warning left in these pages.
 
 Parameters:
 
@@ -71,9 +71,7 @@ docuReplacements = {
     '&params;':     pagegenerators.parameterHelp,
 }
 
-#######################################################
-#--------------------- PREFERENCES -------------------#
-################### -- Edit below! -- #################
+# PREFERENCES
 
 templateSemiProtection = {
     'en': None,
@@ -152,9 +150,7 @@ categoryToCheck = {
 # Check list to block the users that haven't set their preferences
 project_inserted = ['en', 'fr', 'it', 'ja', 'pt', 'zh']
 
-#######################################################
-#------------------ END PREFERENCES ------------------#
-################## -- Edit above! -- ##################
+# END PREFERENCES
 
 
 def understandBlock(text, TTP, TSP, TSMP, TTMP, TU):
@@ -189,9 +185,11 @@ def understandBlock(text, TTP, TSP, TSMP, TTMP, TU):
 
 
 def showQuest(page):
-    quest = pywikibot.inputChoice(u'Do you want to open the page?',
-                                  ['with browser', 'with gui', 'no'],
-                                  ['b', 'g', 'n'], 'n')
+    """Ask for an editor and invoke it."""
+    quest = pywikibot.input_choice(
+        u'Do you want to open the page?',
+        [('with browser', 'b'), ('with gui', 'g'), ('no', 'n')], 'n',
+        automatic_quit=False)
     site = page.site
     url = '%s://%s%s?redirect=no' % (site.protocol(),
                                      site.hostname(),
@@ -205,8 +203,15 @@ def showQuest(page):
         editor.edit(page.text)
 
 
-def main():
-    """Main Function."""
+def main(*args):
+    """
+    Process command line arguments and perform task.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     # Loading the comments
     global categoryToCheck, project_inserted
     # always, define a generator to understand if the user sets one,
@@ -223,7 +228,7 @@ def main():
     errorCount = 0
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     # Process local args
@@ -293,15 +298,13 @@ def main():
             if show:
                 showQuest(page)
             continue
-        """
-        # This check does not work :
+        # FIXME: This check does not work :
         # PreloadingGenerator cannot set correctly page.editRestriction
         # (see bug 55322)
-        if not page.canBeEdited():
-            pywikibot.output("%s is sysop-protected : this account can't edit "
-                             "it! Skipping..." % pagename)
-            continue
-        """
+        # if not page.canBeEdited():
+        #    pywikibot.output("%s is sysop-protected : this account can't edit "
+        #                     "it! Skipping..." % pagename)
+        #    continue
         restrictions = page.protection()
         try:
             editRestr = restrictions['edit']
@@ -445,10 +448,10 @@ def main():
                              % page.title())
             pywikibot.showDiff(oldtext, text)
             if not always:
-                choice = pywikibot.inputChoice(u'Do you want to accept these '
-                                               u'changes?',
-                                               ['Yes', 'No', 'All'],
-                                               ['y', 'N', 'a'], 'N')
+                choice = pywikibot.input_choice(u'Do you want to accept these '
+                                                u'changes?',
+                                                [('Yes', 'y'), ('No', 'n'),
+                                                 ('All', 'a')], 'n')
                 if choice == 'a':
                     always = True
             if always or choice == 'y':

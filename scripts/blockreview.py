@@ -2,6 +2,7 @@
 # -*- coding: utf-8  -*-
 """
 This bot implements a blocking review process for de-wiki first.
+
 For other sites this bot script must be changed.
 
 This script is run by [[de:User:xqt]]. It should
@@ -22,31 +23,29 @@ __version__ = '$Id$'
 #
 
 import pywikibot
-from pywikibot.compat import query
 from pywikibot import i18n
 
 
 class BlockreviewBot:
+
+    """Block review bot."""
+
     # notes
     note_admin = {
-        'de': u"""
-
-== Sperrprüfungswunsch ==
-Hallo %(admin)s,
-
-[[%(user)s]] wünscht die Prüfung seiner/ihrer Sperre vom %(time)s über die Dauer von %(duration)s. Kommentar war ''%(comment)s''. Bitte äußere Dich dazu auf der [[%(usertalk)s#%(section)s|Diskussionsseite]]. -~~~~"""
+        'de': u"\n\n== Sperrprüfungswunsch ==\nHallo %(admin)s,\n\n[[%(user)s]]"
+              u" wünscht die Prüfung seiner/ihrer Sperre vom %(time)s über die "
+              u"Dauer von %(duration)s. Kommentar war ''%(comment)s''. "
+              u"Bitte äußere Dich dazu auf der [[%(usertalk)s#%(section)s|"
+              u"Diskussionsseite]]. -~~~~"""
     }
 
     note_project = {
-        'de': u"""
-
-== [[%(user)s]] ==
-* gesperrt am %(time)s durch {{Benutzer|%(admin)s}} für eine Dauer von %(duration)s.
-* Kommentar war ''%(comment)s''.
-* [[Benutzer:%(admin)s]] wurde [[Benutzer Diskussion:%(admin)s#Sperrprüfungswunsch|benachrichtigt]].
-* [[%(usertalk)s#%(section)s|Link zur Diskussion]]
-:<small>-~~~~</small>
-;Antrag entgegengenommen"""
+        'de': u"\n\n== [[%(user)s]] ==\n* gesperrt am %(time)s durch "
+              u"{{Benutzer|%(admin)s}} für eine Dauer von %(duration)s.\n"
+              u"* Kommentar war ''%(comment)s''.\n* [[Benutzer:%(admin)s]]"
+              u" wurde [[Benutzer Diskussion:%(admin)s#Sperrprüfungswunsch|"
+              u"benachrichtigt]].\n* [[%(usertalk)s#%(section)s|Link zur "
+              u"Diskussion]]\n\n:<small>-~~~~</small>\n\n;Antrag entgegengenommen"
     }
 
     # edit summaries
@@ -78,10 +77,11 @@ Hallo %(admin)s,
 
     def __init__(self, dry=False):
         """
-        Constructor. Parameters:
-            * generator - The page generator that determines on which pages
+        Constructor.
+
+        @param generator: The page generator that determines on which pages
                           to work on.
-            * dry       - If True, doesn't do any real changes, but only shows
+        @param dry:       If True, doesn't do any real changes, but only shows
                           what would have been changed.
         """
         self.site = pywikibot.Site()
@@ -109,7 +109,7 @@ Hallo %(admin)s,
                                      % page.title(asLink=True))
 
     def treat(self, userPage):
-        """Loads the given page, does some changes, and saves it."""
+        """Load the given page, does some changes, and saves it."""
         talkText = self.load(userPage)
         if not talkText:
             # sanity check. No talk page found.
@@ -139,8 +139,8 @@ Hallo %(admin)s,
                                                      self.parts)
                             adminText += note
                             self.save(adminText, adminPage, comment, False)
-                        ### test for pt-wiki
-                        ### just print all sysops talk pages
+                        # test for pt-wiki
+                        # just print all sysops talk pages
                         elif self.site.sitename() == 'wikipedia:pt':
                             from pywikibot import pagegenerators as pg
                             gen = pg.PreloadingGenerator(self.SysopGenerator())
@@ -156,8 +156,7 @@ Hallo %(admin)s,
                                                      % self.parts)
 
                         # some test stuff
-                        if pywikibot.logger.isEnabledFor(pywikibot.DEBUG) \
-                           and self.site().loggedInAs() == u'Xqbot:':
+                        if self.site().user() == u'Xqbot':
                             testPage = pywikibot.Page(self.site,
                                                       'Benutzer:Xqt/Test')
                             test = testPage.get()
@@ -240,23 +239,14 @@ Hallo %(admin)s,
             }
 
     def SysopGenerator(self):
-        params = {
-            'action':  'query',
-            'list':    'allusers',
-            'augroup': 'sysop',
-            'auprop':  'groups',
-            'aulimit': 500,
-        }
-        data = query.GetData(params, self.site)
-        for user in data['query']['allusers']:
+        for user in self.site.allusers(group='sysop'):
             # exclude sysop bots
             if 'bot' not in user['groups']:
                 # yield the sysop talkpage
-                yield pywikibot.Page(self.site, user['name'],
-                                     ns=3)
+                yield pywikibot.Page(self.site, user['name'], ns=3)
 
     def load(self, page):
-        """Loads the given page, does some changes, and saves it."""
+        """Load the given page and return the page text."""
         try:
             # Load the page
             text = page.get()
@@ -279,10 +269,9 @@ Hallo %(admin)s,
             pywikibot.showDiff(page.get(), text)
             pywikibot.output(u'Comment: %s' % comment)
             if not self.dry:
-                choice = pywikibot.inputChoice(
-                    u'Do you want to accept these changes?',
-                    ['Yes', 'No'], ['y', 'N'], 'N')
-                if choice == 'y':
+                if pywikibot.input_yn(
+                        u'Do you want to accept these changes?',
+                        default=False, automatic_quit=False):
                     page.text = text
                     try:
                         # Save the page
@@ -303,11 +292,19 @@ Hallo %(admin)s,
                         return True
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     show = False
 
     # Parse command line arguments
-    for arg in pywikibot.handleArgs():
+    if pywikibot.handle_args(args):
         show = True
 
     if not show:

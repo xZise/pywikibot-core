@@ -1,27 +1,27 @@
 # -*- coding: utf-8  -*-
-"""
-The initialization file for the Pywikibot framework.
-"""
+"""The initialization file for the Pywikibot framework."""
 #
-# (C) Pywikibot team, 2008-2013
+# (C) Pywikibot team, 2008-2014
 #
 # Distributed under the terms of the MIT license.
 #
-__release__ = '2.0b1'
+__release__ = '2.0b3'
 __version__ = '$Id$'
 
 import datetime
-import difflib
 import math
 import re
 import sys
 import threading
+import json
 
-if sys.version_info[0] == 2:
-    from Queue import Queue
-else:
+if sys.version_info[0] > 2:
     from queue import Queue
     long = int
+else:
+    from Queue import Queue
+
+from warnings import warn
 
 # Use pywikibot. prefix for all in-package imports; this is to prevent
 # confusion with similarly-named modules in version 1 framework, for users
@@ -30,23 +30,27 @@ else:
 from pywikibot import config2 as config
 from pywikibot.bot import (
     output, warning, error, critical, debug, stdout, exception,
-    input, inputChoice, handleArgs, showHelp, ui, log,
-    calledModuleName, Bot, WikidataBot, QuitKeyboardInterrupt,
+    input, input_choice, input_yn, inputChoice, handle_args, showHelp, ui, log,
+    calledModuleName, Bot, CurrentPageBot, WikidataBot, QuitKeyboardInterrupt,
+    # the following are flagged as deprecated on usage
+    handleArgs,
 )
 from pywikibot.exceptions import (
     Error, InvalidTitle, BadTitle, NoPage, SectionError,
-    NoSuchSite, NoUsername, UserBlocked,
+    SiteDefinitionError, NoSuchSite, UnknownSite, UnknownFamily,
+    NoUsername, UserBlocked, UserActionRefuse,
     PageRelatedError, IsRedirectPage, IsNotRedirectPage,
     PageSaveRelatedError, PageNotSaved, OtherPageSaveError,
-    LockedPage, CascadeLockedPage, LockedNoPage,
+    LockedPage, CascadeLockedPage, LockedNoPage, NoCreateError,
     EditConflict, PageDeletedConflict, PageCreatedConflict,
     ServerError, FatalServerError, Server504Error,
-    CaptchaError, SpamfilterError, CircularRedirect,
+    CaptchaError, SpamfilterError, CircularRedirect, InterwikiRedirectPage,
     WikiBaseError, CoordinateGlobeUnknownException,
 )
 from pywikibot.tools import UnicodeMixin, redirect_func
 from pywikibot.i18n import translate
 from pywikibot.data.api import UploadWarning
+from pywikibot.diff import PatchManager
 import pywikibot.textlib as textlib
 import pywikibot.tools
 
@@ -62,21 +66,24 @@ textlib_methods = (
 
 # pep257 doesn't understand when the first entry is on the next line
 __all__ = ('config', 'ui', 'UnicodeMixin', 'translate',
-           'Page', 'FilePage', 'ImagePage', 'Category', 'Link', 'User',
+           'Page', 'FilePage', 'Category', 'Link', 'User',
            'ItemPage', 'PropertyPage', 'Claim', 'TimeStripper',
            'html2unicode', 'url2unicode', 'unicode2html',
-           'stdout', 'output', 'warning', 'error', 'critical', 'debug', 'exception',
-           'input', 'inputChoice', 'handleArgs', 'showHelp', 'ui', 'log',
-           'calledModuleName', 'Bot', 'WikidataBot',
+           'stdout', 'output', 'warning', 'error', 'critical', 'debug',
+           'exception', 'input_choice', 'input', 'input_yn', 'inputChoice',
+           'handle_args', 'handleArgs', 'showHelp', 'ui', 'log',
+           'calledModuleName', 'Bot', 'CurrentPageBot', 'WikidataBot',
            'Error', 'InvalidTitle', 'BadTitle', 'NoPage', 'SectionError',
-           'NoSuchSite', 'NoUsername', 'UserBlocked',
+           'SiteDefinitionError', 'NoSuchSite', 'UnknownSite', 'UnknownFamily',
+           'NoUsername', 'UserBlocked', 'UserActionRefuse',
            'PageRelatedError', 'IsRedirectPage', 'IsNotRedirectPage',
            'PageSaveRelatedError', 'PageNotSaved', 'OtherPageSaveError',
-           'LockedPage', 'CascadeLockedPage', 'LockedNoPage',
+           'LockedPage', 'CascadeLockedPage', 'LockedNoPage', 'NoCreateError',
            'EditConflict', 'PageDeletedConflict', 'PageCreatedConflict',
            'UploadWarning',
            'ServerError', 'FatalServerError', 'Server504Error',
            'CaptchaError', 'SpamfilterError', 'CircularRedirect',
+           'InterwikiRedirectPage',
            'WikiBaseError', 'CoordinateGlobeUnknownException',
            'QuitKeyboardInterrupt',
            )
@@ -108,27 +115,53 @@ class Timestamp(datetime.datetime):
 
     Use Timestamp.fromISOformat() and Timestamp.fromtimestampformat() to
     create Timestamp objects from MediaWiki string formats.
+    As these constructors are typically used to create objects using data
+    passed provided by site and page methods, some of which return a Timestamp
+    when previously they returned a MediaWiki string representation, these
+    methods also accept a Timestamp object, in which case they return a clone.
 
     Use Site.getcurrenttime() for the current time; this is more reliable
     than using Timestamp.utcnow().
 
     """
+
     mediawikiTSFormat = "%Y%m%d%H%M%S"
     ISO8601Format = "%Y-%m-%dT%H:%M:%SZ"
+
+    def clone(self):
+        """Clone this instance."""
+        return self.replace(microsecond=self.microsecond)
 
     @classmethod
     def fromISOformat(cls, ts):
         """Convert an ISO 8601 timestamp to a Timestamp object."""
+        # If inadvertantly passed a Timestamp object, use replace()
+        # to create a clone.
+        if isinstance(ts, cls):
+            return ts.clone()
         return cls.strptime(ts, cls.ISO8601Format)
 
     @classmethod
     def fromtimestampformat(cls, ts):
         """Convert a MediaWiki internal timestamp to a Timestamp object."""
+        # If inadvertantly passed a Timestamp object, use replace()
+        # to create a clone.
+        if isinstance(ts, cls):
+            return ts.clone()
         return cls.strptime(ts, cls.mediawikiTSFormat)
 
-    def toISOformat(self):
-        """Convert object to an ISO 8601 timestamp."""
+    def isoformat(self):
+        """
+        Convert object to an ISO 8601 timestamp accepted by MediaWiki.
+
+        datetime.datetime.isoformat does not postfix the ISO formatted date
+        with a 'Z' unless a timezone is included, which causes MediaWiki
+        ~1.19 and earlier to fail.
+        """
         return self.strftime(self.ISO8601Format)
+
+    toISOformat = redirect_func(isoformat, old_name='toISOformat',
+                                class_name='Timestamp')
 
     def totimestampformat(self):
         """Convert object to a MediaWiki internal timestamp."""
@@ -136,10 +169,11 @@ class Timestamp(datetime.datetime):
 
     def __str__(self):
         """Return a string format recognized by the API."""
-        return self.toISOformat()
+        return self.isoformat()
 
     def __add__(self, other):
-        newdt = datetime.datetime.__add__(self, other)
+        """Perform addition, returning a Timestamp instead of datetime."""
+        newdt = super(Timestamp, self).__add__(other)
         if isinstance(newdt, datetime.datetime):
             return Timestamp(newdt.year, newdt.month, newdt.day, newdt.hour,
                              newdt.minute, newdt.second, newdt.microsecond,
@@ -148,7 +182,8 @@ class Timestamp(datetime.datetime):
             return newdt
 
     def __sub__(self, other):
-        newdt = datetime.datetime.__sub__(self, other)
+        """Perform substraction, returning a Timestamp instead of datetime."""
+        newdt = super(Timestamp, self).__sub__(other)
         if isinstance(newdt, datetime.datetime):
             return Timestamp(newdt.year, newdt.month, newdt.day, newdt.hour,
                              newdt.minute, newdt.second, newdt.microsecond,
@@ -225,7 +260,9 @@ class Coordinate(object):
         FIXME: Should this be in the DataSite object?
         """
         if self.globe not in self.site.globes():
-            raise CoordinateGlobeUnknownException(u"%s is not supported in Wikibase yet." % self.globe)
+            raise CoordinateGlobeUnknownException(
+                u"%s is not supported in Wikibase yet."
+                % self.globe)
         return {'latitude': self.lat,
                 'longitude': self.lon,
                 'altitude': self.alt,
@@ -233,8 +270,8 @@ class Coordinate(object):
                 'precision': self.precision,
                 }
 
-    @staticmethod
-    def fromWikibase(data, site):
+    @classmethod
+    def fromWikibase(cls, data, site):
         """Constructor to create an object from Wikibase's JSON output."""
         globes = {}
         for k in site.globes():
@@ -247,31 +284,35 @@ class Coordinate(object):
             # Default to earth or should we use None here?
             globe = 'earth'
 
-        return Coordinate(data['latitude'], data['longitude'],
-                          data['altitude'], data['precision'],
-                          globe, site=site, entity=data['globe'])
+        return cls(data['latitude'], data['longitude'],
+                   data['altitude'], data['precision'],
+                   globe, site=site, entity=data['globe'])
 
     @property
     def precision(self):
-        """
+        u"""
         Return the precision of the geo coordinate.
 
-        The biggest error (in degrees) will be given by the longitudinal error - the same error in meters becomes larger
-        (in degrees) further up north. We can thus ignore the latitudinal error.
+        The biggest error (in degrees) will be given by the longitudinal error;
+        the same error in meters becomes larger (in degrees) further up north.
+        We can thus ignore the latitudinal error.
 
         The longitudinal can be derived as follows:
 
         In small angle approximation (and thus in radians):
 
-        Δλ ≈ Δpos / r_φ, where r_φ is the radius of earth at the given latitude. Δλ is the error in longitude.
+        M{Δλ ≈ Δpos / r_φ}, where r_φ is the radius of earth at the given latitude.
+        Δλ is the error in longitude.
 
-           r_φ = r cos φ, where r is the radius of earth, φ the latitude
+        M{r_φ = r cos φ}, where r is the radius of earth, φ the latitude
 
-        Therefore: precision = math.degrees( self._dim / ( radius * math.cos( math.radians( self.lat ) ) ) )
+        Therefore::
+            precision = math.degrees(self._dim/(radius*math.cos(math.radians(self.lat))))
         """
         if not self._precision:
             radius = 6378137  # TODO: Support other globes
-            self._precision = math.degrees(self._dim / (radius * math.cos(math.radians(self.lat))))
+            self._precision = math.degrees(
+                self._dim / (radius * math.cos(math.radians(self.lat))))
         return self._precision
 
     def precisionToDim(self):
@@ -281,13 +322,31 @@ class Coordinate(object):
 
 class WbTime(object):
 
-    """ A Wikibase time representation"""
+    """A Wikibase time representation."""
 
-    PRECISION = {'1000000000': 0, '100000000': 1, '10000000': 2, '1000000': 3, '100000': 4, '10000': 5, 'millenia': 6, 'century': 7, 'decade': 8, 'year': 9, 'month': 10, 'day': 11, 'hour': 12, 'minute': 13, 'second': 14}
+    PRECISION = {'1000000000': 0,
+                 '100000000': 1,
+                 '10000000': 2,
+                 '1000000': 3,
+                 '100000': 4,
+                 '10000': 5,
+                 'millenia': 6,
+                 'century': 7,
+                 'decade': 8,
+                 'year': 9,
+                 'month': 10,
+                 'day': 11,
+                 'hour': 12,
+                 'minute': 13,
+                 'second': 14
+                 }
+
     FORMATSTR = '{0:+012d}-{1:02d}-{2:02d}T{3:02d}:{4:02d}:{5:02d}Z'
 
-    def __init__(self, year=None, month=None, day=None, hour=None, minute=None, second=None, precision=None, before=0,
-                 after=0, timezone=0, calendarmodel=None, site=None):
+    def __init__(self, year=None, month=None, day=None,
+                 hour=None, minute=None, second=None,
+                 precision=None, before=0, after=0,
+                 timezone=0, calendarmodel=None, site=None):
         """
         Create a new WbTime object.
 
@@ -330,22 +389,25 @@ class WbTime(object):
 
         # if precision is given it overwrites the autodetection above
         if precision is not None:
-            if isinstance(precision, int) and precision in self.PRECISION.values():
+            if (isinstance(precision, int) and
+                    precision in self.PRECISION.values()):
                 self.precision = precision
             elif precision in self.PRECISION:
                 self.precision = self.PRECISION[precision]
             else:
                 raise ValueError('Invalid precision: "%s"' % precision)
 
-    @staticmethod
-    def fromTimestr(datetimestr, precision=14, before=0, after=0, timezone=0,
-                    calendarmodel=None, site=None):
-        match = re.match('([-+]?\d+)-(\d+)-(\d+)T(\d+):(\d+):(\d+)Z', datetimestr)
+    @classmethod
+    def fromTimestr(cls, datetimestr, precision=14, before=0, after=0,
+                    timezone=0, calendarmodel=None, site=None):
+        match = re.match(r'([-+]?\d+)-(\d+)-(\d+)T(\d+):(\d+):(\d+)Z',
+                         datetimestr)
         if not match:
             raise ValueError(u"Invalid format: '%s'" % datetimestr)
         t = match.groups()
-        return WbTime(long(t[0]), int(t[1]), int(t[2]), int(t[3]), int(t[4]), int(t[5]),
-                      precision, before, after, timezone, calendarmodel, site)
+        return cls(long(t[0]), int(t[1]), int(t[2]),
+                   int(t[3]), int(t[4]), int(t[5]),
+                   precision, before, after, timezone, calendarmodel, site)
 
     def toTimestr(self):
         """
@@ -371,13 +433,15 @@ class WbTime(object):
                 }
         return json
 
-    @staticmethod
-    def fromWikibase(ts):
-        return WbTime.fromTimestr(ts[u'time'], ts[u'precision'], ts[u'before'], ts[u'after'], ts[u'timezone'],
-                                  ts[u'calendarmodel'])
+    @classmethod
+    def fromWikibase(cls, ts):
+        return cls.fromTimestr(ts[u'time'], ts[u'precision'],
+                               ts[u'before'], ts[u'after'],
+                               ts[u'timezone'], ts[u'calendarmodel'])
 
     def __str__(self):
-        return str(self.toWikibase())
+        return json.dumps(self.toWikibase(), indent=4, sort_keys=True,
+                          separators=(',', ': '))
 
     def __eq__(self, other):
         return self.__dict__ == other.__dict__
@@ -386,7 +450,8 @@ class WbTime(object):
         return u"WbTime(year=%(year)d, month=%(month)d, day=%(day)d, " \
             u"hour=%(hour)d, minute=%(minute)d, second=%(second)d, " \
             u"precision=%(precision)d, before=%(before)d, after=%(after)d, " \
-            u"timezone=%(timezone)d, calendarmodel='%(calendarmodel)s')" % self.__dict__
+            u"timezone=%(timezone)d, calendarmodel='%(calendarmodel)s')" \
+            % self.__dict__
 
 
 class WbQuantity(object):
@@ -407,7 +472,8 @@ class WbQuantity(object):
         if amount is None:
             raise ValueError('no amount given')
         if unit is not None and unit != '1':
-            raise NotImplementedError('Currently only unit-less quantities are supported')
+            raise NotImplementedError(
+                'Currently only unit-less quantities are supported')
         if unit is None:
             unit = '1'
         self.amount = amount
@@ -421,9 +487,7 @@ class WbQuantity(object):
         self.lowerBound = self.amount - lowerError
 
     def toWikibase(self):
-        """
-        Convert the data to a JSON object for the Wikibase API.
-        """
+        """Convert the data to a JSON object for the Wikibase API."""
         json = {'amount': self.amount,
                 'upperBound': self.upperBound,
                 'lowerBound': self.lowerBound,
@@ -431,8 +495,8 @@ class WbQuantity(object):
                 }
         return json
 
-    @staticmethod
-    def fromWikibase(wb):
+    @classmethod
+    def fromWikibase(cls, wb):
         """
         Create a WbQuanity from the JSON data given by the Wikibase API.
 
@@ -442,10 +506,11 @@ class WbQuantity(object):
         upperBound = eval(wb['upperBound'])
         lowerBound = eval(wb['lowerBound'])
         error = (upperBound - amount, amount - lowerBound)
-        return WbQuantity(amount, wb['unit'], error)
+        return cls(amount, wb['unit'], error)
 
     def __str__(self):
-        return str(self.toWikibase())
+        return json.dumps(self.toWikibase(), indent=4, sort_keys=True,
+                          separators=(',', ': '))
 
     def __eq__(self, other):
         return self.__dict__ == other.__dict__
@@ -456,14 +521,15 @@ class WbQuantity(object):
 
 
 _sites = {}
+_url_cache = {}  # The code/fam pair for each URL
 
 
-def Site(code=None, fam=None, user=None, sysop=None, interface=None):
+def Site(code=None, fam=None, user=None, sysop=None, interface=None, url=None):
     """A factory method to obtain a Site object.
 
     Site objects are cached and reused by this method.
 
-    By default rely on config settings. These defaults may all be overriden
+    By default rely on config settings. These defaults may all be overridden
     using the method parameters.
 
     @param code: language code (override config.mylang)
@@ -474,14 +540,43 @@ def Site(code=None, fam=None, user=None, sysop=None, interface=None):
     @type user: unicode
     @param sysop: sysop user to use on this site (override config.sysopnames)
     @type sysop: unicode
-    @param interface: site interface (override config.site_interface)
-    @type interface: string
+    @param interface: site class or name of class in pywikibot.site
+        (override config.site_interface)
+    @type interface: subclass of L{pywikibot.site.BaseSite} or string
+    @param url: Instead of code and fam, does try to get a Site based on the
+        URL. Still requires that the family supporting that URL exists.
+    @type url: string
     """
+    # Either code and fam or only url
+    assert(not url or (not code and not fam))
     _logger = "wiki"
 
-    # Fallback to config defaults
-    code = code or config.mylang
-    fam = fam or config.family
+    if url:
+        if url in _url_cache:
+            cached = _url_cache[url]
+            if cached:
+                code = cached[0]
+                fam = cached[1]
+            else:
+                raise Error("Unknown URL '{0}'.".format(url))
+        else:
+            # Iterate through all families and look, which does apply to
+            # the given URL
+            for fam in config.family_files:
+                family = pywikibot.family.Family.load(fam)
+                code = family.from_url(url)
+                if code:
+                    _url_cache[url] = (code, fam)
+                    break
+            else:
+                _url_cache[url] = None
+                # TODO: As soon as AutoFamily is ready, try and use an
+                #       AutoFamily
+                raise Error("Unknown URL '{0}'.".format(url))
+    else:
+        # Fallback to config defaults
+        code = code or config.mylang
+        fam = fam or config.family
     interface = interface or config.site_interface
 
     # config.usernames is initialised with a dict for each family name
@@ -492,23 +587,45 @@ def Site(code=None, fam=None, user=None, sysop=None, interface=None):
         sysop = sysop or config.sysopnames[family_name].get(code) \
             or config.sysopnames[family_name].get('*')
 
-    try:
-        tmp = __import__('pywikibot.site', fromlist=[interface])
-        __Site = getattr(tmp, interface)
-    except ImportError:
-        raise ValueError("Invalid interface name '%(interface)s'" % locals())
-    key = '%s:%s:%s' % (fam, code, user)
-    if key not in _sites or not isinstance(_sites[key], __Site):
-        _sites[key] = __Site(code=code, fam=fam, user=user, sysop=sysop)
-        debug(u"Instantiating Site object '%(site)s'"
-                        % {'site': _sites[key]}, _logger)
+    if not isinstance(interface, type):
+        # If it isnt a class, assume it is a string
+        try:
+            tmp = __import__('pywikibot.site', fromlist=[interface])
+            interface = getattr(tmp, interface)
+        except ImportError:
+            raise ValueError("Invalid interface name '%(interface)s'" % locals())
+
+    if not issubclass(interface, pywikibot.site.BaseSite):
+        warning('Site called with interface=%s' % interface.__name__)
+
+    user = pywikibot.tools.normalize_username(user)
+    key = '%s:%s:%s:%s' % (interface.__name__, fam, code, user)
+    if key not in _sites or not isinstance(_sites[key], interface):
+        _sites[key] = interface(code=code, fam=fam, user=user, sysop=sysop)
+        debug(u"Instantiated %s object '%s'"
+              % (interface.__name__, _sites[key]), _logger)
+
+        if _sites[key].code != code:
+            warn('Site %s instantiated using different code "%s"'
+                 % (_sites[key], code), UserWarning, 2)
+
     return _sites[key]
 
 
-getSite = Site  # alias for backwards-compability
+# alias for backwards-compability
+getSite = pywikibot.tools.redirect_func(Site, old_name='getSite')
 
 
-from .page import Page, FilePage, ImagePage, Category, Link, User, ItemPage, PropertyPage, Claim
+from .page import (
+    Page,
+    FilePage,
+    Category,
+    Link,
+    User,
+    ItemPage,
+    PropertyPage,
+    Claim,
+)
 from .page import html2unicode, url2unicode, unicode2html
 
 
@@ -517,7 +634,7 @@ link_regex = re.compile(r'\[\[(?P<title>[^\]|[<>{}]*)(\|.*?)?\]\]')
 
 @pywikibot.tools.deprecated("comment parameter for page saving method")
 def setAction(s):
-    """Set a summary to use for changed page submissions"""
+    """Set a summary to use for changed page submissions."""
     config.default_edit_summary = s
 
 
@@ -528,60 +645,7 @@ def showDiff(oldtext, newtext):
     The differences are highlighted (only on compatible systems) to show which
     changes were made.
     """
-    # This is probably not portable to non-terminal interfaces....
-    # For information on difflib, see http://pydoc.org/2.1/difflib.html
-    color = {
-        '+': 'lightgreen',
-        '-': 'lightred',
-    }
-    diff = u''
-    colors = []
-    # This will store the last line beginning with + or -.
-    lastline = None
-    # For testing purposes only: show original, uncolored diff
-    #     for line in difflib.ndiff(oldtext.splitlines(), newtext.splitlines()):
-    #         print line
-    for line in difflib.ndiff(oldtext.splitlines(), newtext.splitlines()):
-        if line.startswith('?'):
-            # initialize color vector with None, which means default color
-            lastcolors = [None for c in lastline]
-            # colorize the + or - sign
-            lastcolors[0] = color[lastline[0]]
-            # colorize changed parts in red or green
-            for i in range(min(len(line), len(lastline))):
-                if line[i] != ' ':
-                    lastcolors[i] = color[lastline[0]]
-            diff += lastline + '\n'
-            # append one None (default color) for the newline character
-            colors += lastcolors + [None]
-        elif lastline:
-            diff += lastline + '\n'
-            # colorize the + or - sign only
-            lastcolors = [None for c in lastline]
-            lastcolors[0] = color[lastline[0]]
-            colors += lastcolors + [None]
-        lastline = None
-        if line[0] in ('+', '-'):
-            lastline = line
-    # there might be one + or - line left that wasn't followed by a ? line.
-    if lastline:
-        diff += lastline + '\n'
-        # colorize the + or - sign only
-        lastcolors = [None for c in lastline]
-        lastcolors[0] = color[lastline[0]]
-        colors += lastcolors + [None]
-
-    result = u''
-    lastcolor = None
-    for i in range(len(diff)):
-        if colors[i] != lastcolor:
-            if lastcolor is None:
-                result += '\03{%s}' % colors[i]
-            else:
-                result += '\03{default}'
-        lastcolor = colors[i]
-        result += diff[i]
-    output(result)
+    PatchManager(oldtext, newtext).print_hunks()
 
 
 # Throttle and thread handling
@@ -625,11 +689,9 @@ def stopme():
             try:
                 _putthread.join(1)
             except KeyboardInterrupt:
-                answer = inputChoice(u"""\
-There are %i pages remaining in the queue. Estimated time remaining: %s
-Really exit?""" % remaining(),
-                    ['yes', 'no'], ['y', 'N'], 'N')
-                if answer == 'y':
+                if input_yn('There are %i pages remaining in the queue. '
+                            'Estimated time remaining: %s\nReally exit?'
+                            % remaining(), default=False, automatic_quit=False):
                     return
 
     # only need one drop() call because all throttles use the same global pid
@@ -673,3 +735,10 @@ _putthread = threading.Thread(target=async_manager)
 # identification for debugging purposes
 _putthread.setName('Put-Thread')
 _putthread.setDaemon(True)
+
+wrapper = pywikibot.tools.ModuleDeprecationWrapper(__name__)
+wrapper._add_deprecated_attr('ImagePage', FilePage)
+wrapper._add_deprecated_attr(
+    'PageNotFound', pywikibot.exceptions.DeprecatedPageNotFoundError,
+    warning_message=('{0}.{1} is deprecated, and no longer '
+                     'used by pywikibot; use http.fetch() instead.'))

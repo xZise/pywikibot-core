@@ -1,8 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
-This is a helper script to convert compat 1.0 scripts to the new core 2.0
-framework.
+A helper script to convert compat 1.0 scripts to the new core 2.0 framework.
 
 NOTE: Please be aware that this script is not able to convert your codes
 completely. It may support you with some automatic replacements and it gives
@@ -53,32 +52,33 @@ replacements = (
     ('import catlib\r?\n', ''),
     ('import userlib\r?\n', ''),
     # change wikipedia to pywikibot, exclude URLs
-    ('(?<!\.)wikipedia\.', u'pywikibot.'),
+    (r'(?<!\.)wikipedia\.', u'pywikibot.'),
     # site instance call
-    ('pywikibot\.getSite\s*\(\s*', 'pywikibot.Site('),
+    (r'pywikibot\.getSite\s*\(\s*', 'pywikibot.Site('),
     # lang is different from code. We should use code in core
-    ('([Ss])ite.lang(?:uage\(\))?', r'\1ite.code'),
+    (r'([Ss])ite.lang(?:uage\(\))?', r'\1ite.code'),
     # change compat library classes to pywikibot intrinsic classes
-    ('catlib\.Category\s*\(\s*', 'pywikibot.Category('),
-    ('catlib\.change_category\s*\((\s*)(?P<article>.+?),\s*(?P<oldcat>.+?),',
+    (r'catlib\.Category\s*\(\s*', 'pywikibot.Category('),
+    (r'catlib\.change_category\s*\((\s*)(?P<article>.+?),\s*(?P<oldcat>.+?),',
      r'\g<article>.change_category(\1\g<oldcat>,'),
-    ('userlib\.User\s*\(\s*', 'pywikibot.User('),
+    (r'userlib\.User\s*\(\s*', 'pywikibot.User('),
     # change ImagePage to FilePage
-    ('pywikibot\.ImagePage\s*\(\s*', 'pywikibot.FilePage('),
+    (r'pywikibot\.ImagePage\s*\(\s*', 'pywikibot.FilePage('),
     # deprecated title methods
-    ('\.urlname\s*\(\s*\)', '.title(asUrl=True)'),
-    ('\.urlname\s*\(\s*(?:withNamespace\s*=\s*)?(True|False)+\s*\)',
+    (r'\.urlname\s*\(\s*\)', '.title(asUrl=True)'),
+    (r'\.urlname\s*\(\s*(?:withNamespace\s*=\s*)?(True|False)+\s*\)',
      r'.title(asUrl=True, withNamespace=\1)'),
-    ('\.titleWithoutNamespace\s*\(\s*\)', '.title(withNamespace=False)'),
-    ('\.sectionFreeTitle\s*\(\s*\)', '.title(withSection=False)'),
-    ('\.aslink\s*\(\s*\)', '.title(asLink=True)'),
+    (r'\.titleWithoutNamespace\s*\(\s*\)', '.title(withNamespace=False)'),
+    (r'\.sectionFreeTitle\s*\(\s*\)', '.title(withSection=False)'),
+    (r'\.aslink\s*\(\s*\)', '.title(asLink=True)'),
     # other deprecated methods
-    ('(?<!site)\.encoding\s*\(\s*\)', '.site.encoding()'),
-    ('\.newimages\s*\(', '.newfiles('),
+    (r'(?<!site)\.encoding\s*\(\s*\)', '.site.encoding()'),
+    (r'\.newimages\s*\(', '.newfiles('),
     # new core methods
-    ('\.get\s*\(\s*get_redirect\s*=\s*True\s*\)', '.text'),
+    (r'\.get\s*\(\s*get_redirect\s*=\s*True\s*\)', '.text'),
     # stopme() is done by the framework itself
-    ('(\s*)try\:\s*\r?\n\s+main\(\)\s*\r?\n\s*finally\:\s*\r?\n\s+pywikibot\.stopme\(\)',
+    (r'(\s*)try\:\s*\r?\n\s+main\(\)\s*\r?\n\s*finally\:\s*\r?\n'
+     r'\s+pywikibot\.stopme\(\)',
      r'\1main()'),
 )
 
@@ -99,7 +99,7 @@ warnings = (
      'MediaWiki one'),
     ('.getFileMd5Sum(',
      'FilePage.getFileMd5Sum() is deprecated should be replaced by '
-     'getFileSHA1Sum()'),
+     'FilePage.latest_file_info.sha1'),
     (' wikipedia.',
      '"wikipedia" library has been changed to "pywikibot".'),
     ('from wikipedia import',
@@ -112,6 +112,8 @@ warnings = (
 
 
 class ConvertBot(object):
+
+    """Script conversion bot."""
 
     def __init__(self, filename=None, warnonly=False):
         self.source = filename
@@ -144,9 +146,9 @@ class ConvertBot(object):
 
     def get_dest(self):
         self.dest = u'%s-core.%s' % tuple(self.source.rsplit(u'.', 1))
-        if not self.warnonly and pywikibot.inputChoice(
+        if not self.warnonly and not pywikibot.input_yn(
                 u'Destination file is %s.' % self.dest,
-                ['Yes', 'No'], ['y', 'n'], 'y') == 'n':
+                default=True, automatic_quit=False):
             pywikibot.output('Quitting...')
             exit()
 

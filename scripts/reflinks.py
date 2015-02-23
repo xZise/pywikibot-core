@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+Fetch and add titles for bare links in references.
+
 This bot will search for references which are only made of a link without title,
 (i.e. <ref>[https://www.google.fr/]</ref> or <ref>https://www.google.fr/</ref>)
 and will fetch the html title from the link to use it as the title of the wiki
@@ -37,8 +39,9 @@ See [[:en:User:DumZiBoT/refLinks]] for more information on the bot.
 # (C) Nicolas Dumazet (NicDumZ), 2008
 # (C) Pywikibot team, 2008-2014
 #
-# Distributed under the terms of the GPL
+# Distributed under the terms of the MIT license.
 #
+from __future__ import division
 __version__ = '$Id$'
 #
 
@@ -50,10 +53,13 @@ import tempfile
 import os
 import gzip
 import sys
+import io
 
 import pywikibot
+
 from pywikibot import i18n, pagegenerators, textlib, xmlreader, Bot
-import noreferences
+
+from scripts import noreferences
 
 # TODO: Convert to httlib2
 if sys.version_info[0] > 2:
@@ -61,11 +67,9 @@ if sys.version_info[0] > 2:
     from urllib.request import urlopen
     from urllib.error import HTTPError, URLError
     import http.client as httplib
-    import io as StringIO
 else:
     from urllib2 import quote, urlopen, HTTPError, URLError
     import httplib
-    import StringIO
 
 docuReplacements = {
     '&params;': pagegenerators.parameterHelp
@@ -118,7 +122,7 @@ dirIndex = re.compile(
 # Extracts the domain name
 domain = re.compile(r'^(\w+)://(?:www.|)([^/]+)')
 
-globalbadtitles = """
+globalbadtitles = r"""
 # is
 (test|
 # starts with
@@ -182,13 +186,13 @@ listof404pages = '404-links.txt'
 
 class XmlDumpPageGenerator:
 
-    """Xml generator that yiels pages containing bare references."""
+    """Xml generator that yields pages containing bare references."""
 
-    def __init__(self, xmlFilename, xmlStart, namespaces):
+    def __init__(self, xmlFilename, xmlStart, namespaces, site=None):
         self.xmlStart = xmlStart
         self.namespaces = namespaces
         self.skipping = bool(xmlStart)
-        self.site = pywikibot.Site()
+        self.site = site or pywikibot.Site()
 
         dump = xmlreader.XmlDump(xmlFilename)
         self.parser = dump.parse()
@@ -269,9 +273,10 @@ class RefLink:
         # TODO : remove HTML when both opening and closing tags are included
 
     def avoid_uppercase(self):
-        """ If title has more than 6 characters and has 60% of uppercase
-        characters, capitalize() it
+        """
+        Convert to title()-case if title is 70% uppercase characters.
 
+        Skip title that has less than 6 characters.
         """
         if len(self.title) <= 6:
             return
@@ -284,24 +289,26 @@ class RefLink:
                 nb_letter += 1
             if letter.isdigit():
                 return
-        if float(nb_upper) / (nb_letter + 1) > .70:
+        if nb_upper / (nb_letter + 1) > .70:
             self.title = self.title.title()
 
 
 class DuplicateReferences:
 
-    """ When some references are duplicated in an article,
-    name the first, and remove the content of the others
+    """Helper to de-duplicate references in text.
 
+    When some references are duplicated in an article,
+    name the first, and remove the content of the others
     """
+
     def __init__(self):
         # Match references
         self.REFS = re.compile(
-            u'(?i)<ref(?P<params>[^>/]*)>(?P<content>.*?)</ref>')
+            r'(?i)<ref(?P<params>[^>/]*)>(?P<content>.*?)</ref>')
         self.NAMES = re.compile(
-            u'(?i).*name\s*=\s*(?P<quote>"?)\s*(?P<name>.+)\s*(?P=quote).*')
+            r'(?i).*name\s*=\s*(?P<quote>"?)\s*(?P<name>.+)\s*(?P=quote).*')
         self.GROUPS = re.compile(
-            u'(?i).*group\s*=\s*(?P<quote>"?)\s*(?P<group>.+)\s*(?P=quote).*')
+            r'(?i).*group\s*=\s*(?P<quote>"?)\s*(?P<group>.+)\s*(?P=quote).*')
         self.autogen = i18n.twtranslate(pywikibot.Site(), 'reflinks-autogen')
 
     def process(self, text):
@@ -394,12 +401,14 @@ class DuplicateReferences:
             if v[1]:
                 name = u'"%s"' % name
             text = re.sub(
-                u'<ref name\s*=\s*(?P<quote>"?)\s*%s\s*(?P=quote)\s*/>' % k,
+                u'<ref name\\s*=\\s*(?P<quote>"?)\\s*%s\\s*(?P=quote)\\s*/>' % k,
                 u'<ref name=%s />' % name, text)
         return text
 
 
 class ReferencesRobot(Bot):
+
+    """References bot."""
 
     def __init__(self, generator, **kwargs):
         """- generator : Page generator."""
@@ -463,8 +472,9 @@ class ReferencesRobot(Bot):
                          % (err_num, link, pagetitleaslink), toStdout=True)
 
     def getPDFTitle(self, ref, f):
-        """ Use pdfinfo to retrieve title from a PDF.
-        Unix-only, I'm afraid.
+        """Use pdfinfo to retrieve title from a PDF.
+
+        FIXME: Unix-only, I'm afraid.
 
         """
         pywikibot.output(u'PDF file.')
@@ -591,8 +601,8 @@ class ReferencesRobot(Bot):
                         # XXX: small issue here: the whole page is downloaded
                         # through f.read(). It might fetch big files/pages.
                         # However, truncating an encoded gzipped stream is not
-                        # an option, for unzipping will fail.
-                        compressed = StringIO.StringIO(f.read())
+                        # an option, or unzipping will fail.
+                        compressed = io.BytesIO(f.read())
                         f = gzip.GzipFile(fileobj=compressed)
 
                     # Read the first 1,000,000 bytes (0.95 MB)
@@ -652,7 +662,7 @@ class ReferencesRobot(Bot):
                         s = self.CHARSET.search(tag)
                 if s:
                     tmp = s.group('enc').strip("\"' ").lower()
-                    naked = re.sub('[ _\-]', '', tmp)
+                    naked = re.sub(r'[ _\-]', '', tmp)
                     # Convert to python correct encoding names
                     if naked == "gb2312":
                         enc.append("gbk")
@@ -665,7 +675,6 @@ class ReferencesRobot(Bot):
                         enc.append(tmp)
                 else:
                     pywikibot.output(u'No charset found for %s' % ref.link)
-##                    continue  # do not process pages without charset
                 if not contentType:
                     pywikibot.output(u'No content-type found for %s' % ref.link)
                     continue
@@ -745,22 +754,9 @@ class ReferencesRobot(Bot):
 
             new_text = self.deduplicator.process(new_text)
 
-            try:
-                self.userPut(page, page.text, new_text, comment=self.msg)
-            except pywikibot.EditConflict:
-                pywikibot.output(u'Skipping %s because of edit conflict'
-                                 % page.title())
-            except pywikibot.SpamfilterError as e:
-                pywikibot.output(
-                    u'Cannot change %s because of blacklist entry %s'
-                    % (page.title(), e.url))
-            except pywikibot.LockedPage:
-                pywikibot.output(u'Skipping %s (locked page)'
-                                 % page.title())
-            except pywikibot.PageNotSaved as error:
-                pywikibot.error(u'putting page: %s' % (error.args,))
-            except pywikibot.ServerError as e:
-                pywikibot.output(u'Server Error : %s' % e)
+            self.userPut(page, page.text, new_text, comment=self.msg,
+                         ignore_save_related_errors=True,
+                         ignore_server_errors=True)
 
             if new_text == page.text:
                 continue
@@ -782,14 +778,22 @@ class ReferencesRobot(Bot):
                     return
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     xmlFilename = None
     options = {}
     namespaces = []
     generator = None
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     for arg in local_args:

@@ -1,7 +1,7 @@
-# Stdout, stderr and argv support:
+"""Stdout, stderr and argv support for unicode."""
 ##############################################
 # Support for unicode in windows cmd.exe
-# Posted on Stack Overflow [1], available under CC-BY-SA [2]
+# Posted on Stack Overflow [1], available under CC-BY-SA 3.0 [2]
 #
 # Question: "Windows cmd encoding change causes Python crash" [3] by Alex [4],
 # Answered [5] by David-Sarah Hopwood [6].
@@ -15,8 +15,8 @@
 #
 ################################################
 #
-# stdin support added by Merlijn van Deen <valhallasw@gmail.com>, march 2012
-# Licensed under both CC-BY-SA as the MIT license.
+# stdin support added by Merlijn van Deen <valhallasw@gmail.com>, March 2012
+# Licensed under both CC-BY-SA and the MIT license.
 #
 ################################################
 from __future__ import print_function
@@ -28,6 +28,9 @@ argv = sys.argv
 
 if sys.version_info[0] > 2:
     unicode = str
+    PY3 = True
+else:
+    PY3 = False
 
 if sys.platform == "win32":
     import codecs
@@ -80,8 +83,8 @@ if sys.platform == "win32":
         def not_a_console(handle):
             if handle == INVALID_HANDLE_VALUE or handle is None:
                 return True
-            return ((GetFileType(handle) & ~FILE_TYPE_REMOTE) != FILE_TYPE_CHAR
-                    or GetConsoleMode(handle, byref(DWORD())) == 0)
+            return ((GetFileType(handle) & ~FILE_TYPE_REMOTE) != FILE_TYPE_CHAR or
+                    GetConsoleMode(handle, byref(DWORD())) == 0)
 
         old_stdin_fileno = None
         old_stdout_fileno = None
@@ -121,6 +124,9 @@ if sys.platform == "win32":
                                        LPVOID)(("ReadConsoleW", windll.kernel32))
 
             class UnicodeInput:
+
+                """Unicode terminal input class."""
+
                 def __init__(self, hConsole, name, bufsize=1024):
                     self._hConsole = hConsole
                     self.bufsize = bufsize
@@ -134,7 +140,11 @@ if sys.platform == "win32":
                     result = ReadConsoleW(self._hConsole, self.buffer, maxnum, byref(numrecv), None)
                     if not result:
                         raise Exception("stdin failure")
-                    return self.buffer.value[:numrecv.value].encode(self.encoding)
+                    data = self.buffer.value[:numrecv.value]
+                    if not PY3:
+                        return data.encode(self.encoding)
+                    else:
+                        return data
 
         if real_stdout or real_stderr:
             # BOOL WINAPI WriteConsoleW(HANDLE hOutput, LPWSTR lpBuffer, DWORD nChars,
@@ -144,6 +154,9 @@ if sys.platform == "win32":
                                         LPVOID)(("WriteConsoleW", windll.kernel32))
 
             class UnicodeOutput:
+
+                """Unicode terminal output class."""
+
                 def __init__(self, hConsole, stream, fileno, name):
                     self._hConsole = hConsole
                     self._stream = stream

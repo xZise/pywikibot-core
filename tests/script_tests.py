@@ -5,32 +5,40 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import print_function
 __version__ = '$Id$'
 
 import os
 import sys
-import time
-import subprocess
-import pywikibot
+
 from pywikibot import config
+
+from tests import _root_dir
 from tests.aspects import unittest, DefaultSiteTestCase, MetaTestCaseClass, PwbTestCase
+from tests.utils import allowed_failure, execute_pwb
 
+scripts_path = os.path.join(_root_dir, 'scripts')
 
-base_path = os.path.split(os.path.split(__file__)[0])[0]
-pwb_path = os.path.join(base_path, 'pwb.py')
-scripts_path = os.path.join(base_path, 'scripts')
-
-
+# These dependencies are not always the package name which is in setup.py.
+# e.g. 'PIL.ImageTk' is a object provided by several different pypi packages,
+# and setup.py requests that 'Pillow' is installed to provide 'PIL.ImageTk'.
+# Here, it doesnt matter which pypi package was requested and installed.
+# Here, the name given to the module which will be imported is required.
 script_deps = {
     'script_wui': ['crontab', 'lua'],
     # Note: package 'lunatic-python' provides module 'lua'
 
-    'flickrripper': ['ImageTk', 'flickrapi'],
-    # Note: 'PIL' is not available via pip2.7 on MS Windows,
-    #       however it is available with setuptools.
+    'flickrripper': ['flickrapi'],
+    'match_images': ['PIL.ImageTk'],
+    'states_redirect': ['pycountry'],
 }
+
 if sys.version_info < (2, 7):
     script_deps['replicate_wiki'] = ['argparse']
+    script_deps['editarticle'] = ['argparse']
+
+if sys.version_info < (3, 0):
+    script_deps['data_ingestion'] = ['unicodecsv']
 
 
 def check_script_deps(script_name):
@@ -52,7 +60,6 @@ failed_dep_script_list = [name
 
 unrunnable_script_list = [
     'script_wui',   # depends on lua compiling
-    'editarticle',  # requires a X DISPLAY
 ]
 
 deadlock_script_list = [
@@ -61,9 +68,9 @@ deadlock_script_list = [
 
 script_list = (['login'] +
                [name[0:-3] for name in os.listdir(scripts_path)  # strip '.py'
-                if name.endswith('.py')
-                and not name.startswith('_')  # skip __init__.py and _*
-                and name != 'login.py'        # this is moved to be first
+                if name.endswith('.py') and
+                not name.startswith('_') and  # skip __init__.py and _*
+                name != 'login.py'        # this is moved to be first
                 ]
                )
 
@@ -103,6 +110,7 @@ auto_run_script_list = [
     'nowcommons',
     'script_wui',
     'shell',
+    'states_redirect',
     'unusedfiles',
     'upload',
     'watchlist',
@@ -125,9 +133,9 @@ no_args_expected_results = {
     'imageuncat': 'You have to specify the generator ',
     'interwiki': 'does not exist. Skipping.',  # 'Test page' does not exist
     'login': 'Logged in on ',
+    'match_images': 'Require two images to work on.',
     'pagefromfile': 'Please enter the file name',
-    'replace': 'Press Enter to use this default message',
-    'replicate_wiki': 'error: too few arguments',
+    'replace': 'Press Enter to use this automatic message',
     'script_wui': 'Pre-loading all relevant page contents',
     'shell': 'Welcome to the',
     'spamremove': 'No spam site specified',
@@ -142,6 +150,11 @@ no_args_expected_results = {
     'upload': 'ERROR: Upload error',
 }
 
+if sys.version_info[0] > 2:
+    no_args_expected_results['replicate_wiki'] = 'error: the following arguments are required: destination'
+else:
+    no_args_expected_results['replicate_wiki'] = 'error: too few arguments'
+
 
 def collector(loader=unittest.loader.defaultTestLoader):
     """Load the default tests."""
@@ -152,20 +165,33 @@ def collector(loader=unittest.loader.defaultTestLoader):
     enable_autorun_tests = (
         os.environ.get('PYWIKIBOT2_TEST_AUTORUN', '0') == '1')
 
-    tests = (['test__login_execution'] +
-             ['test_' + name + '_execution'
-              for name in sorted(script_list)
-              if name != 'login'
-              and name not in deadlock_script_list] +
-             ['test__login_no_args'])
+    if deadlock_script_list:
+        print('Skipping deadlock scripts:\n  %s'
+              % ', '.join(deadlock_script_list))
 
-    tests += ['test_' + name + '_no_args'
+    if unrunnable_script_list:
+        print('Skipping execution of unrunnable scripts:\n  %r'
+              % unrunnable_script_list)
+
+    if not enable_autorun_tests:
+        print('Skipping execution of auto-run scripts '
+              '(set PYWIKIBOT2_TEST_AUTORUN=1 to enable):\n  %r'
+              % auto_run_script_list)
+
+    tests = (['test__login_help'] +
+             ['test_' + name + '_help'
               for name in sorted(script_list)
-              if name != 'login'
-              and name not in deadlock_script_list
-              and name not in failed_dep_script_list  # no_args = execution
-              and name not in unrunnable_script_list
-              and (enable_autorun_tests or name not in auto_run_script_list)]
+              if name != 'login' and
+              name not in deadlock_script_list] +
+             ['test__login_simulate'])
+
+    tests += ['test_' + name + '_simulate'
+              for name in sorted(script_list)
+              if name != 'login' and
+              name not in deadlock_script_list and
+              name not in failed_dep_script_list and
+              name not in unrunnable_script_list and
+              (enable_autorun_tests or name not in auto_run_script_list)]
 
     test_list = ['tests.script_tests.TestScript.' + name
                  for name in tests]
@@ -182,39 +208,15 @@ def load_tests(loader=unittest.loader.defaultTestLoader,
     return collector(loader)
 
 
-def execute(command, data_in=None, timeout=0):
-    """Execute a command and capture outputs."""
-    options = {
-        'stdout': subprocess.PIPE,
-        'stderr': subprocess.PIPE
-    }
-    if data_in is not None:
-        options['stdin'] = subprocess.PIPE
-
-    p = subprocess.Popen(command, **options)
-    if data_in is not None:
-        p.stdin.write(data_in)
-    waited = 0
-    while waited < timeout and p.poll() is None:
-        time.sleep(1)
-        waited += 1
-    if timeout and p.poll() is None:
-        p.kill()
-    data_out = p.communicate()
-    return {'exit_code': p.returncode,
-            'stdout': data_out[0],
-            'stderr': data_out[1]}
-
-
 class TestScriptMeta(MetaTestCaseClass):
 
     """Test meta class."""
 
     def __new__(cls, name, bases, dct):
         """Create the new class."""
-        def test_execution(script_name, args=None, expected_results=None):
+        def test_execution(script_name, args=[], expected_results=None):
             def testScript(self):
-                cmd = [sys.executable, pwb_path, script_name]
+                cmd = [script_name]
 
                 if args:
                     cmd += args
@@ -222,27 +224,74 @@ class TestScriptMeta(MetaTestCaseClass):
                 data_in = script_input.get(script_name)
 
                 timeout = 0
-                if script_name in auto_run_script_list:
+                if '-help' not in args and script_name in auto_run_script_list:
                     timeout = 5
-                result = execute(cmd, data_in, timeout=timeout)
 
                 if expected_results and script_name in expected_results:
-                    if expected_results[script_name] is not None:
-                        self.assertIn(expected_results[script_name],
-                                      result['stderr'])
-                elif (args and '-help' in args) or \
+                    error = expected_results[script_name]
+                else:
+                    error = None
+
+                result = execute_pwb(cmd, data_in, timeout=timeout, error=error)
+
+                stderr = result['stderr'].split('\n')
+                stderr_sleep = [l for l in stderr
+                                if l.startswith('Sleeping for ')]
+                stderr_other = [l for l in stderr
+                                if not l.startswith('Sleeping for ')]
+                if stderr_sleep:
+                    print(u'\n'.join(stderr_sleep))
+
+                if result['exit_code'] == -9:
+                    print(' killed', end='  ')
+
+                if '-help' in args or error or \
                         script_name not in auto_run_script_list:
-                    stderr = [l for l in result['stderr'].split('\n')
-                              if not l.startswith('Sleeping for ')]
-                    pywikibot.output('\n'.join(
-                        [l for l in result['stderr'].split('\n')
-                         if l.startswith('Sleeping for ')]))
-                    self.assertEqual('\n'.join(stderr), '')
-                    self.assertIn('Global arguments available for all',
-                                  result['stdout'])
-                    self.assertEqual(result['exit_code'], 0)
+
+                    if error:
+                        self.assertIn(error, result['stderr'])
+
+                        self.assertIn(result['exit_code'], [0, 1, 2, -9])
+                    else:
+                        if stderr_other == ['']:
+                            stderr_other = None
+                        self.assertIsNone(stderr_other)
+                        self.assertIn('Global arguments available for all',
+                                      result['stdout'])
+
+                        self.assertEqual(result['exit_code'], 0)
+                else:
+                    # auto-run
+                    self.assertIn(result['exit_code'], [0, -9])
+
+                    if (not result['stdout'] and not result['stderr']):
+                        print(' auto-run script unresponsive after %d seconds'
+                              % timeout, end=' ')
+                    elif 'SIMULATION: edit action blocked' in result['stderr']:
+                        print(' auto-run script simulated edit blocked',
+                              end='  ')
+                    else:
+                        print(' auto-run script stderr within %d seconds: %r'
+                              % (timeout, result['stderr']), end='  ')
+
                 self.assertNotIn('Traceback (most recent call last)',
                                  result['stderr'])
+                self.assertNotIn('deprecated', result['stderr'].lower())
+
+                # If stdout doesnt include global help..
+                if 'Global arguments available for all' not in result['stdout']:
+                    # Specifically look for deprecated
+                    self.assertNotIn('deprecated', result['stdout'].lower())
+                    # But also complain if there is any stdout
+                    # but ignore shell.py emiting its '>>> ' prompt.
+                    if ((script_name == 'shell' and
+                                set(result['stdout']).issubset(set('> \n'))) or
+                            result['stdout'] == ''):
+                        result['stdout'] = None
+                    self.assertIsNone(result['stdout'])
+
+                sys.stdout.flush()
+
             return testScript
 
         for script_name in script_list:
@@ -252,51 +301,50 @@ class TestScriptMeta(MetaTestCaseClass):
             # unrunnable script tests are disabled by default in load_tests()
 
             if script_name == 'login':
-                test_name = 'test__' + script_name + '_execution'
+                test_name = 'test__' + script_name + '_help'
             else:
-                test_name = 'test_' + script_name + '_execution'
+                test_name = 'test_' + script_name + '_help'
             dct[test_name] = test_execution(script_name, ['-help'])
-            if script_name in ['shell', 'version',
-                               'data_ingestion',  # bug 68611
-                               'flickrripper',    # bug 68606 (and others)
-                               'replicate_wiki',  # bug 68664
+            if script_name in ['version',
                                'script_wui',      # Failing on travis-ci
-                               ]:
+                               ] + failed_dep_script_list:
                 dct[test_name] = unittest.expectedFailure(dct[test_name])
-            dct[test_name].__doc__ = 'Test running ' + script_name + '.'
+            dct[test_name].__doc__ = 'Test running ' + script_name + ' -help'
             dct[test_name].__name__ = test_name
 
             # Ideally all scripts should execute -help without
-            # connecting to a site.  However pywikibot always
-            # logs site.live_version().
-            # TODO: make logging live_version() optional, then set
-            #         dct[test_name].site = True
-            #       for only the tests which dont respond to -help
+            # connecting to a site.
+            # TODO: after bug 68611 and 68664 (and makecat), split -help
+            # execution to a separate test class which uses site=False.
 
             if script_name in deadlock_script_list:
                 dct[test_name].__test__ = False
 
             if script_name == 'login':
-                test_name = 'test__' + script_name + '_no_args'
+                test_name = 'test__' + script_name + '_simulate'
             else:
-                test_name = 'test_' + script_name + '_no_args'
+                test_name = 'test_' + script_name + '_simulate'
             dct[test_name] = test_execution(script_name, ['-simulate'],
                                             no_args_expected_results)
-            if script_name in ['checkimages',     # bug 68613
-                               'data_ingestion',  # bug 68611
-                               'flickrripper',    # bug 68606 (and deps)
+            if script_name in ['catall',          # stdout user interaction
+                               'checkimages',     # bug 68613
+                               'flickrripper',    # Requires a flickr api key
+                               'lonelypages',     # uses exit code 1
                                'script_wui',      # Error on any user except DrTrigonBot
                                'upload',          # raises custom ValueError
-                               ] or (
-                    ((config.family != 'wikipedia' or config.mylang != 'en') and script_name == 'cfd') or
+                               ] + failed_dep_script_list or (
+                    (config.family != 'wikipedia' and script_name == 'lonelypages') or
                     (config.family == 'wikipedia' and script_name == 'disambredir') or
                     (config.family == 'wikipedia' and config.mylang != 'en' and script_name == 'misspelling')):
                 dct[test_name] = unittest.expectedFailure(dct[test_name])
+            elif script_name in ['watchlist',     # T77965
+                                 ]:
+                dct[test_name] = allowed_failure(dct[test_name])
             dct[test_name].__doc__ = \
-                'Test running ' + script_name + ' without arguments.'
+                'Test running ' + script_name + ' -simulate.'
             dct[test_name].__name__ = test_name
 
-            # Disable test bt default in nosetests
+            # Disable test by default in nosetests
             if script_name in unrunnable_script_list + deadlock_script_list:
                 dct[test_name].__test__ = False
 
@@ -308,33 +356,22 @@ class TestScriptMeta(MetaTestCaseClass):
             #
             # dct[test_name].site = True
 
-        return type.__new__(cls, name, bases, dct)
+        return super(TestScriptMeta, cls).__new__(cls, name, bases, dct)
 
 
 class TestScript(DefaultSiteTestCase, PwbTestCase):
 
     """Test cases for scripts.
 
-    This class sets the nose 'site' attribute on each test
-    depending on whether it is in the auto_run_script_list.
+    This class sets the nose 'user' attribute on every test, thereby ensuring
+    that the test runner has a username for the default site, and so that
+    Site.login() is called in the test runner, which means that the scripts
+    run in pwb can automatically login using the saved cookies.
     """
 
     __metaclass__ = TestScriptMeta
 
-    site = True
-
-    def setUp(self):
-        """Prepare the environment for running the pwb.py script."""
-        self.old_pywikibot_dir = None
-        if 'PYWIKIBOT2_DIR' in os.environ:
-            self.old_pywikibot_dir = os.environ['PYWIKIBOT2_DIR']
-        os.environ['PYWIKIBOT2_DIR'] = pywikibot.config.base_dir
-
-    def tearDown(self):
-        """Restore the environment after running the pwb.py script."""
-        del os.environ['PYWIKIBOT2_DIR']
-        if self.old_pywikibot_dir:
-            os.environ['PYWIKIBOT2_DIR'] = self.old_pywikibot_dir
+    user = True
 
 
 if sys.version_info[0] > 2:

@@ -1,8 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
-
 """
-This script goes over multiple pages, searches for pages where <references />
+This script adds a missing references section to pages.
+
+It goes over multiple pages, searches for pages where <references />
 is missing although a <ref> tag is present, and in that case adds a new
 references section.
 
@@ -41,7 +42,9 @@ __version__ = '$Id$'
 #
 
 import re
+
 import pywikibot
+
 from pywikibot import i18n, pagegenerators, textlib, Bot
 
 # This is required for the text that is shown when you run this script
@@ -61,6 +64,13 @@ placeBeforeSections = {
         u'وصلات خارجية',
         u'انظر أيضا',
         u'ملاحظات'
+    ],
+    'ca': [
+        u'Bibliografia',
+        u'Bibliografia complementària',
+        u'Vegeu també',
+        u'Enllaços externs',
+        u'Enllaços',
     ],
     'cs': [
         u'Externí odkazy',
@@ -217,6 +227,9 @@ referencesSections = {
         u'المراجع والمصادر',
         u'المصادر والمراجع',
     ],
+    'ca': [
+        u'Referències',
+    ],
     'cs': [
         u'Reference',
         u'Poznámky',
@@ -355,6 +368,9 @@ referencesTemplates = {
         'be': [u'Зноскі', u'Примечания', u'Reflist', u'Спіс заўваг',
                u'Заўвагі'],
         'be-x-old': [u'Зноскі'],
+        'ca': [u'Referències', u'Reflist', u'Listaref', u'Referència',
+               u'Referencies', u'Referències2',
+               u'Amaga', u'Amaga ref', u'Amaga Ref', u'Amaga Ref2', u'Apèndix'],
         'da': [u'Reflist'],
         'dsb': [u'Referency'],
         'en': [u'Reflist', u'Refs', u'FootnotesSmall', u'Reference',
@@ -426,12 +442,15 @@ class XmlDumpNoReferencesPageGenerator:
 
     """
     Generator which will yield Pages that might lack a references tag.
+
     These pages will be retrieved from a local XML dump file
     (pages-articles or pages-meta-current).
     """
 
     def __init__(self, xmlFilename):
         """
+        Constructor.
+
         Arguments:
             * xmlFilename  - The dump's path, either absolute or relative
         """
@@ -442,7 +461,7 @@ class XmlDumpNoReferencesPageGenerator:
         self.referencesR = re.compile('<references.*?/>', re.IGNORECASE)
 
     def __iter__(self):
-        import xmlreader
+        from pywikibot import xmlreader
         dump = xmlreader.XmlDump(self.xmlFilename)
         for entry in dump.parse():
             text = textlib.removeDisabledParts(entry.text)
@@ -452,7 +471,10 @@ class XmlDumpNoReferencesPageGenerator:
 
 class NoReferencesBot(Bot):
 
+    """References section bot."""
+
     def __init__(self, generator, **kwargs):
+        """Constructor."""
         self.availableOptions.update({
             'verbose': True,
         })
@@ -478,7 +500,7 @@ class NoReferencesBot(Bot):
             self.referencesText = u'<references />'
 
     def lacksReferences(self, text):
-        """Checks whether or not the page is lacking a references tag."""
+        """Check whether or not the page is lacking a references tag."""
         oldTextCleaned = textlib.removeDisabledParts(text)
         if self.referencesR.search(oldTextCleaned) or \
            self.referencesTagR.search(oldTextCleaned):
@@ -503,8 +525,9 @@ class NoReferencesBot(Bot):
 
     def addReferences(self, oldText):
         """
-        Tries to add a references tag into an existing section where it fits
-        into. If there is no such section, creates a new section containing
+        Add a references tag into an existing section where it fits into.
+
+        If there is no such section, creates a new section containing
         the references tag.
         * Returns : The modified pagetext
 
@@ -572,7 +595,7 @@ class NoReferencesBot(Bot):
         interwikiPattern = r'\[\[([a-zA-Z\-]+)\s?:([^\[\]\n]*)\]\]\s*'
         # won't work with nested templates
         # the negative lookahead assures that we'll match the last template
-        # occurence in the temp text.
+        # occurrence in the temp text.
         # FIXME:
         # {{commons}} or {{commonscat}} are part of Weblinks section
         # * {{template}} is mostly part of a section
@@ -650,11 +673,19 @@ class NoReferencesBot(Bot):
                     pywikibot.output(u'Skipping %s (locked page)' % page.title())
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     options = {}
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     for arg in local_args:

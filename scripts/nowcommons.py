@@ -1,13 +1,14 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
-Script to delete files that are also present on Wikimedia Commons on a local
-wiki. Do not run this script on Wikimedia Commons itself. It works based on
+Script to delete files that are also present on Wikimedia Commons.
+
+Do not run this script on Wikimedia Commons itself. It works based on
 a given array of templates defined below.
 
 Files are downloaded and compared. If the files match, it can be deleted on
 the source wiki. If multiple versions of the file exist, the script will not
-delete. If the MD5 comparison is not equal, the script will not delete.
+delete. If the SHA1 comparison is not equal, the script will not delete.
 
 A sysop account on the local wiki is required if you want all features of
 this script to work properly.
@@ -23,7 +24,7 @@ This script understands various command-line arguments:
     -replacealways  replace links if the files are equal and the file names
                     differ without asking for confirmation
 
-    -replaceloose   Do loose replacements.  This will replace all occurences
+    -replaceloose   Do loose replacements.  This will replace all occurrences
                     of the name of the image (and not just explicit image
                     syntax).  This should work to catch all instances of the
                     file, including where it is used as a template parameter
@@ -182,6 +183,9 @@ word_to_skip = {
 
 
 class NowCommonsDeleteBot(Bot):
+
+    """Bot to delete migrated files."""
+
     def __init__(self, **kwargs):
         self.availableOptions.update({
             'replace': False,
@@ -242,14 +246,14 @@ class NowCommonsDeleteBot(Bot):
                 webbrowser.open(url_local, 0, 1)
                 webbrowser.open(url_commons, 0, 1)
                 if image_local.split('Image:')[1] == image_commons:
-                    choice = pywikibot.inputChoice(
-                        u'The local and the commons images have the same name, continue?',
-                        ['Yes', 'No'], ['y', 'N'], 'N')
+                    choice = pywikibot.input_yn(
+                        u'The local and the commons images have the same name, '
+                        'continue?', default=False, automatic_quit=False)
                 else:
-                    choice = pywikibot.inputChoice(
+                    choice = pywikibot.input_yn(
                         u'Are the two images equal?',
-                        ['Yes', 'No'], ['y', 'N'], 'N')
-                if choice == 'y':
+                        default=False, automatic_quit=False)
+                if choice:
                     yield [image_local, image_commons]
                 else:
                     continue
@@ -267,11 +271,10 @@ class NowCommonsDeleteBot(Bot):
             nowCommonsTemplates = [pywikibot.Page(self.site, title,
                                                   ns=10)
                                    for title in self.ncTemplates()]
-            gens = [pg.ReferringPageGenerator(t, followRedirects=True,
-                                              onlyTemplateInclusion=True)
+            gens = [t.getReferences(follow_redirects=True, namespaces=[6],
+                                    onlyTemplateInclusion=True)
                     for t in nowCommonsTemplates]
             gen = pg.CombinedPageGenerator(gens)
-            gen = pg.NamespaceFilterPageGenerator(gen, [6])
             gen = pg.DuplicateFilterPageGenerator(gen)
             gen = pg.PreloadingGenerator(gen)
         return gen
@@ -321,7 +324,7 @@ class NowCommonsDeleteBot(Bot):
                 if localImagePage.fileIsShared():
                     pywikibot.output(u'File is already on Commons.')
                     continue
-                md5 = localImagePage.getFileMd5Sum()
+                sha1 = localImagePage.latest_file_info.sha1
                 if self.getOption('use_hash'):
                     filenameOnCommons = images_list[1]
                 else:
@@ -391,7 +394,7 @@ class NowCommonsDeleteBot(Bot):
                             % localImagePage.title(withNamespace=False))
                 commonsText = commonsImagePage.get()
                 if self.getOption('replaceonly') is False:
-                    if md5 == commonsImagePage.getFileMd5Sum():
+                    if sha1 == commonsImagePage.latest_file_info.sha1:
                         pywikibot.output(
                             u'The image is identical to the one on Commons.')
                         if len(localImagePage.getFileVersionHistory()) > 1 and not self.getOption('use_hash'):
@@ -409,11 +412,11 @@ class NowCommonsDeleteBot(Bot):
                                 u'\n\n>>>> Description on \03{lightpurple}%s\03{default} <<<<\n'
                                 % commonsImagePage.title())
                             pywikibot.output(commonsText)
-                            choice = pywikibot.inputChoice(u'Does the description \
-                                                           on Commons contain all required source and license\n'
-                                                           u'information?',
-                                                           ['yes', 'no'], ['y', 'N'], 'N')
-                            if choice == 'y':
+                            if pywikibot.input_yn(
+                                    u'Does the description on Commons contain '
+                                    'all required source and license\n'
+                                    'information?',
+                                    default=False, automatic_quit=False):
                                 localImagePage.delete(
                                     '%s [[:commons:Image:%s]]'
                                     % (comment, filenameOnCommons), prompt=False)
@@ -429,10 +432,18 @@ class NowCommonsDeleteBot(Bot):
                 continue
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     options = {}
 
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         if arg.startswith('-') and \
         arg[1:] in ('always', 'replace', 'replaceloose', 'replaceonly'):
             options[arg[1:]] = True

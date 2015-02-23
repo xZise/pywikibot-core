@@ -151,19 +151,22 @@ licenseTemplates = {
 
 
 class ImageTransferBot:
+
+    """Image transfer bot."""
+
     def __init__(self, generator, targetSite=None, interwiki=False,
-                 keep_name=False):
+                 keep_name=False, ignore_warning=False):
         self.generator = generator
         self.interwiki = interwiki
         self.targetSite = targetSite
         self.keep_name = keep_name
+        self.ignore_warning = ignore_warning
 
     def transferImage(self, sourceImagePage):
-        """Get a wikilink to an image, download it and its description,
-           and upload it to another wikipedia.
-           Return the filename which was used to upload the image
-           This function is used by imagetransfer.py and by copy_table.py
+        """
+        Download image and its description, and upload it to another site.
 
+        @return: the filename which was used to upload the image
         """
         sourceSite = sourceImagePage.site
         url = sourceImagePage.fileUrl().encode('utf-8')
@@ -183,10 +186,11 @@ class ImageTransferBot:
 
             description = i18n.translate(self.targetSite, copy_message,
                                          fallback=True) % (sourceSite, description)
-            description += '\n\n' + str(sourceImagePage.getFileVersionHistoryTable())
+            description += '\n\n'
+            description += sourceImagePage.getFileVersionHistoryTable()
             # add interwiki link
             if sourceSite.family == self.targetSite.family:
-                description += "\r\n\r\n" + unicode(sourceImagePage)
+                description += u'\r\n\r\n{0}'.format(sourceImagePage)
         except pywikibot.NoPage:
             description = ''
             print("Image does not exist or description page is empty.")
@@ -198,7 +202,8 @@ class ImageTransferBot:
                                      targetSite=self.targetSite,
                                      urlEncoding=sourceSite.encoding(),
                                      keepFilename=self.keep_name,
-                                     verifyDescription=not self.keep_name)
+                                     verifyDescription=not self.keep_name,
+                                     ignoreWarning=self.ignore_warning)
             # try to upload
             targetFilename = bot.run()
             if targetFilename and self.targetSite.family.name == 'commons' and \
@@ -224,13 +229,12 @@ class ImageTransferBot:
     def showImageList(self, imagelist):
         for i in range(len(imagelist)):
             image = imagelist[i]
-            #sourceSite = sourceImagePage.site
             print("-" * 60)
             pywikibot.output(u"%s. Found image: %s"
                              % (i, image.title(asLink=True)))
             try:
                 # Show the image description page's contents
-                pywikibot.output(image.get(throttle=False))
+                pywikibot.output(image.get())
                 # look if page already exists with this name.
                 # TODO: consider removing this: a different image of the same
                 # name may exist on the target wiki, and the bot user may want
@@ -240,11 +244,11 @@ class ImageTransferBot:
                     targetTitle = '%s:%s' % (self.targetSite.image_namespace(),
                                              image.title().split(':', 1)[1])
                     targetImage = pywikibot.Page(self.targetSite, targetTitle)
-                    targetImage.get(throttle=False)
+                    targetImage.get()
                     pywikibot.output(u"Image with this name is already on %s."
                                      % self.targetSite)
                     print("-" * 60)
-                    pywikibot.output(targetImage.get(throttle=False))
+                    pywikibot.output(targetImage.get())
                     sys.exit()
                 except pywikibot.NoPage:
                     # That's the normal case
@@ -262,14 +266,15 @@ class ImageTransferBot:
             if self.interwiki:
                 imagelist = []
                 for linkedPage in page.interwiki():
-                    imagelist.append(linkedPage.imagelinks(followRedirects=True))
+                    linkedPage = pywikibot.Page(linkedPage)
+                    imagelist.extend(
+                        linkedPage.imagelinks(
+                            followRedirects=True))
             elif page.isImage():
                 imagePage = pywikibot.FilePage(page.site, page.title())
                 imagelist = [imagePage]
             else:
-                imagePage = (page.imagelinks(followRedirects=True)).result(
-                    {'title': page.title(), 'ns': pywikibot.Site().image_namespace()})
-                imagelist = [imagePage]
+                imagelist = list(page.imagelinks(followRedirects=True))
 
             while len(imagelist) > 0:
                 self.showImageList(imagelist)
@@ -295,7 +300,15 @@ class ImageTransferBot:
                     pywikibot.output(u'No such image number.')
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     pageTitle = None
     gen = None
 
@@ -304,7 +317,7 @@ def main():
     targetLang = None
     targetFamily = None
 
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
 
     for arg in local_args:
         if arg == '-interwiki':

@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
-Tool to copy a flickr stream to Commons
+Tool to copy a flickr stream to Commons.
 
 # Get a set to work on (start with just a username).
 # * Make it possible to delimit the set (from/to)
@@ -32,39 +32,37 @@ Todo:
 __version__ = '$Id$'
 #
 
-import re
-import hashlib
 import base64
-import time
+import hashlib
+import io
+import re
 import sys
-import pywikibot
-from pywikibot import config, textlib
-import upload
-
-try:
-    import flickrapi                  # see: http://stuvel.eu/projects/flickrapi
-except ImportError:
-    pywikibot.error('This script requires the python flickrapi module')
-    pywikibot.error('See: http://stuvel.eu/projects/flickrapi')
-    pywikibot.exception()
-    sys.exit()
+import time
 
 if sys.version_info[0] > 2:
     from urllib.parse import urlencode
     from urllib.request import urlopen
-    import io as StringIO
-    from tkinter import (
-        Tk, Label, Entry, Scrollbar, Text, Button,
-        END, VERTICAL, NORMAL, WORD
-    )
 else:
     from urllib import urlencode, urlopen
-    import StringIO
-    from Tkinter import (
-        Tk, Label, Entry, Scrollbar, Text, Button,
-        END, VERTICAL, NORMAL, WORD
-    )
-from PIL import Image, ImageTk    # see: http://www.pythonware.com/products/pil/
+
+try:
+    import flickrapi                # see: http://stuvel.eu/projects/flickrapi
+except ImportError as e:
+    print('This script requires the python flickrapi module. \n'
+          'See: http://stuvel.eu/projects/flickrapi')
+    print(e)
+    sys.exit(1)
+
+import pywikibot
+
+from pywikibot import config, textlib
+from scripts import upload
+
+try:
+    from pywikibot.userinterfaces.gui import Tkdialog
+except ImportError as _tk_error:
+    Tkdialog = None
+
 
 flickr_allowed_license = {
     0: False,  # All Rights Reserved
@@ -81,7 +79,7 @@ flickr_allowed_license = {
 
 def getPhoto(flickr=None, photo_id=''):
     """
-    Get the photo info and the photo sizes so we can use these later on
+    Get the photo info and the photo sizes so we can use these later on.
 
     TODO: Add exception handling
 
@@ -100,7 +98,7 @@ def getPhoto(flickr=None, photo_id=''):
 
 def isAllowedLicense(photoInfo=None):
     """
-    Check if the image contains the right license
+    Check if the image contains the right license.
 
     TODO: Maybe add more licenses
     """
@@ -122,18 +120,20 @@ def getPhotoUrl(photoSizes=None):
 
 def downloadPhoto(photoUrl=''):
     """
-    Download the photo and store it in a StrinIO.StringIO object.
+    Download the photo and store it in a io.BytesIO object.
 
     TODO: Add exception handling
 
     """
     imageFile = urlopen(photoUrl).read()
-    return StringIO.StringIO(imageFile)
+    return io.BytesIO(imageFile)
 
 
 def findDuplicateImages(photo=None,
                         site=pywikibot.Site(u'commons', u'commons')):
-    """ Take the photo, calculate the SHA1 hash and ask the MediaWiki api
+    """Find duplicate images.
+
+    Take the photo, calculate the SHA1 hash and ask the MediaWiki api
     for a list of duplicates.
 
     TODO: Add exception handling, fix site thing
@@ -155,7 +155,7 @@ def getTags(photoInfo=None):
 
 def getFlinfoDescription(photo_id=0):
     """
-    Get the description from http://wikipedia.ramselehof.de/flinfo.php
+    Get the description from http://wikipedia.ramselehof.de/flinfo.php.
 
     TODO: Add exception handling, try a couple of times
     """
@@ -168,8 +168,9 @@ def getFlinfoDescription(photo_id=0):
 
 
 def getFilename(photoInfo=None, site=None, project=u'Flickr'):
-    """ Build a good filename for the upload based on the username and the
-    title. Prevents naming collisions.
+    """Build a good filename for the upload based on the username and title.
+
+    Prevents naming collisions.
 
     """
     if not site:
@@ -188,7 +189,7 @@ def getFilename(photoInfo=None, site=None, project=u'Flickr'):
             descBytes = len(description.encode('utf-8'))
             if descBytes > maxBytes:
                 # maybe we cut more than needed, anyway we do it
-                items = max(min(len(description), maxBytes / 4),
+                items = max(min(len(description), maxBytes // 4),
                             len(description) - descBytes + maxBytes)
                 description = description[:items]
             title = cleanUpTitle(description)
@@ -209,8 +210,9 @@ def getFilename(photoInfo=None, site=None, project=u'Flickr'):
 
 
 def cleanUpTitle(title):
-    """ Clean up the title of a potential MediaWiki page. Otherwise the title of
-    the page might not be allowed by the software.
+    """Clean up the title of a potential MediaWiki page.
+
+    Otherwise the title of the page might not be allowed by the software.
 
     """
     title = title.strip()
@@ -236,8 +238,9 @@ def cleanUpTitle(title):
 
 def buildDescription(flinfoDescription=u'', flickrreview=False, reviewer=u'',
                      override=u'', addCategory=u'', removeCategories=False):
-    """ Build the final description for the image. The description is based on
-    the info from flickrinfo and improved.
+    """Build the final description for the image.
+
+    The description is based on the info from flickrinfo and improved.
 
     """
     description = u'== {{int:filedesc}} ==\n%s' % flinfoDescription
@@ -291,10 +294,19 @@ def processPhoto(flickr=None, photo_id=u'', flickrreview=False, reviewer=u'',
                                                 override, addCategory,
                                                 removeCategories)
             # pywikibot.output(photoDescription)
-            if not autonomous:
-                (newPhotoDescription, newFilename, skip) = Tkdialog(
+            if Tkdialog is not None and not autonomous:
+                try:
+                    (newPhotoDescription, newFilename, skip) = Tkdialog(
                     photoDescription, photo, filename).run()
-            else:
+                except ImportError as e:
+                    pywikibot.warning(e)
+                    pywikibot.warning('Switching to autonomous mode.')
+                    autonomous = True
+            elif not autonomous:
+                pywikibot.warning('Switching to autonomous mode because GUI interface cannot be used')
+                pywikibot.warning(_tk_error)
+                autonomous = True
+            if autonomous:
                 newPhotoDescription = photoDescription
                 newFilename = filename
                 skip = False
@@ -319,94 +331,9 @@ def processPhoto(flickr=None, photo_id=u'', flickrreview=False, reviewer=u'',
     return 0
 
 
-class Tkdialog:
-
-    """ The user dialog. """
-
-    def __init__(self, photoDescription, photo, filename):
-        self.root = Tk()
-        # "%dx%d%+d%+d" % (width, height, xoffset, yoffset)
-        self.root.geometry("%ix%i+10-10" % (config.tkhorsize, config.tkvertsize))
-
-        self.root.title(filename)
-        self.photoDescription = photoDescription
-        self.filename = filename
-        self.photo = photo
-        self.skip = False
-        self.exit = False
-
-        # --Init of the widgets
-        # The image
-        self.image = self.getImage(self.photo, 800, 600)
-        self.imagePanel = Label(self.root, image=self.image)
-
-        self.imagePanel.image = self.image
-
-        # The filename
-        self.filenameLabel = Label(self.root, text=u"Suggested filename")
-        self.filenameField = Entry(self.root, width=100)
-        self.filenameField.insert(END, filename)
-
-        # The description
-        self.descriptionLabel = Label(self.root, text=u"Suggested description")
-        self.descriptionScrollbar = Scrollbar(self.root, orient=VERTICAL)
-        self.descriptionField = Text(self.root)
-        self.descriptionField.insert(END, photoDescription)
-        self.descriptionField.config(state=NORMAL, height=12, width=100, padx=0, pady=0, wrap=WORD, yscrollcommand=self.descriptionScrollbar.set)
-        self.descriptionScrollbar.config(command=self.descriptionField.yview)
-
-        # The buttons
-        self.okButton = Button(self.root, text="OK", command=self.okFile)
-        self.skipButton = Button(self.root, text="Skip", command=self.skipFile)
-
-        # --Start grid
-
-        # The image
-        self.imagePanel.grid(row=0, column=0, rowspan=11, columnspan=4)
-
-        # The buttons
-        self.okButton.grid(row=11, column=1, rowspan=2)
-        self.skipButton.grid(row=11, column=2, rowspan=2)
-
-        # The filename
-        self.filenameLabel.grid(row=13, column=0)
-        self.filenameField.grid(row=13, column=1, columnspan=3)
-
-        # The description
-        self.descriptionLabel.grid(row=14, column=0)
-        self.descriptionField.grid(row=14, column=1, columnspan=3)
-        self.descriptionScrollbar.grid(row=14, column=5)
-
-    def getImage(self, photo, width, height):
-        """Take the StringIO object and build an imageTK thumbnail."""
-        image = Image.open(photo)
-        image.thumbnail((width, height))
-        imageTk = ImageTk.PhotoImage(image)
-        return imageTk
-
-    def okFile(self):
-        """ The user pressed the OK button. """
-        self.filename = self.filenameField.get()
-        self.photoDescription = self.descriptionField.get(0.0, END)
-        self.root.destroy()
-
-    def skipFile(self):
-        """ The user pressed the Skip button. """
-        self.skip = True
-        self.root.destroy()
-
-    def run(self):
-        """ Activate the dialog and return the new name and if the image is
-        skipped.
-
-        """
-        self.root.mainloop()
-        return self.photoDescription, self.filename, self.skip
-
-
 def getPhotos(flickr=None, user_id=u'', group_id=u'', photoset_id=u'',
               start_id='', end_id='', tags=u''):
-    """ Loop over a set of Flickr photos. """
+    """Loop over a set of Flickr photos."""
     found_start_id = not start_id
 
     # https://www.flickr.com/services/api/flickr.groups.pools.getPhotos.html
@@ -417,94 +344,53 @@ def getPhotos(flickr=None, user_id=u'', group_id=u'', photoset_id=u'',
                                                user_id=user_id, tags=tags,
                                                per_page='100', page='1')
         pages = photos.find('photos').attrib['pages']
-
-        for i in range(1, int(pages) + 1):
-            gotPhotos = False
-            while not gotPhotos:
-                try:
-                    for photo in flickr.groups_pools_getPhotos(
-                        group_id=group_id, user_id=user_id, tags=tags,
-                        per_page='100', page=i
-                    ).find('photos').getchildren():
-                        gotPhotos = True
-                        if photo.attrib['id'] == start_id:
-                            found_start_id = True
-                        if found_start_id:
-                            if photo.attrib['id'] == end_id:
-                                pywikibot.output('Found end_id')
-                                return
-                            else:
-                                yield photo.attrib['id']
-
-                except flickrapi.exceptions.FlickrError:
-                    gotPhotos = False
-                    pywikibot.output(u'Flickr api problem, sleeping')
-                    time.sleep(30)
-
+        gen = lambda i: flickr.groups_pools_getPhotos(
+            group_id=group_id, user_id=user_id, tags=tags,
+            per_page='100', page=i
+        ).find('photos').getchildren()
     # https://www.flickr.com/services/api/flickr.photosets.getPhotos.html
     # Get the photos in a photoset
     elif photoset_id:
         photos = flickr.photosets_getPhotos(photoset_id=photoset_id,
                                             per_page='100', page='1')
         pages = photos.find('photoset').attrib['pages']
-
-        for i in range(1, int(pages) + 1):
-            gotPhotos = False
-            while not gotPhotos:
-                try:
-                    for photo in flickr.photosets_getPhotos(
-                        photoset_id=photoset_id, per_page='100', page=i
-                    ).find('photoset').getchildren():
-                        gotPhotos = True
-                        if photo.attrib['id'] == start_id:
-                            found_start_id = True
-                        if found_start_id:
-                            if photo.attrib['id'] == end_id:
-                                pywikibot.output('Found end_id')
-                                return
-                            else:
-                                yield photo.attrib['id']
-
-                except flickrapi.exceptions.FlickrError:
-                    gotPhotos = False
-                    pywikibot.output(u'Flickr api problem, sleeping')
-                    time.sleep(30)
-
+        gen = lambda i: flickr.photosets_getPhotos(
+            photoset_id=photoset_id, per_page='100', page=i
+        ).find('photoset').getchildren()
     # https://www.flickr.com/services/api/flickr.people.getPublicPhotos.html
     # Get the (public) photos uploaded by a user
     elif user_id:
         photos = flickr.people_getPublicPhotos(user_id=user_id,
                                                per_page='100', page='1')
         pages = photos.find('photos').attrib['pages']
-        # flickrapi.exceptions.FlickrError
-        for i in range(1, int(pages) + 1):
-            gotPhotos = False
-            while not gotPhotos:
-                try:
-                    for photo in flickr.people_getPublicPhotos(
-                        user_id=user_id, per_page='100', page=i
-                    ).find('photos').getchildren():
-                        gotPhotos = True
-                        if photo.attrib['id'] == start_id:
-                            found_start_id = True
-                        if found_start_id:
-                            if photo.attrib['id'] == end_id:
-                                pywikibot.output('Found end_id')
-                                return
-                            else:
-                                yield photo.attrib['id']
-
-                except flickrapi.exceptions.FlickrError:
-                    gotPhotos = False
-                    pywikibot.output(u'Flickr api problem, sleeping')
-                    time.sleep(30)
+        gen = lambda i: flickr.people_getPublicPhotos(
+            user_id=user_id, per_page='100', page=i
+        ).find('photos').getchildren()
+    for i in range(1, int(pages) + 1):
+        gotPhotos = False
+        while not gotPhotos:
+            try:
+                for photo in gen(i):
+                    gotPhotos = True
+                    if photo.attrib['id'] == start_id:
+                        found_start_id = True
+                    if found_start_id:
+                        if photo.attrib['id'] == end_id:
+                            pywikibot.output('Found end_id')
+                            return
+                        else:
+                            yield photo.attrib['id']
+            except flickrapi.exceptions.FlickrError:
+                gotPhotos = False
+                pywikibot.output(u'Flickr api problem, sleeping')
+                time.sleep(30)
 
     return
 
 
 def usage():
     """
-    Print usage information
+    Print usage information.
 
     TODO : Need more.
     """
@@ -517,7 +403,17 @@ def usage():
     return
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
+    local_args = pywikibot.handle_args(args)
+
     # Get the api key
     if not config.flickr['api_key']:
         pywikibot.output('Flickr api key not found! Get yourself an api key')
@@ -567,7 +463,7 @@ def main():
 
     # Should be renamed to overrideLicense or something like that
     override = u''
-    for arg in pywikibot.handleArgs():
+    for arg in local_args:
         if arg.startswith('-group_id'):
             if len(arg) == 9:
                 group_id = pywikibot.input(u'What is the group_id of the pool?')

@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 This script generates a family file from a given URL.
-Hackish, etc. Regexps, yes. Sorry, jwz.
 
+Hackish, etc. Regexps, yes. Sorry, jwz.
 """
 from __future__ import (absolute_import, division,
                         print_function, unicode_literals)
 #
 # (C) Merlijn van Deen, 2010-2013
-# (C) Pywikibot team, 2010-2014
+# (C) Pywikibot team, 2010-2015
 #
 # Distributed under the terms of the MIT license
 #
-__version__ = "$Id$"
+__version__ = '$Id$'
 #
 
 # system imports
@@ -21,19 +21,20 @@ import re
 import codecs
 from collections import defaultdict
 from distutils.version import LooseVersion as V
-
-if sys.version_info[0] == 3:
-    raw_input = input
+import json
 
 # creating & retrieving urls
-if sys.version_info[0] == 2:
-    from urlparse import urlparse, urljoin
-    import urllib2
-    from urllib2 import HTTPError
-else:
+if sys.version_info[0] > 2:
     from urllib.parse import urlparse, urljoin
     from urllib.error import HTTPError
     import urllib.request as urllib2
+    from html.parser import HTMLParser
+    raw_input = input
+else:
+    from urlparse import urlparse, urljoin
+    import urllib2
+    from urllib2 import HTTPError
+    from HTMLParser import HTMLParser
 
 
 def urlopen(url):
@@ -43,23 +44,19 @@ def urlopen(url):
                                ' - https://www.mediawiki.org/wiki/Pywikibot'})
     uo = urllib2.urlopen(req)
     try:
-        if sys.version_info[0] == 2:
-            uo.charset = uo.headers.getfirstmatchingheader('Content-Type')[0].strip().split('charset=')[1]
-        else:
+        if sys.version_info[0] > 2:
             uo.charset = uo.headers.get_content_charset()
+        else:
+            uo.charset = uo.headers.getfirstmatchingheader('Content-Type')[0].strip().split('charset=')[1]
     except IndexError:
         uo.charset = 'latin-1'
     return uo
 
-# parsing response data
-import json
-if sys.version_info[0] == 2:
-    from HTMLParser import HTMLParser
-else:
-    from html.parser import HTMLParser
-
 
 class WikiHTMLPageParser(HTMLParser):
+
+    """Wiki HTML page parser."""
+
     def __init__(self, *args, **kwargs):
         HTMLParser.__init__(self, *args, **kwargs)
         self.generator = None
@@ -75,6 +72,9 @@ class WikiHTMLPageParser(HTMLParser):
 
 
 class FamilyFileGenerator(object):
+
+    """Family file creator."""
+
     def __init__(self, url=None, name=None, dointerwiki=None):
         if url is None:
             url = raw_input("Please insert URL to wiki: ")
@@ -118,7 +118,7 @@ class FamilyFileGenerator(object):
             print(u' '.join(sorted([wiki[u'prefix'] for wiki in self.langs])))
         except HTTPError as e:
             self.langs = []
-            print (e, "; continuing...")
+            print(e, "; continuing...")
 
         if len([lang for lang in self.langs if lang['url'] == w.iwpath]) == 0:
             self.langs.append({u'language': w.lang,
@@ -129,7 +129,9 @@ class FamilyFileGenerator(object):
         if len(self.langs) > 1:
             if self.dointerwiki is None:
                 makeiw = raw_input(
-                    "\nThere are %i languages available.\nDo you want to generate interwiki links? This might take a long time. ([y]es/[N]o/[e]dit)"
+                    "\nThere are %i languages available."
+                    "\nDo you want to generate interwiki links?"
+                    "This might take a long time. ([y]es/[N]o/[e]dit)"
                     % len(self.langs)).lower()
             else:
                 makeiw = self.dointerwiki
@@ -141,8 +143,8 @@ class FamilyFileGenerator(object):
                     print(wiki['prefix'], wiki['url'])
                 do_langs = raw_input("Which languages do you want: ")
                 self.langs = [wiki for wiki in self.langs
-                              if wiki['prefix'] in do_langs
-                              or wiki['url'] == w.iwpath]
+                              if wiki['prefix'] in do_langs or
+                              wiki['url'] == w.iwpath]
             else:
                 self.langs = [wiki for wiki in self.langs
                               if wiki[u'url'] == w.iwpath]
@@ -185,6 +187,7 @@ Please do not commit this to the Git repository!
 \"\"\"
 
 from pywikibot import family
+from pywikibot.tools import deprecated
 
 class Family(family.Family):
     def __init__(self):
@@ -210,6 +213,7 @@ class Family(family.Family):
         f.write("        }[code]\n")
         f.write("\n")
 
+        f.write("    @deprecated('APISite.version()')\n")
         f.write("    def version(self, code):\n")
         f.write("        return {\n")
         for w in self.wikis.values():
@@ -222,6 +226,9 @@ class Family(family.Family):
 
 
 class Wiki(object):
+
+    """Minimal wiki site class."""
+
     REwgEnableApi = re.compile(r'wgEnableAPI ?= ?true')
     REwgServer = re.compile(r'wgServer ?= ?"([^"]*)"')
     REwgScriptPath = re.compile(r'wgScriptPath ?= ?"([^"]*)"')

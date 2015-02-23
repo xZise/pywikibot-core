@@ -27,7 +27,7 @@ pid = False
 
 class Throttle(object):
 
-    """Control rate of access to wiki server
+    """Control rate of access to wiki server.
 
     Calling this object blocks the calling thread until at least 'delay'
     seconds have passed since the previous call.
@@ -36,8 +36,10 @@ class Throttle(object):
     rate of access.
 
     """
+
     def __init__(self, site, mindelay=None, maxdelay=None, writedelay=None,
                  multiplydelay=True):
+        """Constructor."""
         self.lock = threading.RLock()
         self.mysite = str(site)
         self.ctrlfilename = config.datafilepath('throttle.ctrl')

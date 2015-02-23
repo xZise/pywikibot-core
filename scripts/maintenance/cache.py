@@ -1,5 +1,5 @@
 # -*- coding: utf-8  -*-
-"""
+r"""
 This script runs commands on each entry in the API caches.
 
 Syntax: cache.py [-password] [-delete] [-c '...'] [dir ...]
@@ -18,12 +18,11 @@ Example commands:
 
   Customised output if the site code is 'ar':
 
-    entry.site.code == "ar" and \
-pywikibot.output("%s" % entry._uniquedescriptionstr())
+    entry.site.code == "ar" and print("%s" % entry._uniquedescriptionstr())
 
   Or the state of the login
     entry.site._loginstatus == LoginStatus.NOT_ATTEMPTED and \
-pywikibot.output("%s" % entry._uniquedescriptionstr())
+print("%s" % entry._uniquedescriptionstr())
 
   These functions can be used as a command:
     has_password(entry)
@@ -43,6 +42,7 @@ pywikibot.output("%s" % entry._uniquedescriptionstr())
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import print_function
 __version__ = '$Id$'
 #
 
@@ -53,18 +53,21 @@ import hashlib
 import pywikibot
 from pywikibot.data import api
 
-from pywikibot.site import APISite, DataSite, LoginStatus  # flake8: noqa
-from pywikibot.page import User  # flake8: noqa
+from pywikibot.site import APISite, DataSite, LoginStatus  # noqa
+from pywikibot.page import User  # noqa
 
 
 class ParseError(Exception):
-    """ Error parsing. """
+
+    """Error parsing."""
 
 
 class CacheEntry(api.CachedRequest):
 
+    """A Request cache entry."""
+
     def __init__(self, directory, filename):
-        """ Constructor. """
+        """Constructor."""
         self.directory = directory
         self.filename = filename
 
@@ -75,11 +78,11 @@ class CacheEntry(api.CachedRequest):
         return self._cachefile_path()
 
     def _create_file_name(self):
-        """ Filename of the cached entry. """
+        """Filename of the cached entry."""
         return self.filename
 
     def _get_cache_dir(self):
-        """ Directory of the cached entry. """
+        """Directory of the cached entry."""
         return self.directory
 
     def _cachefile_path(self):
@@ -87,14 +90,13 @@ class CacheEntry(api.CachedRequest):
                             self._create_file_name())
 
     def _load_cache(self):
-        """ Load the cache entry. """
+        """Load the cache entry."""
         with open(self._cachefile_path(), 'rb') as f:
             self.key, self._data, self._cachetime = pickle.load(f)
         return True
 
     def parse_key(self):
-        """ Parse the key loaded from the cache entry. """
-
+        """Parse the key loaded from the cache entry."""
         # find the start of the first parameter
         start = self.key.index('(')
         # find the end of the first object
@@ -151,49 +153,71 @@ class CacheEntry(api.CachedRequest):
         return self._parsed_key
 
     def _rebuild(self):
-        """ Reconstruct the original Request from the key. """
+        """Reconstruct the original Request from the key."""
         if hasattr(self, '_parsed_key'):
             (site, username, login_status, params) = self._parsed_key
         else:
             (site, username, login_status, params) = self.parse_key()
-        if site:
-            self.site = eval(site)
+        if not site:
+            raise ParseError('No Site')
+        self.site = eval(site)
         if login_status:
             self.site._loginstatus = eval('LoginStatus.%s'
                                           % login_status[12:-1])
         if username:
             self.site._username = [username, username]
-        if params:
-            self.params = dict(eval(params))
+        if not params:
+            raise ParseError('No request params')
+        self._params = dict(eval(params))
 
     def _delete(self):
-        """ Delete the cache entry. """
+        """Delete the cache entry."""
         os.remove(self._cachefile_path())
 
 
-def process_entries(cache_dir, func):
-    """ Check the contents of the cache. """
+def process_entries(cache_path, func, use_accesstime=None):
+    """
+    Check the contents of the cache.
 
-    # This program tries to use file access times to determine
-    # whether cache files are being used.
-    # However file access times are not always usable.
-    # On many modern filesystems, they have been disabled.
-    # On unix, check the filesystem mount options.  You may
-    # need to remount with 'strictatime'.
-    # - None  = detect
-    # - False = dont use
-    # - True  = always use
-    use_accesstime = None
+    This program tries to use file access times to determine
+    whether cache files are being used.
+    However file access times are not always usable.
+    On many modern filesystems, they have been disabled.
+    On unix, check the filesystem mount options.  You may
+    need to remount with 'strictatime'.
 
-    if not cache_dir:
-        cache_dir = os.path.join(pywikibot.config2.base_dir, 'apicache')
-    for filename in os.listdir(cache_dir):
-        filepath = os.path.join(cache_dir, filename)
+    @param use_accesstime: Whether access times should be used.
+    @type use_accesstime: bool tristate:
+         - None  = detect
+         - False = dont use
+         - True  = always use
+    """
+    if not cache_path:
+        cache_path = os.path.join(pywikibot.config2.base_dir, 'apicache')
+
+    if not os.path.exists(cache_path):
+        pywikibot.error('%s: no such file or directory' % cache_path)
+        return
+
+    if os.path.isdir(cache_path):
+        filenames = [os.path.join(cache_path, filename)
+                     for filename in os.listdir(cache_path)]
+    else:
+        filenames = [cache_path]
+
+    for filepath in filenames:
+        filename = os.path.basename(filepath)
+        cache_dir = os.path.dirname(filepath)
         if use_accesstime is not False:
             stinfo = os.stat(filepath)
 
         entry = CacheEntry(cache_dir, filename)
-        entry._load_cache()
+        try:
+            entry._load_cache()
+        except ValueError as e:
+            print('Failed loading %s' % entry._cachefile_path())
+            pywikibot.exception(e, tb=True)
+            continue
 
         if use_accesstime is None:
             stinfo2 = os.stat(filepath)
@@ -214,35 +238,35 @@ def process_entries(cache_dir, func):
 
         try:
             entry._rebuild()
-        except Exception:
+        except Exception as e:
             pywikibot.error(u'Problems loading %s with key %s, %r'
                             % (entry.filename, entry.key, entry._parsed_key))
-            pywikibot.exception()
+            pywikibot.exception(e, tb=True)
             continue
 
         func(entry)
 
 
 def has_password(entry):
-    """ has a password in the entry """
+    """Entry has a password in the entry."""
     if 'lgpassword' in entry._uniquedescriptionstr():
         return entry
 
 
 def is_logout(entry):
-    """ is a logout entry """
+    """Entry is a logout entry."""
     if not entry._data and 'logout' in entry.key:
         return entry
 
 
 def empty_response(entry):
-    """ has no data """
+    """Entry has no data."""
     if not entry._data and 'logout' not in entry.key:
         return entry
 
 
 def not_accessed(entry):
-    """ has never been accessed """
+    """Entry has never been accessed."""
     if not hasattr(entry, 'stinfo'):
         return
 
@@ -277,7 +301,7 @@ def recent(entry):
 
 def main():
     local_args = pywikibot.handleArgs()
-    cache_dirs = None
+    cache_paths = None
     delete = False
     command = None
 
@@ -294,21 +318,24 @@ def main():
                 exit(1)
             command = ''
         else:
-            cache_dir = [arg]
+            if not cache_paths:
+                cache_paths = [arg]
+            else:
+                cache_paths.append(arg)
 
     func = None
 
-    if not cache_dirs:
-        cache_dirs = ['apicache', 'tests/apicache']
+    if not cache_paths:
+        cache_paths = ['apicache', 'tests/apicache']
 
         # Also process the base directory, if it isnt the current directory
         if os.path.abspath(os.getcwd()) != pywikibot.config2.base_dir:
-            cache_dirs += [
+            cache_paths += [
                 os.path.join(pywikibot.config2.base_dir, 'apicache')]
 
         # Also process the user home cache, if it isnt the config directory
         if os.path.expanduser('~/.pywikibot') != pywikibot.config2.base_dir:
-            cache_dirs += [
+            cache_paths += [
                 os.path.join(os.path.expanduser('~/.pywikibot'), 'apicache')]
 
     if delete:
@@ -328,11 +355,10 @@ def main():
     else:
         func = action_func
 
-    for cache_dir in cache_dirs:
-        if os.path.isdir(cache_dir):
-            if len(cache_dirs) > 1:
-                pywikibot.output(u'Processing %s' % cache_dir)
-            process_entries(cache_dir, func)
+    for cache_path in cache_paths:
+        if len(cache_paths) > 1:
+            pywikibot.output(u'Processing %s' % cache_path)
+        process_entries(cache_path, func)
 
 if __name__ == '__main__':
     main()

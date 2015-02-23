@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
-This script adds claims to Wikidata items based on categories.
+A script that adds claims to Wikidata items based on categories.
 
 ------------------------------------------------------------------------------
 
@@ -68,34 +68,32 @@ docuReplacements = {
 
 
 class ClaimRobot(WikidataBot):
-    """
-    A bot to add Wikidata claims
-    """
+
+    """A bot to add Wikidata claims."""
+
     def __init__(self, generator, claims, exists_arg=''):
         """
+        Constructor.
+
         Arguments:
             * generator    - A generator that yields Page objects.
             * claims       - A list of wikidata claims
             * exists_arg   - String specifying how to handle duplicate claims
 
         """
+        super(ClaimRobot, self).__init__(use_from_page=None)
         self.generator = generator
         self.claims = claims
         self.exists_arg = exists_arg
-        self.repo = pywikibot.Site().data_repository()
         self.cacheSources()
-
-    def run(self):
-        """Starts the robot."""
         if self.exists_arg:
             pywikibot.output('\'exists\' argument set to \'%s\'' % self.exists_arg)
-        for page in self.generator:
-            self.current_page = page
-            item = pywikibot.ItemPage.fromPage(page)
-            if not item.exists():
-                # TODO FIXME: We should provide an option to create the page
-                pywikibot.output('%s doesn\'t have a wikidata item :(' % page)
-                continue
+
+    def treat(self, page, item):
+        """Treat each page."""
+        self.current_page = page
+
+        if item:
             for claim in self.claims:
                 skip = False
                 # If claim with same property already exists...
@@ -137,7 +135,8 @@ class ClaimRobot(WikidataBot):
 
 def listsEqual(list1, list2):
     """
-    Returns true if the lists are probably equal, ignoring order.
+    Return true if the lists are probably equal, ignoring order.
+
     Works for lists of unhashable items (like dictionaries).
     """
     if len(list1) != len(list2):
@@ -150,12 +149,20 @@ def listsEqual(list1, list2):
     return True
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     exists_arg = ''
     commandline_claims = list()
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     gen = pagegenerators.GeneratorFactory()
 
     for arg in local_args:

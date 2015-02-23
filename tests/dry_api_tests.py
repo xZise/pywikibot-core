@@ -1,4 +1,5 @@
 # -*- coding: utf-8  -*-
+"""API tests which do not interact with a site."""
 #
 # (C) Pywikibot team, 2012-2014
 #
@@ -7,15 +8,26 @@
 __version__ = '$Id$'
 #
 
+import os
 import datetime
+
 import pywikibot
-from pywikibot.data.api import CachedRequest, QueryGenerator
+from pywikibot.data.api import (
+    CachedRequest,
+    ParamInfo,
+    Request,
+    QueryGenerator,
+)
 from pywikibot.family import Family
+
+from tests import _images_dir
 from tests.utils import DummySiteinfo
-from tests.aspects import unittest, TestCase, DefaultSiteTestCase
+from tests.aspects import unittest, TestCase, DefaultDrySiteTestCase
 
 
 class DryCachedRequestTests(TestCase):
+
+    """Test CachedRequest using real site objects."""
 
     sites = {
         'basesite': {
@@ -27,6 +39,8 @@ class DryCachedRequestTests(TestCase):
             'code': 'de',
         },
     }
+
+    dry = True
 
     def setUp(self):
         super(DryCachedRequestTests, self).setUp()
@@ -64,6 +78,8 @@ class DryCachedRequestTests(TestCase):
 
 
 class MockCachedRequestKeyTests(TestCase):
+
+    """Test CachedRequest using moke site objects."""
 
     net = False
 
@@ -164,17 +180,192 @@ class MockCachedRequestKeyTests(TestCase):
         self.assertEqual(en_user_path, ar_user_path)
 
 
-class DryQueryGenTests(DefaultSiteTestCase):
+class DryMimeTests(TestCase):
+
+    """Test MIME request handling without a real site."""
+
+    net = False
+
+    def test_mime_file_payload(self):
+        """Test Request._generate_MIME_part loads binary as binary."""
+        local_filename = os.path.join(_images_dir, 'MP_sounds.png')
+        with open(local_filename, 'rb') as f:
+            file_content = f.read()
+        submsg = Request._generate_MIME_part(
+            'file', file_content, ('image', 'png'),
+            {'filename': local_filename})
+        self.assertEqual(file_content, submsg.get_payload(decode=True))
+
+    def test_mime_file_container(self):
+        local_filename = os.path.join(_images_dir, 'MP_sounds.png')
+        with open(local_filename, 'rb') as f:
+            file_content = f.read()
+        body = Request._build_mime_request({}, {
+            'file': (file_content, ('image', 'png'),
+                     {'filename': local_filename})
+        })[1]
+        self.assertNotEqual(body.find(file_content), -1)
+
+
+class MimeTests(DefaultDrySiteTestCase):
+
+    """Test MIME request handling with a real site."""
+
+    def test_upload_object(self):
+        """Test Request object prepared to upload."""
+        req = Request(site=self.get_site(), action="upload",
+                      file='MP_sounds.png', mime=True,
+                      filename=os.path.join(_images_dir, 'MP_sounds.png'))
+        self.assertEqual(req.mime, True)
+
+
+class ParamInfoDictTests(DefaultDrySiteTestCase):
+
+    """Test extracting data from the ParamInfo."""
+
+    prop_info_param_data = {  # data from 1.25
+        "name": "info",
+        "classname": "ApiQueryInfo",
+        "path": "query+info",
+        "group": "prop",
+        "prefix": "in",
+        "parameters": [
+            {
+                "name": "prop",
+                "multi": "",
+                "limit": 500,
+                "lowlimit": 50,
+                "highlimit": 500,
+                "type": [
+                    "protection",
+                    "talkid",
+                    "watched",
+                    "watchers",
+                    "notificationtimestamp",
+                    "subjectid",
+                    "url",
+                    "readable",
+                    "preload",
+                    "displaytitle"
+                ]
+            },
+            {
+                "name": "token",
+                "deprecated": "",
+                "multi": "",
+                "limit": 500,
+                "lowlimit": 50,
+                "highlimit": 500,
+                "type": [
+                    "edit",
+                    "delete",
+                    "protect",
+                    "move",
+                    "block",
+                    "unblock",
+                    "email",
+                    "import",
+                    "watch"
+                ]
+            },
+            {
+                "name": "continue",
+                "type": "string"
+            }
+        ],
+        "querytype": "prop"
+    }
+
+    def setUp(self):
+        """Add a real ParamInfo to the DrySite."""
+        super(ParamInfoDictTests, self).setUp()
+        site = self.get_site()
+        site._paraminfo = ParamInfo(site)
+
+    def test_new_format(self):
+        pi = self.get_site()._paraminfo
+        # Set it to the new limited set of keys.
+        pi.paraminfo_keys = frozenset(['modules'])
+
+        data = pi.normalize_paraminfo({
+            'paraminfo': {
+                'modules': [
+                    self.prop_info_param_data,
+                    {'name': 'edit'}
+                ]
+            }
+        })
+
+        pi._paraminfo.update(data)
+        self.assertIn('info', pi._paraminfo)
+        self.assertIn('edit', pi._paraminfo)
+
+    def test_old_format(self):
+        pi = self.get_site()._paraminfo
+        # Reset it to the complete set of possible keys defined in the class
+        pi.paraminfo_keys = ParamInfo.paraminfo_keys
+
+        data = pi.normalize_paraminfo({
+            'paraminfo': {
+                'querymodules': [self.prop_info_param_data],
+                'modules': [{'name': 'edit'}]
+            }
+        })
+
+        pi._paraminfo.update(data)
+        self.assertIn('info', pi._paraminfo)
+        self.assertIn('edit', pi._paraminfo)
+
+    def test_attribute(self):
+        pi = self.get_site()._paraminfo
+        # Reset it to the complete set of possible keys defined in the class
+        pi.paraminfo_keys = ParamInfo.paraminfo_keys
+
+        data = pi.normalize_paraminfo({
+            'paraminfo': {
+                'querymodules': [self.prop_info_param_data],
+            }
+        })
+
+        pi._paraminfo.update(data)
+
+        self.assertEqual(pi._paraminfo['info']['prefix'], 'in')
+        self.assertEqual(pi._paraminfo['info']['querytype'], 'prop')
+
+    def test_parameter(self):
+        pi = self.get_site()._paraminfo
+        # Reset it to the complete set of possible keys defined in the class
+        pi.paraminfo_keys = ParamInfo.paraminfo_keys
+
+        data = pi.normalize_paraminfo({
+            'paraminfo': {
+                'querymodules': [self.prop_info_param_data],
+            }
+        })
+
+        pi._paraminfo.update(data)
+        # Pretend that paraminfo has been loaded
+        pi._paraminfo['paraminfo'] = {}
+
+        param = pi.parameter('info', 'token')
+        self.assertIsInstance(param, dict)
+
+        self.assertEqual(param['name'], 'token')
+        self.assertIn('deprecated', param)
+
+        self.assertIsInstance(param['type'], list)
+        self.assertIn('email', param['type'])
+
+
+class QueryGenTests(DefaultDrySiteTestCase):
+
+    """Test QueryGenerator with a real site."""
 
     def test_query_constructor(self):
-        """Test QueryGenerator constructor.
-
-        QueryGenerator constructor will call pywikibot.Site()
-        if a site paramter is not provided.
-        """
-        qGen1 = QueryGenerator(action="query", meta="siteinfo")
-        qGen2 = QueryGenerator(meta="siteinfo")
-        self.assertEqual(str(qGen1.request), str(qGen2.request))
+        """Test QueryGenerator constructor."""
+        qGen1 = QueryGenerator(site=self.get_site(), action="query", meta="siteinfo")
+        qGen2 = QueryGenerator(site=self.get_site(), meta="siteinfo")
+        self.assertCountEqual(qGen1.request._params.items(), qGen2.request._params.items())
 
 
 if __name__ == '__main__':

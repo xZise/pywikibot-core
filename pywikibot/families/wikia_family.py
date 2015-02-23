@@ -4,6 +4,7 @@
 __version__ = '$Id$'
 
 from pywikibot import family
+from pywikibot.tools import deprecated
 
 
 # The Wikia Search family
@@ -25,9 +26,10 @@ class Family(family.Family):
         """Return the hostname for every site in this family."""
         return u'www.wikia.com'
 
+    @deprecated('APISite.version()')
     def version(self, code):
         """Return the version for this family."""
-        return "1.19.18"
+        return "1.19.20"
 
     def scriptpath(self, code):
         """Return the script path for this family."""

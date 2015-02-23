@@ -3,17 +3,27 @@
 """Library to log the bot in to a wiki account."""
 #
 # (C) Rob W.W. Hooft, 2003
-# (C) Pywikibot team, 2003-2012
+# (C) Pywikibot team, 2003-2015
 #
 # Distributed under the terms of the MIT license.
 #
 __version__ = '$Id$'
 #
+import codecs
+from warnings import warn
 
 import pywikibot
 from pywikibot import config
-from pywikibot.tools import deprecate_arg
+from pywikibot.tools import deprecated_args, normalize_username
 from pywikibot.exceptions import NoUsername
+
+
+class _PasswordFileWarning(UserWarning):
+
+    """The format of password file is incorrect."""
+
+    pass
+
 
 _logger = "wiki.login"
 
@@ -31,9 +41,27 @@ botList = {
 
 
 class LoginManager:
-    @deprecate_arg("username", "user")
-    @deprecate_arg("verbose", None)
+
+    """Site login manager."""
+
+    @deprecated_args(username="user", verbose=None)
     def __init__(self, password=None, sysop=False, site=None, user=None):
+        """
+        Constructor.
+
+        All parameters default to defaults in user-config.
+
+        @param site: Site object to log into
+        @type site: BaseSite
+        @param user: username to use
+        @type user: basestring
+        @param password: password to use
+        @type password: basestring
+        @param sysop: login as sysop account
+        @type sysop: bool
+
+        @raises NoUsername: No username is configured for the requested site.
+        """
         if site is not None:
             self.site = site
         else:
@@ -146,26 +174,45 @@ usernames['%(fam_name)s']['%(wiki_code)s'] = 'myUsername'"""
         (u"wikipedia", u"my_wikipedia_user", u"my_wikipedia_pass")
         (u"en", u"wikipedia", u"my_en_wikipedia_user", u"my_en_wikipedia_pass")
         """
-        password_f = open(config.password_file)
+        password_f = codecs.open(config.password_file, encoding='utf-8')
         for line in password_f:
             if not line.strip():
                 continue
-            entry = eval(line.decode('utf-8'))
+            try:
+                entry = eval(line)
+            except SyntaxError:
+                entry = None
+            if type(entry) is not tuple:
+                warn('Invalid tuple', _PasswordFileWarning)
+                continue
+            if not 2 <= len(entry) <= 4:
+                warn('The length of tuple should be 2 to 4 (%s given)'
+                     % len(entry), _PasswordFileWarning)
+                continue
+            username = normalize_username(entry[-2])
             if len(entry) == 4:         # for userinfo included code and family
                 if entry[0] == self.site.code and \
                    entry[1] == self.site.family.name and \
-                   entry[2] == self.username:
+                   username == self.username:
                     self.password = entry[3]
             elif len(entry) == 3:       # for userinfo included family
                 if entry[0] == self.site.family.name and \
-                   entry[1] == self.username:
+                   username == self.username:
                     self.password = entry[2]
             elif len(entry) == 2:       # for default userinfo
-                if entry[0] == self.username:
+                if username == self.username:
                     self.password = entry[1]
         password_f.close()
 
     def login(self, retry=False):
+        """
+        Attempt to log into the server.
+
+        @param retry: infinitely retry if the API returns an unknown error
+        @type retry: bool
+
+        @raises NoUsername: Username is not recognised by the site.
+        """
         if not self.password:
             # As we don't want the password to appear on the screen, we set
             # password = True
@@ -173,7 +220,6 @@ usernames['%(fam_name)s']['%(wiki_code)s'] = 'myUsername'"""
                 u'Password for user %(name)s on %(site)s (no characters will '
                 u'be shown):' % {'name': self.username, 'site': self.site},
                 password=True)
-#        self.password = self.password.encode(self.site.encoding())
 
         pywikibot.output(u"Logging in to %(site)s as %(name)s"
                          % {'name': self.username, 'site': self.site})
@@ -181,6 +227,13 @@ usernames['%(fam_name)s']['%(wiki_code)s'] = 'myUsername'"""
             cookiedata = self.getCookie()
         except pywikibot.data.api.APIError as e:
             pywikibot.error(u"Login failed (%s)." % e.code)
+            if e.code == 'NotExists':
+                raise NoUsername(u"Username '%s' does not exist on %s"
+                                 % (self.username, self.site))
+            elif e.code == 'Illegal':
+                raise NoUsername(u"Username '%s' is invalid on %s"
+                                 % (self.username, self.site))
+            # TODO: investigate other unhandled API codes (bug 73539)
             if retry:
                 self.password = None
                 return self.login(retry=True)

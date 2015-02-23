@@ -25,7 +25,7 @@ class LogDict(dict):
     def __missing__(self, key):
         pywikibot.debug(u"API log entry received:\n" + repr(self),
                         _logger)
-        raise KeyError("Log entry has no '%s' key" % key, key)
+        raise KeyError("Log entry (%s) has no '%s' key" % (self._type, key))
 
 
 class LogEntry(object):
@@ -34,15 +34,17 @@ class LogEntry(object):
 
     # Log type expected. None for every type, or one of the (letype) str :
     # block/patrol/etc...
-    # Overriden in subclasses.
+    # Overridden in subclasses.
     _expectedType = None
 
-    def __init__(self, apidata):
+    def __init__(self, apidata, site):
         """Initialize object from a logevent dict returned by MW API."""
         self.data = LogDict(apidata)
+        self.site = site
         if self._expectedType is not None and self._expectedType != self.type():
             raise Error("Wrong log type! Expecting %s, received %s instead."
                         % (self._expectedType, self.type()))
+        self.data._type = self.type()
 
     def __hash__(self):
         return self.logid()
@@ -59,7 +61,7 @@ class LogEntry(object):
     def title(self):
         """Page on which action was performed."""
         if not hasattr(self, '_title'):
-            self._title = pywikibot.Page(pywikibot.Link(self.data['title']))
+            self._title = pywikibot.Page(self.site, self.data['title'])
         return self._title
 
     def type(self):
@@ -83,11 +85,14 @@ class LogEntry(object):
 
 
 class BlockEntry(LogEntry):
+
+    """Block log entry."""
+
     _expectedType = 'block'
 
-    def __init__(self, apidata):
+    def __init__(self, apidata, site):
         """Constructor."""
-        super(BlockEntry, self).__init__(apidata)
+        super(BlockEntry, self).__init__(apidata, site)
         # see en.wikipedia.org/w/api.php?action=query&list=logevents&letype=block&lelimit=1&lestart=2009-03-04T00:35:07Z
         # When an autoblock is removed, the "title" field is not a page title
         # ( https://bugzilla.wikimedia.org/show_bug.cgi?id=17781 )
@@ -100,9 +105,10 @@ class BlockEntry(LogEntry):
         """
         Return the blocked account or IP.
 
-        * Returns the Page object of username or IP
-           if this block action targets a username or IP.
-        * Returns the blockid if this log reflects the removal of an autoblock
+        @return: the Page object of username or IP if this block action
+            targets a username or IP, or the blockid if this log reflects
+            the removal of an autoblock
+        @rtype: Page or int
         """
         # TODO what for IP ranges ?
         if self.isAutoblockRemoval:
@@ -162,22 +168,37 @@ class BlockEntry(LogEntry):
 
 
 class ProtectEntry(LogEntry):
+
+    """Protection log entry."""
+
     _expectedType = 'protect'
 
 
 class RightsEntry(LogEntry):
+
+    """Rights log entry."""
+
     _expectedType = 'rights'
 
 
 class DeleteEntry(LogEntry):
+
+    """Deletion log entry."""
+
     _expectedType = 'delete'
 
 
 class UploadEntry(LogEntry):
+
+    """Upload log entry."""
+
     _expectedType = 'upload'
 
 
 class MoveEntry(LogEntry):
+
+    """Move log entry."""
+
     _expectedType = 'move'
 
     def new_ns(self):
@@ -186,7 +207,7 @@ class MoveEntry(LogEntry):
     def new_title(self):
         """Return page object of the new title."""
         if not hasattr(self, '_new_title'):
-            self._new_title = pywikibot.Page(pywikibot.Link(self.data['move']['new_title']))
+            self._new_title = pywikibot.Page(self.site, self.data['move']['new_title'])
         return self._new_title
 
     def suppressedredirect(self):
@@ -200,14 +221,23 @@ class MoveEntry(LogEntry):
 
 
 class ImportEntry(LogEntry):
+
+    """Import log entry."""
+
     _expectedType = 'import'
 
 
 class PatrolEntry(LogEntry):
+
+    """Patrol log entry."""
+
     _expectedType = 'patrol'
 
 
 class NewUsersEntry(LogEntry):
+
+    """New user log entry."""
+
     _expectedType = 'newusers'
 
 # TODO entries for merge,suppress,makebot,gblblock,renameuser,globalauth,gblrights ?
@@ -233,21 +263,25 @@ class LogEntryFactory(object):
         'newusers': NewUsersEntry
     }
 
-    def __init__(self, logtype=None):
+    def __init__(self, site, logtype=None):
         """
         Constructor.
 
+        @param site: The site on which the log entries are created.
+        @type site: BaseSite
         @param logtype: The log type of the log entries, if known in advance.
                         If None, the Factory will fetch the log entry from
                         the data to create each object.
         @type logtype: (letype) str : move/block/patrol/etc...
         """
+        self._site = site
         if logtype is None:
             self._creator = self._createFromData
         else:
             # Bind a Class object to self._creator:
             # When called, it will initialize a new object of that class
-            self._creator = LogEntryFactory._getEntryClass(logtype)
+            logclass = LogEntryFactory._getEntryClass(logtype)
+            self._creator = lambda data: logclass(data, self._site)
 
     def create(self, logdata):
         """
@@ -260,8 +294,8 @@ class LogEntryFactory(object):
         """
         return self._creator(logdata)
 
-    @staticmethod
-    def _getEntryClass(logtype):
+    @classmethod
+    def _getEntryClass(cls, logtype):
         """
         Return the class corresponding to the @logtype string parameter.
 
@@ -269,7 +303,7 @@ class LogEntryFactory(object):
         @rtype: class
         """
         try:
-            return LogEntryFactory._logtypes[logtype]
+            return cls._logtypes[logtype]
         except KeyError:
             return LogEntry
 
@@ -283,7 +317,7 @@ class LogEntryFactory(object):
         """
         try:
             logtype = logdata['type']
-            return LogEntryFactory._getEntryClass(logtype)(logdata)
+            return LogEntryFactory._getEntryClass(logtype)(logdata, self._site)
         except KeyError:
             pywikibot.debug(u"API log entry received:\n" + logdata,
                             _logger)

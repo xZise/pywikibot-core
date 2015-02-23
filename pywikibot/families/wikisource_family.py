@@ -21,11 +21,13 @@ class Family(family.WikimediaFamily):
             'sr', 'vi', 'sa', 'el', 'hr', 'no', 'th', 'bn', 'hy', 'is', 'nl',
             'gu', 'la', 'ja', 'br', 'vec', 'uk', 'eo', 'tr', 'mk', 'yi', 'ta',
             'az', 'id', 'be', 'da', 'li', 'et', 'as', 'mr', 'bg', 'bs', 'sah',
-            'kn', 'gl', 'lt', 'cy', 'sk', 'zh-min-nan', 'fo',
+            'kn', 'gl', 'lt', 'cy', 'sk', 'zh-min-nan', 'fo', 'or',
         ]
 
         self.langs = dict([(lang, '%s.wikisource.org' % lang)
                            for lang in self.languages_by_size])
+        # FIXME: '-' is invalid at the beginning of a hostname, and
+        # '-' is not a valid subdomain.
         self.langs['-'] = 'wikisource.org'
 
         # Global bot allowed languages on https://meta.wikimedia.org/wiki/Bot_policy/Implementation#Current_implementation
@@ -56,7 +58,6 @@ class Family(family.WikimediaFamily):
             'jp': 'ja',
             'minnan': 'zh-min-nan',
             'nb': 'no',
-            'tokipona': None,
             'zh-tw': 'zh',
             'zh-cn': 'zh'
         }
@@ -95,6 +96,39 @@ class Family(family.WikimediaFamily):
         for key, values in self.authornamespaces.items():
             for item in values:
                 self.crossnamespace[item].update({key: self.authornamespaces})
+
+        # Subpages for documentation.
+        # TODO: List is incomplete, to be completed for missing languages.
+        # TODO: Remove comments for appropriate pages
+        self.doc_subpages = {
+            '_default': ((u'/doc', ),
+                         ['ar', 'as', 'az', 'bn', 'en', 'es',
+                          'et', 'gu', 'hu', 'it', 'ja', 'kn', 'ml',
+                          'mk', 'mr', 'pt', 'ro', 'sa', 'sah', 'ta',
+                          'te', 'th', 'vi']
+                         ),
+            'be': (u'/Дакументацыя', ),
+            'bn': (u'/নথি', ),
+            'br': (u'/diellerezh', ),
+            'de': (u'/Doku', u'/Meta'),
+            'el': (u'/τεκμηρίωση', ),
+            'eo': ('u/dokumentado', ),
+            # 'fa': (u'/صفحه الگو', ),
+            # 'fa': (u'/فضای‌نام توضیحات', ),
+            # 'fa': (u'/آغاز جعبه', ),
+            # 'fa': (u'/پایان جعبه۲', ),
+            # 'fa': (u'/آغاز جعبه۲', ),
+            # 'fa': (u'/پایان جعبه', ),
+            # 'fa': (u'/توضیحات', ),
+            'fr': (u'/documentation', ),
+            'id': (u'/dok', ),
+            'ko': (u'/설명문서', ),
+            'no': (u'/dok', ),
+            'ru': (u'/Документация', ),
+            'sl': (u'/dok', ),
+            'sv': (u'/dok', ),
+            'uk': (u'/документація', ),
+        }
 
     def shared_data_repository(self, code, transcluded=False):
         """Return the shared data repository for this site."""

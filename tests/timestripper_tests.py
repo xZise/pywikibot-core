@@ -23,6 +23,7 @@ class TestTimeStripperWithNoDigitsAsMonths(TestCase):
     cached = True
 
     def setUp(self):
+        """Set up test cases."""
         super(TestTimeStripperWithNoDigitsAsMonths, self).setUp()
         self.ts = TimeStripper(self.get_site())
 
@@ -86,7 +87,7 @@ class TestTimeStripperWithNoDigitsAsMonths(TestCase):
 
 class TestTimeStripperWithDigitsAsMonths(TestCase):
 
-    """Test cases for TimeStripper methods"""
+    """Test cases for TimeStripper methods."""
 
     family = 'wikipedia'
     code = 'cs'
@@ -125,7 +126,7 @@ class TestTimeStripperWithDigitsAsMonths(TestCase):
 
 class TestTimeStripperLanguage(TestCase):
 
-    """Test cases for English language"""
+    """Test cases for English language."""
 
     sites = {
         'cswiki': {
@@ -139,11 +140,22 @@ class TestTimeStripperLanguage(TestCase):
             'match': u'3 February 2010 19:48 (UTC) 7 February 2010 19:48 (UTC)',
             'nomatch': u'3. 2. 2010, 19:48 (UTC) 7. 2. 2010 19:48 (UTC)',
         },
+        'fawiki': {
+            'family': 'wikipedia',
+            'code': 'fa',
+            'match': u'۳ فوریهٔ  ۲۰۱۰، ساعت ۱۹:۴۸ (UTC) ۷ فوریهٔ  ۲۰۱۰، ساعت ۱۹:۴۸ (UTC)',
+            'nomatch': u'۳ ۲ ۲۰۱۴ ۱۹:۴۸ (UTC) ۷ ۲ ۲۰۱۰ ۱۹:۴۸ (UTC)',
+        },
         'frwiki': {
             'family': 'wikipedia',
             'code': 'fr',
             'match': u'3 février 2010 à 19:48 (CET) 7 février 2010 à 19:48 (CET)',
             'nomatch': u'3 March 2010 19:48 (CET) 7 March 2010 19:48 (CET)',
+        },
+        'kowiki': {
+            'family': 'wikipedia',
+            'code': 'ko',
+            'match': u'2010년 2월 3일 (수) 19:48 (KST) 2010년 2월 7일 (수) 19:48 (KST)',
         },
         'nowiki': {
             'family': 'wikipedia',

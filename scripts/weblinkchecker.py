@@ -1,7 +1,8 @@
 # -*- coding: utf-8  -*-
 """
-This bot is used for checking external links found at the wiki. It checks
-several pages at once, with a limit set by the config variable
+This bot is used for checking external links found at the wiki.
+
+It checks several pages at once, with a limit set by the config variable
 max_external_links, which defaults to 50.
 
 The bot won't change any wiki pages, it will only report dead links such that
@@ -112,6 +113,8 @@ if sys.version_info[0] > 2:
     import urllib.parse as urlparse
     import urllib.request as urllib
     import http.client as httplib
+    basestring = (str, )
+    unicode = str
 else:
     import urlparse
     import urllib
@@ -125,29 +128,39 @@ ignorelist = [
     # Officially reserved for testing, documentation, etc. in
     # https://tools.ietf.org/html/rfc2606#page-2
     # top-level domains:
-    re.compile('.*[\./@]test(/.*)?'),
-    re.compile('.*[\./@]example(/.*)?'),
-    re.compile('.*[\./@]invalid(/.*)?'),
-    re.compile('.*[\./@]localhost(/.*)?'),
+    re.compile(r'.*[\./@]test(/.*)?'),
+    re.compile(r'.*[\./@]example(/.*)?'),
+    re.compile(r'.*[\./@]invalid(/.*)?'),
+    re.compile(r'.*[\./@]localhost(/.*)?'),
     # second-level domains:
-    re.compile('.*[\./@]example\.com(/.*)?'),
-    re.compile('.*[\./@]example\.net(/.*)?'),
-    re.compile('.*[\./@]example\.org(/.*)?'),
+    re.compile(r'.*[\./@]example\.com(/.*)?'),
+    re.compile(r'.*[\./@]example\.net(/.*)?'),
+    re.compile(r'.*[\./@]example\.org(/.*)?'),
 
     # Other special cases
-    re.compile('.*[\./@]gso\.gbv\.de(/.*)?'),  # bot somehow can't handle their redirects
-    re.compile('.*[\./@]berlinonline\.de(/.*)?'),  # a de: user wants to fix them by hand and doesn't want them to be deleted, see [[de:Benutzer:BLueFiSH.as/BZ]].
-    re.compile('.*[\./@]bodo\.kommune\.no(/.*)?'),  # bot can't handle their redirects
-    re.compile('.*[\./@]jpl\.nasa\.gov(/.*)?'),  # bot rejected on the site
-    re.compile('.*[\./@]itis\.gov(/.*)?'),  # bot rejected on the site
-    re.compile('.*[\./@]cev\.lu(/.*)?'),  # bot rejected on the site
-    re.compile('.*[\./@]science\.ksc\.nasa\.gov(/.*)?'),  # very slow response resulting in bot error
-    re.compile('.*[\./@]britannica\.com(/.*)?'),  # HTTP redirect loop
-    re.compile('.*[\./@]quickfacts\.census\.gov(/.*)?'),  # bot rejected on the site
+    # bot somehow can't handle their redirects:
+    re.compile(r'.*[\./@]gso\.gbv\.de(/.*)?'),
+    re.compile(r'.*[\./@]berlinonline\.de(/.*)?'),
+    # above entry to be manually fixed per request at [[de:Benutzer:BLueFiSH.as/BZ]]
+    # bot can't handle their redirects:
+    re.compile(r'.*[\./@]bodo\.kommune\.no(/.*)?'),
+    re.compile(r'.*[\./@]jpl\.nasa\.gov(/.*)?'),  # bot rejected on the site
+    re.compile(r'.*[\./@]itis\.gov(/.*)?'),  # bot rejected on the site
+    re.compile(r'.*[\./@]cev\.lu(/.*)?'),  # bot rejected on the site
+    # very slow response resulting in bot error:
+    re.compile(r'.*[\./@]science\.ksc\.nasa\.gov(/.*)?'),
+    re.compile(r'.*[\./@]britannica\.com(/.*)?'),  # HTTP redirect loop
+    # bot rejected on the site:
+    re.compile(r'.*[\./@]quickfacts\.census\.gov(/.*)?'),
 ]
 
 
 def weblinksIn(text, withoutBracketed=False, onlyBracketed=False):
+    """
+    Yield web links from text.
+
+    TODO: move to textlib
+    """
     text = textlib.removeDisabledParts(text)
 
     # MediaWiki parses templates before parsing external links. Thus, there
@@ -205,7 +218,7 @@ class XmlDumpPageGenerator:
                         continue
                     self.skipping = False
                 page = pywikibot.Page(self.site, entry.title)
-                if not self.namespaces == []:
+                if self.namespaces:
                     if page.namespace() not in self.namespaces:
                         continue
                 found = False
@@ -225,9 +238,16 @@ class XmlDumpPageGenerator:
     __next__ = next
 
 
+class NotAnURLError(BaseException):
+
+    """The link is not an URL."""
+
+
 class LinkChecker(object):
 
     """
+    Check links.
+
     Given a HTTP URL, tries to load the page from the Internet and checks if it
     is still online.
 
@@ -238,9 +258,12 @@ class LinkChecker(object):
     correctly! (This will give a Socket Error)
 
     """
+
     def __init__(self, url, redirectChain=[], serverEncoding=None,
                  HTTPignore=[]):
         """
+        Constructor.
+
         redirectChain is a list of redirects which were resolved by
         resolveRedirect(). This is needed to detect redirect loops.
         """
@@ -267,6 +290,8 @@ class LinkChecker(object):
             return httplib.HTTPConnection(self.host)
         elif self.scheme == 'https':
             return httplib.HTTPSConnection(self.host)
+        else:
+            raise NotAnURLError(self.url)
 
     def getEncodingUsedByServer(self):
         if not self.serverEncoding:
@@ -321,12 +346,12 @@ class LinkChecker(object):
 
     def resolveRedirect(self, useHEAD=False):
         """
-        Requests the header from the server. If the page is an HTTP redirect,
-        returns the redirect target URL as a string. Otherwise returns None.
+        Return the redirect target URL as a string, if it is a HTTP redirect.
 
         If useHEAD is true, uses the HTTP HEAD method, which saves bandwidth
         by not downloading the body. Otherwise, the HTTP GET method is used.
 
+        @rtype: unicode or None
         """
         conn = self.getConnection()
         try:
@@ -349,7 +374,7 @@ class LinkChecker(object):
             else:
                 raise
         if self.response.status >= 300 and self.response.status <= 399:
-            #print response.getheaders()
+            # to debug, print response.getheaders()
             redirTarget = self.response.getheader('Location')
             if redirTarget:
                 try:
@@ -386,14 +411,15 @@ class LinkChecker(object):
 
     def check(self, useHEAD=False):
         """
-        Returns True and the server status message if the page is alive.
-        Otherwise returns false
+        Return True and the server status message if the page is alive.
+
+        @rtype: tuple of (bool, unicode)
         """
         try:
             wasRedirected = self.resolveRedirect(useHEAD=useHEAD)
         except UnicodeError as error:
             return False, u'Encoding Error: %s (%s)' % (
-                error.__class__.__name__, unicode(error))
+                error.__class__.__name__, error)
         except httplib.error as error:
             return False, u'HTTP Error: %s' % error.__class__.__name__
         except socket.error as error:
@@ -479,10 +505,11 @@ class LinkChecker(object):
 
 class LinkCheckThread(threading.Thread):
 
-    """ A thread responsible for checking one URL. After checking the page, it
-    will die.
+    """A thread responsible for checking one URL.
 
+    After checking the page, it will die.
     """
+
     def __init__(self, page, url, history, HTTPignore, day):
         threading.Thread.__init__(self)
         self.page = page
@@ -498,6 +525,12 @@ class LinkCheckThread(threading.Thread):
         linkChecker = LinkChecker(self.url, HTTPignore=self.HTTPignore)
         try:
             ok, message = linkChecker.check()
+        except NotAnURLError:
+            ok = False
+            message = i18n.twtranslate(self.page.site,
+                                       'weblinkchecker-badurl_msg',
+                                       {'URL': self.url})
+
         except:
             pywikibot.output('Exception while processing URL %s in page %s'
                              % (self.url, self.page.title()))
@@ -514,7 +547,10 @@ class LinkCheckThread(threading.Thread):
 
 class History:
 
-    """ Store previously found dead links. The URLs are dictionary keys, and
+    """
+    Store previously found dead links.
+
+    The URLs are dictionary keys, and
     values are lists of tuples where each tuple represents one time the URL was
     found dead. Tuples have the form (title, date, error) where title is the
     wiki page where the URL was found, date is an instance of time, and error is
@@ -543,15 +579,14 @@ class History:
         # from time to time
         self.logCount = 0
         try:
-            datfile = open(self.datfilename, 'r')
-            self.historyDict = pickle.load(datfile)
-            datfile.close()
+            with open(self.datfilename, 'rb') as datfile:
+                self.historyDict = pickle.load(datfile)
         except (IOError, EOFError):
             # no saved history exists yet, or history dump broken
             self.historyDict = {}
 
     def log(self, url, error, containingPage, archiveURL):
-        """Logs an error report to a text file in the deadlinks subdirectory."""
+        """Log an error report to a text file in the deadlinks subdirectory."""
         if archiveURL:
             errorReport = u'* %s ([%s archive])\n' % (url, archiveURL)
         else:
@@ -579,7 +614,7 @@ class History:
                                      archiveURL)
 
     def setLinkDead(self, url, error, page, day):
-        """Adds the fact that the link was found dead to the .dat file."""
+        """Add the fact that the link was found dead to the .dat file."""
         self.semaphore.acquire()
         now = time.time()
         if url in self.historyDict:
@@ -604,8 +639,11 @@ class History:
 
     def setLinkAlive(self, url):
         """
-        If the link was previously found dead, removes it from the .dat file
-        and returns True, else returns False.
+        Record that the link is now alive.
+
+        If link was previously found dead, remove it from the .dat file.
+
+        @return: True if previously found dead, else returns False.
         """
         if url in self.historyDict:
             self.semaphore.acquire()
@@ -620,17 +658,17 @@ class History:
             return False
 
     def save(self):
-        """ Save the .dat file to disk. """
-        datfile = open(self.datfilename, 'w')
-        pickle.dump(self.historyDict, datfile)
-        datfile.close()
+        """Save the .dat file to disk."""
+        with open(self.datfilename, 'wb') as f:
+            pickle.dump(self.historyDict, f, protocol=config.pickle_protocol)
 
 
 class DeadLinkReportThread(threading.Thread):
 
     """
-    A Thread that is responsible for posting error reports on talk pages. There
-    will only be one DeadLinkReportThread, and it is using a semaphore to make
+    A Thread that is responsible for posting error reports on talk pages.
+
+    There is only one DeadLinkReportThread, and it is using a semaphore to make
     sure that two LinkCheckerThreads can not access the queue at the same time.
     """
 
@@ -642,10 +680,7 @@ class DeadLinkReportThread(threading.Thread):
         self.killed = False
 
     def report(self, url, errorReport, containingPage, archiveURL):
-        """ Tries to add an error report to the talk page belonging to the page
-        containing the dead link.
-
-        """
+        """Report error on talk page of the page containing the dead link."""
         self.semaphore.acquire()
         self.queue.append((url, errorReport, containingPage, archiveURL))
         self.semaphore.release()
@@ -686,7 +721,7 @@ class DeadLinkReportThread(threading.Thread):
 
                 if archiveURL:
                     archiveMsg = u'\n' + \
-                                 i18n.twtranslate(pywikibot.Site(),
+                                 i18n.twtranslate(containingPage.site,
                                                   'weblinkchecker-archive_msg',
                                                   {'URL': archiveURL})
                 else:
@@ -694,7 +729,7 @@ class DeadLinkReportThread(threading.Thread):
                 # The caption will default to "Dead link". But if there is
                 # already such a caption, we'll use "Dead link 2",
                 # "Dead link 3", etc.
-                caption = i18n.twtranslate(pywikibot.Site(),
+                caption = i18n.twtranslate(containingPage.site,
                                            'weblinkchecker-caption')
                 i = 1
                 count = u''
@@ -706,13 +741,13 @@ class DeadLinkReportThread(threading.Thread):
                 caption += count
                 content += '\n\n== %s ==\n\n%s\n\n%s%s--~~~~' % \
                            (caption,
-                            i18n.twtranslate(pywikibot.Site(),
+                            i18n.twtranslate(containingPage.site,
                                              'weblinkchecker-report'),
                             errorReport,
                             archiveMsg)
                 comment = u'[[%s#%s|→]] %s' % \
                           (talkPage.title(), caption,
-                           i18n.twtranslate(pywikibot.Site(),
+                           i18n.twtranslate(containingPage.site,
                                             'weblinkchecker-summary'))
                 try:
                     talkPage.put(content, comment)
@@ -728,14 +763,15 @@ class DeadLinkReportThread(threading.Thread):
 class WeblinkCheckerRobot:
 
     """
-    Bot which will use several LinkCheckThreads at once to search for dead
-    weblinks on pages provided by the given generator.
+    Bot which will search for dead weblinks.
 
+    It uses several LinkCheckThreads at once to process pages from generator.
     """
+
     def __init__(self, generator, HTTPignore=None, day=7):
         self.generator = generator
         if config.report_dead_links_on_talk:
-            #pywikibot.output("Starting talk page thread")
+            pywikibot.log("Starting talk page thread")
             reportThread = DeadLinkReportThread()
             # thread dies when program terminates
             # reportThread.setDaemon(True)
@@ -778,6 +814,7 @@ class WeblinkCheckerRobot:
 
 
 def RepeatPageGenerator():
+    """Generator for pages in History."""
     history = History(None)
     pageTitles = set()
     for value in history.historyDict.values():
@@ -789,6 +826,12 @@ def RepeatPageGenerator():
 
 
 def countLinkCheckThreads():
+    """
+    Count LinkCheckThread threads.
+
+    @return: number of LinkCheckThread threads
+    @rtype: int
+    """
     i = 0
     for thread in threading.enumerate():
         if isinstance(thread, LinkCheckThread):
@@ -802,17 +845,22 @@ def check(url):
     return c.check()
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     gen = None
     xmlFilename = None
-    # Which namespaces should be processed?
-    # default to [] which means all namespaces will be processed
-    namespaces = []
     HTTPignore = []
     day = 7
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     for arg in local_args:
@@ -820,11 +868,6 @@ def main():
             config.report_dead_links_on_talk = True
         elif arg == '-notalk':
             config.report_dead_links_on_talk = False
-        elif arg.startswith('-namespace:'):
-            try:
-                namespaces.append(int(arg[11:]))
-            except ValueError:
-                namespaces.append(arg[11:])
         elif arg == '-repeat':
             gen = RepeatPageGenerator()
         elif arg.startswith('-ignore:'):
@@ -850,13 +893,11 @@ def main():
             xmlStart
         except NameError:
             xmlStart = None
-        gen = XmlDumpPageGenerator(xmlFilename, xmlStart, namespaces)
+        gen = XmlDumpPageGenerator(xmlFilename, xmlStart, genFactory.namespaces)
 
     if not gen:
         gen = genFactory.getCombinedGenerator()
     if gen:
-        if namespaces != []:
-            gen = pagegenerators.NamespaceFilterPageGenerator(gen, namespaces)
         # fetch at least 240 pages simultaneously from the wiki, but more if
         # a high thread number is set.
         pageNumber = max(240, config.max_external_links * 2)

@@ -56,11 +56,24 @@ Variables below can be used in the value for "archive" in the template above:
 
 %(counter)d          the current value of the counter
 %(year)d             year of the thread being archived
+%(isoyear)d          ISO year of the thread being archived
+%(isoweek)d          ISO week number of the thread being archived
 %(quarter)d          quarter of the year of the thread being archived
 %(month)d            month (as a number 1-12) of the thread being archived
 %(monthname)s        English name of the month above
 %(monthnameshort)s   first three letters of the name above
 %(week)d             week number of the thread being archived
+
+The ISO calendar starts with the Monday of the week which has at least four
+days in the new Gregorian calendar. If January 1st is between Monday and
+Thursday (including), the first week of that year started the Monday of that
+week, which is in the year before if January 1st is not a Monday. If it's
+between Friday or Sunday (including) the following week is then the first week
+of the year. So up to three days are still counted as the year before.
+
+See also:
+ - http://www.phys.uu.nl/~vgent/calendar/isocalendar.htm
+ - https://docs.python.org/3.4/library/datetime.html#datetime.date.isocalendar
 
 Options (may be omitted):
   -help           show this help message and exit
@@ -92,34 +105,45 @@ from math import ceil
 import pywikibot
 from pywikibot import i18n
 from pywikibot.textlib import TimeStripper
+from pywikibot.textlib import to_local_digits
 
 ZERO = datetime.timedelta(0)
 
 
 class MalformedConfigError(pywikibot.Error):
+
     """There is an error in the configuration template."""
 
 
 class MissingConfigError(pywikibot.Error):
 
-    """The config is missing in the header (either it's in one of the threads
-    or transcluded from another page).
+    """
+    The config is missing in the header.
+
+    It's in one of the threads or transcluded from another page.
     """
 
 
 class AlgorithmError(MalformedConfigError):
+
     """Invalid specification of archiving algorithm."""
 
 
 class ArchiveSecurityError(pywikibot.Error):
 
-    """Archive is not a subpage of page being archived and key not specified
-    (or incorrect).
+    """
+    Page title is not a valid archive of page being archived.
+
+    The page title is neither a subpage of the page being archived,
+    nor does it match the key specified in the archive configuration template.
     """
 
 
 def str2localized_duration(site, string):
-    """Translate a duration written in the shorthand notation (ex. "24h", "7d")
+    """
+    Localise a shorthand duration.
+
+    Translates a duration written in the shorthand notation (ex. "24h", "7d")
     into an expression in the local language of the wiki ("24 hours", "7 days").
     """
     if string[-1] == 'd':
@@ -128,13 +152,16 @@ def str2localized_duration(site, string):
         template = site.mediawiki_message('Hours')
     if template:
         exp = i18n.translate(site.code, template, int(string[:-1]))
-        return exp.replace('$1', string[:-1])
+        return to_local_digits(exp.replace('$1', string[:-1]), site.code)
     else:
-        return string
+        return to_local_digits(string, site.code)
 
 
 def str2time(string):
-    """Accepts a string defining a time period:
+    """
+    Return a timedelta for a shorthand duration.
+
+    Accepts a string defining a time period:
     7d - 7 days
     36h - 36 hours
     Returns the corresponding timedelta object.
@@ -148,7 +175,10 @@ def str2time(string):
 
 
 def str2size(string):
-    """Accepts a string defining a size:
+    """
+    Return a size for a shorthand size.
+
+    Accepts a string defining a size:
     1337 - 1337 bytes
     150K - 150 kilobytes
     2M - 2 megabytes
@@ -156,7 +186,7 @@ def str2size(string):
     'B' (bytes) or 'T' (threads).
 
     """
-    r = re.search('(\d+) *([BkKMT]?)', string)
+    r = re.search(r'(\d+) *([BkKMT]?)', string)
     val, unit = (int(r.group(1)), r.group(2))
     if unit == 'M':
         val *= 1024
@@ -180,13 +210,13 @@ class TZoneUTC(datetime.tzinfo):
 
     """Class building a UTC tzinfo object."""
 
-    def utcoffset(self, dt):
+    def utcoffset(self, dt):  # pylint: disable=unused-argument
         return ZERO
 
-    def tzname(self, dt):
+    def tzname(self, dt):  # pylint: disable=unused-argument
         return 'UTC'
 
-    def dst(self, dt):
+    def dst(self, dt):  # pylint: disable=unused-argument
         return ZERO
 
     def __repr__(self):
@@ -195,8 +225,10 @@ class TZoneUTC(datetime.tzinfo):
 
 class DiscussionThread(object):
 
-    """An object representing a discussion thread on a page, that is something
-    of the form:
+    """
+    An object representing a discussion thread on a page.
+
+    It represents something that is of the form:
 
     == Title of thread ==
 
@@ -256,8 +288,10 @@ class DiscussionThread(object):
 
 class DiscussionPage(pywikibot.Page):
 
-    """A class that represents a single discussion page as well as an archive
-    page. Feed threads to it and run an update() afterwards.
+    """
+    A class that represents a single page of discussion threads.
+
+    Feed threads to it and run an update() afterwards.
     """
 
     def __init__(self, source, archiver, params=None):
@@ -348,6 +382,7 @@ class DiscussionPage(pywikibot.Page):
 class PageArchiver(object):
 
     """A class that encapsulates all archiving methods.
+
     __init__ expects a pywikibot.Page object.
     Execute by running the .run() method.
     """
@@ -362,10 +397,10 @@ class PageArchiver(object):
             'counter': ['1', False],
             'key': ['', False],
         }
-        self.tpl = tpl
         self.salt = salt
         self.force = force
         self.site = page.site
+        self.tpl = pywikibot.Page(self.site, tpl)
         self.timestripper = TimeStripper(site=self.site)
         self.page = DiscussionPage(page, self)
         self.load_config()
@@ -387,12 +422,12 @@ class PageArchiver(object):
         self.attributes[attr] = [value, out]
 
     def saveables(self):
-        return [a for a in self.attributes if self.attributes[a][1]
-                and a != 'maxage']
+        return [a for a in self.attributes if self.attributes[a][1] and
+                a != 'maxage']
 
     def attr2text(self):
         return '{{%s\n%s\n}}' \
-               % (self.tpl,
+               % (self.tpl.title(),
                   '\n'.join(['|%s = %s' % (a, self.get_attr(a))
                              for a in self.saveables()]))
 
@@ -403,9 +438,9 @@ class PageArchiver(object):
         return self.get_attr('key') == s.hexdigest()
 
     def load_config(self):
-        pywikibot.output(u'Looking for: {{%s}} in %s' % (self.tpl, self.page))
+        pywikibot.output(u'Looking for: {{%s}} in %s' % (self.tpl.title(), self.page))
         for tpl in self.page.templatesWithParams():
-            if tpl[0] == pywikibot.Page(self.site, self.tpl, ns=10):
+            if tpl[0] == pywikibot.Page(self.site, self.tpl.title(), ns=10):
                 for param in tpl[1]:
                     item, value = param.split('=', 1)
                     self.set_attr(item.strip(), value.strip())
@@ -417,6 +452,7 @@ class PageArchiver(object):
 
     def feed_archive(self, archive, thread, max_archive_size, params=None):
         """Feed the thread to one of the archives.
+
         If it doesn't exist yet, create it.
         If archive name is an empty string (or None),
         discard the thread (/dev/null).
@@ -453,14 +489,19 @@ class PageArchiver(object):
             why = t.should_be_archived(self)
             if why:
                 archive = self.get_attr('archive')
+                lang = self.site.lang
                 params = {
-                    'counter': arch_counter,
-                    'year': t.timestamp.year,
-                    'quarter': int(ceil(float(t.timestamp.month) / 3)),
-                    'month': t.timestamp.month,
+                    'counter': to_local_digits(arch_counter, lang),
+                    'year': to_local_digits(t.timestamp.year, lang),
+                    'isoyear': to_local_digits(t.timestamp.isocalendar()[0], lang),
+                    'isoweek': to_local_digits(t.timestamp.isocalendar()[1], lang),
+                    'quarter': to_local_digits(
+                        int(ceil(float(t.timestamp.month) / 3)), lang),
+                    'month': to_local_digits(t.timestamp.month, lang),
                     'monthname': self.month_num2orig_names[t.timestamp.month]['long'],
                     'monthnameshort': self.month_num2orig_names[t.timestamp.month]['short'],
-                    'week': int(time.strftime('%W', t.timestamp.timetuple())),
+                    'week': to_local_digits(
+                        int(time.strftime('%W', t.timestamp.timetuple())), lang),
                 }
                 archive = pywikibot.Page(self.site, archive % params)
                 if self.feed_archive(archive, t, max_arch_size, params):
@@ -494,7 +535,13 @@ class PageArchiver(object):
                 self.archives[a].update(comment)
 
             # Save the page itself
-            rx = re.compile('{{' + self.tpl + '\n.*?\n}}', re.DOTALL)
+            marker = '?' if self.tpl.namespace() == 10 else ''
+            rx = re.compile(r"\{\{(?:(?:%s):)%s%s\s*?\n.*?\n\}\}" % (u'|'.join(
+                set(self.site.namespaces[self.tpl.namespace()])), marker,
+                re.escape(self.tpl.title(withNamespace=False))), re.DOTALL)
+            if not rx.search(self.page.header):
+                pywikibot.error("Couldn't find the template in the header")
+                return
             self.page.header = rx.sub(self.attr2text(), self.page.header)
             self.comment_params['count'] = self.archived_threads
             self.comment_params['archives'] \
@@ -509,7 +556,15 @@ class PageArchiver(object):
             self.page.update(comment)
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     filename = None
     pagename = None
     namespace = None
@@ -522,7 +577,7 @@ def main():
         if arg.startswith(name):
             yield arg[len(name) + 1:]
 
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         for v in if_arg_value(arg, '-file'):
             filename = v
         for v in if_arg_value(arg, '-locale'):
@@ -578,6 +633,7 @@ def main():
 
     for a in args:
         pagelist = []
+        a = pywikibot.Page(site, a, ns=10).title()
         if not filename and not pagename:
             if namespace is not None:
                 ns = [str(namespace)]
@@ -586,7 +642,7 @@ def main():
             for pg in generate_transclusions(site, a, ns):
                 pagelist.append(pg)
         if filename:
-            for pg in file(filename, 'r').readlines():
+            for pg in open(filename, 'r').readlines():
                 pagelist.append(pywikibot.Page(site, pg, ns=10))
         if pagename:
             pagelist.append(pywikibot.Page(site, pagename, ns=3))

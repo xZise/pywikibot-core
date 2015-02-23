@@ -50,13 +50,17 @@ class IRCBot(pywikibot.Bot, SingleServerIRCBot):
         self.channel = channel
         self.site = site
         self.other_ns = re.compile(
-            u'14\[\[07(' + u'|'.join([item[0] for item in
-                                        list(site.namespaces().values()) if item[0]]) + u')')
+            u'\x0314\\[\\[\x0307(%s)'
+            % u'|'.join(item.custom_name for item in site.namespaces().values()
+                        if item != 0))
         self.api_url = self.site.apipath()
         self.api_url += '?action=query&meta=siteinfo&siprop=statistics&format=xml'
         self.api_found = re.compile(r'articles="(.*?)"')
         self.re_edit = re.compile(
-            r'^C14\[\[^C07(?P<page>.+?)^C14\]\]^C4 (?P<flags>.*?)^C10 ^C02(?P<url>.+?)^C ^C5\*^C ^C03(?P<user>.+?)^C ^C5\*^C \(?^B?(?P<bytes>[+-]?\d+?)^B?\) ^C10(?P<summary>.*)^C'.replace('^B', '\002').replace('^C', '\003').replace('^U', '\037'))
+            r'^C14\[\[^C07(?P<page>.+?)^C14\]\]^C4 (?P<flags>.*?)^C10 ^C02'
+            r'(?P<url>.+?)^C ^C5\*^C ^C03(?P<user>.+?)^C ^C5\*^C \(?^B?'
+            r'(?P<bytes>[+-]?\d+?)^B?\) ^C10(?P<summary>.*)^C'
+            .replace('^B', '\002').replace('^C', '\003').replace('^U', '\037'))
 
     def on_nicknameinuse(self, c, e):
         c.nick(c.get_nickname() + "_")
@@ -74,7 +78,7 @@ class IRCBot(pywikibot.Bot, SingleServerIRCBot):
         if not ('N' in match.group('flags')):
             return
         try:
-            msg = unicode(e.arguments()[0], 'utf-8')
+            msg = e.arguments()[0].decode('utf-8')
         except UnicodeDecodeError:
             return
         if self.other_ns.match(msg):

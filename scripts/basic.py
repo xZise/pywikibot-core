@@ -62,12 +62,12 @@ class BasicBot:
         self.summary = i18n.twtranslate(site, 'basic-changing')
 
     def run(self):
-        """ Process each page from the generator. """
+        """Process each page from the generator."""
         for page in self.generator:
             self.treat(page)
 
     def treat(self, page):
-        """ Load the given page, does some changes, and saves it. """
+        """Load the given page, does some changes, and saves it."""
         text = self.load(page)
         if not text:
             return
@@ -84,7 +84,7 @@ class BasicBot:
             pywikibot.output(u'Page %s not saved.' % page.title(asLink=True))
 
     def load(self, page):
-        """ Load the text of the given page. """
+        """Load the text of the given page."""
         try:
             # Load the page
             text = page.get()
@@ -100,7 +100,7 @@ class BasicBot:
 
     def save(self, text, page, comment=None, minorEdit=True,
              botflag=True):
-        """ Update the given page with new text. """
+        """Update the given page with new text."""
         # only save if something was changed
         if text != page.get():
             # Show the title of the page we're working on.
@@ -111,10 +111,9 @@ class BasicBot:
             pywikibot.showDiff(page.get(), text)
             pywikibot.output(u'Comment: %s' % comment)
             if not self.dry:
-                choice = pywikibot.inputChoice(
-                    u'Do you want to accept these changes?',
-                    ['Yes', 'No'], ['y', 'N'], 'N')
-                if choice == 'y':
+                if pywikibot.input_yn(
+                        u'Do you want to accept these changes?',
+                        default=False, automatic_quit=False):
                     try:
                         page.text = text
                         # Save the page
@@ -136,10 +135,17 @@ class BasicBot:
         return False
 
 
-def main():
-    """ Process command line arguments and invoke BasicBot. """
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     # Process global arguments to determine desired site
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
 
     # This factory is responsible for processing command line arguments
     # that are also used by other scripts and that determine on which pages

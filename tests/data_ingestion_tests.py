@@ -1,17 +1,29 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 
-"""Unit tests for data_ingestion.py"""
+"""Unit tests for data_ingestion.py script."""
 __version__ = '$Id$'
 
 import os
-from tests.aspects import unittest, TestCase
+from tests import _data_dir
+from tests import _images_dir
+from tests.aspects import unittest, TestCase, ScriptMainTestCase
 from scripts import data_ingestion
 
 
 class TestPhoto(TestCase):
 
-    net = True
+    """Test Photo class."""
+
+    sites = {
+        'wm-upload': {
+            'hostname': 'upload.wikimedia.org',
+        },
+        'commons': {
+            'family': 'commons',
+            'code': 'commons',
+        },
+    }
 
     def setUp(self):
         super(TestPhoto, self).setUp()
@@ -21,14 +33,16 @@ class TestPhoto(TestCase):
                                                   'author': 'KDE artists | Silstor',
                                                   'license': 'LGPL',
                                                   'set': 'Crystal SVG icon set',
-                                                  'name': 'Sound icon'}
-                                        )
+                                                  'name': 'Sound icon'},
+                                        site=self.get_site('commons'))
 
     def test_downloadPhoto(self):
-        f = open(os.path.join(os.path.split(__file__)[0], 'data', 'MP_sounds.png'))
-        self.assertEqual(f.read(), self.obj.downloadPhoto().read())
+        """Test download from http://upload.wikimedia.org/."""
+        with open(os.path.join(_images_dir, 'MP_sounds.png'), 'rb') as f:
+            self.assertEqual(f.read(), self.obj.downloadPhoto().read())
 
     def test_findDuplicateImages(self):
+        """Test finding duplicates on Wikimedia Commons."""
         duplicates = self.obj.findDuplicateImages()
         self.assertIn('MP sounds.png', [dup.replace("_", " ") for dup in duplicates])
 
@@ -49,13 +63,17 @@ class TestPhoto(TestCase):
 
 class TestCSVReader(TestCase):
 
-    net = False
+    """Test CSVReader class."""
+
+    family = 'commons'
+    code = 'commons'
 
     def setUp(self):
         super(TestCSVReader, self).setUp()
-        fileobj = open(os.path.join(os.path.split(__file__)[0], 'data', 'csv_ingestion.csv'))
-        self.iterator = data_ingestion.CSVReader(fileobj, 'url')
-        self.obj = next(self.iterator)
+        with open(os.path.join(_data_dir, 'csv_ingestion.csv')) as fileobj:
+            self.iterator = data_ingestion.CSVReader(fileobj, 'url',
+                                                     site=self.get_site())
+            self.obj = next(self.iterator)
 
     def test_PhotoURL(self):
         self.assertEqual(self.obj.URL, 'http://upload.wikimedia.org/wikipedia/commons/f/fc/MP_sounds.png')
@@ -74,6 +92,20 @@ class TestCSVReader(TestCase):
 |source=http://commons.wikimedia.org/wiki/File:Sound-icon.svg
 |url=http://upload.wikimedia.org/wikipedia/commons/f/fc/MP_sounds.png
 }}""")  # noqa
+
+
+class TestDataIngestionBot(ScriptMainTestCase):
+
+    """Test TestDataIngestionBot class."""
+
+    family = 'commons'
+    code = 'commons'
+
+    def test_existing_file(self):
+        """Test uploading a file that already exists."""
+        data_ingestion.main(
+            '-family:test', '-lang:test', '-csvdir:tests/data',
+            '-page:User:John_Vandenberg/data_ingestion_test_template')
 
 
 if __name__ == "__main__":

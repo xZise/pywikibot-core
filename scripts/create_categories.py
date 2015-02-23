@@ -37,6 +37,9 @@ from pywikibot import pagegenerators, Bot
 
 
 class CreateCategoriesBot(Bot):
+
+    """Category creator bot."""
+
     def __init__(self, generator, parent, basename, **kwargs):
         super(CreateCategoriesBot, self).__init__(**kwargs)
         self.generator = generator
@@ -44,7 +47,8 @@ class CreateCategoriesBot(Bot):
         self.basename = basename
         self.comment = u'Creating new category'
 
-    def create_category(self, page):
+    def treat(self, page):
+        """Create category in commons for that page."""
         title = page.title(withNamespace=False)
 
         newpage = pywikibot.Category(pywikibot.Site('commons', 'commons'),
@@ -67,19 +71,22 @@ class CreateCategoriesBot(Bot):
             # FIXME: Add overwrite option
             pywikibot.output(u'%s already exists, skipping' % newpage.title())
 
-    def run(self):
-        for page in self.generator:
-            self.create_category(page)
 
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
 
-def main():
-    """Main loop. Get a generator and options."""
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     parent = None
     basename = None
     options = {}
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     for arg in local_args:

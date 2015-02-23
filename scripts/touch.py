@@ -2,8 +2,9 @@
 # -*- coding: utf-8  -*-
 
 """
-This bot goes over multiple pages of a wiki, and edits them without
-changing. This is for example used to get category links in templates
+This bot goes over multiple pages of a wiki, and edits them without changes.
+
+This is for example used to get category links in templates
 working.
 
 This script understands various command-line arguments:
@@ -30,6 +31,8 @@ docuReplacements = {'&params;': pagegenerators.parameterHelp}
 
 
 class TouchBot(pywikibot.Bot):
+
+    """Page touch bot."""
 
     def __init__(self, generator, **kwargs):
         self.availableOptions.update({
@@ -68,11 +71,19 @@ class TouchBot(pywikibot.Bot):
 
 
 def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     gen = None
     options = {}
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs(*args)
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     for arg in local_args:

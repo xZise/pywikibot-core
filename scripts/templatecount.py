@@ -1,8 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
-This script will display the list of pages transcluding a given list of
-templates. It can also be used to simply count the number of pages (rather than
+This script will display the list of pages transcluding a given list of templates.
+
+It can also be used to simply count the number of pages (rather than
 listing each individually).
 
 Syntax: python templatecount.py command [arguments]
@@ -20,13 +21,13 @@ Command line options:
 
 Examples:
 
-Counts how many times {{ref}} and {{note}} are transcluded in articles.
+Counts how many times {{ref}} and {{note}} are transcluded in articles:
 
-     python templatecount.py -count -namespace:0 ref note
+    templatecount.py -count -namespace:0 ref note
 
-Lists all the category pages that transclude {{cfd}} and {{cfdu}}.
+Lists all the category pages that transclude {{cfd}} and {{cfdu}}:
 
-     python templatecount.py -list -namespace:14 cfd cfdu
+    templatecount.py -list -namespace:14 cfd cfdu
 
 """
 #
@@ -39,16 +40,17 @@ __version__ = '$Id$'
 
 import datetime
 import pywikibot
-from pywikibot import pagegenerators
 
 templates = ['ref', 'note', 'ref label', 'note label', 'reflist']
 
 
 class TemplateCountRobot:
 
-    @staticmethod
-    def countTemplates(templates, namespaces):
-        templateDict = TemplateCountRobot.template_dict(templates, namespaces)
+    """Template count bot."""
+
+    @classmethod
+    def countTemplates(cls, templates, namespaces):
+        templateDict = cls.template_dict(templates, namespaces)
         pywikibot.output(u'\nNumber of transclusions per template',
                          toStdout=True)
         pywikibot.output(u'-' * 36, toStdout=True)
@@ -63,9 +65,9 @@ class TemplateCountRobot:
                          % datetime.datetime.utcnow().isoformat(),
                          toStdout=True)
 
-    @staticmethod
-    def listTemplates(templates, namespaces):
-        templateDict = TemplateCountRobot.template_dict(templates, namespaces)
+    @classmethod
+    def listTemplates(cls, templates, namespaces):
+        templateDict = cls.template_dict(templates, namespaces)
         pywikibot.output(u'\nList of pages transcluding templates:',
                          toStdout=True)
         for key in templates:
@@ -81,9 +83,9 @@ class TemplateCountRobot:
                          % datetime.datetime.utcnow().isoformat(),
                          toStdout=True)
 
-    @staticmethod
-    def template_dict(templates, namespaces):
-        gen = TemplateCountRobot.template_dict_generator(templates, namespaces)
+    @classmethod
+    def template_dict(cls, templates, namespaces):
+        gen = cls.template_dict_generator(templates, namespaces)
         templateDict = {}
         for template, transcludingArray in gen:
             templateDict[template] = transcludingArray
@@ -94,25 +96,30 @@ class TemplateCountRobot:
         mysite = pywikibot.Site()
         # The names of the templates are the keys, and lists of pages
         # transcluding templates are the values.
-        mytpl = mysite.getNamespaceIndex(mysite.template_namespace())
+        mytpl = mysite.ns_index(mysite.template_namespace())
         for template in templates:
             transcludingArray = []
-            gen = pagegenerators.ReferringPageGenerator(
-                pywikibot.Page(mysite, template, ns=mytpl),
-                onlyTemplateInclusion=True)
-            if namespaces:
-                gen = pagegenerators.NamespaceFilterPageGenerator(gen, namespaces)
+            gen = pywikibot.Page(mysite, template, ns=mytpl).getReferences(
+                namespaces=namespaces, onlyTemplateInclusion=True)
             for page in gen:
                 transcludingArray.append(page)
             yield template, transcludingArray
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     operation = None
     argsList = []
     namespaces = []
 
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         if arg in ('-count', '-list'):
             operation = arg[1:]
         elif arg.startswith('-namespace:'):
@@ -134,8 +141,10 @@ def main():
     if 'reflist' in argsList:
         pywikibot.output(
             u'NOTE: it will take a long time to count "reflist".')
-        choice = pywikibot.inputChoice(
-            u'Proceed anyway?', ['yes', 'no', 'skip'], ['y', 'n', 's'], 'y')
+        choice = pywikibot.input_choice(
+            u'Proceed anyway?',
+            [('yes', 'y'), ('no', 'n'), ('skip', 's')], 'y',
+            automatic_quit=False)
         if choice == 's':
             argsList.remove('reflist')
         elif choice == 'n':

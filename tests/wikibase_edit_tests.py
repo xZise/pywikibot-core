@@ -76,7 +76,6 @@ class TestWikibaseWriteGeneral(WikibaseTestCase):
         end_date.setTarget(pywikibot.WbTime(year=2012))
         item.claims['P115'][0].addQualifier(end_date)
 
-    # metaclass cant handle this: @unittest.expectedFailure  # bug 69401
     def test_edit_entity_new_item(self):
         testsite = self.get_repo()
         ts = str(time.time())
@@ -95,6 +94,36 @@ class TestWikibaseWriteGeneral(WikibaseTestCase):
             }
         }
         item = pywikibot.ItemPage(testsite)
+        item.editEntity(data)
+
+    def test_edit_entity_new_linked_item(self):
+        ts = str(time.time())
+
+        # Create a new page, which is unlinked
+        site = self.get_site()
+        title = 'Wikidata:Test ' + ts
+        page = pywikibot.Page(site, title)
+        page.text = ts
+        page.save()
+
+        data = {
+            'labels': {
+                'en': {
+                    'language': 'en',
+                    'value': 'Pywikibot test new linked item',
+                }
+            },
+            'sitelinks': {
+                page.site.dbName(): {
+                    'site': page.site.dbName(),
+                    'title': page.title()
+                }
+            },
+        }
+
+        repo = self.get_repo()
+        item = pywikibot.ItemPage(repo)
+        self.assertEqual(item._defined_by(), dict())
         item.editEntity(data)
 
 

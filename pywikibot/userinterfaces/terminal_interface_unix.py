@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
+"""User interface for unix terminals."""
 #
-# (C) Pywikibot team, 2003-2014
+# (C) Pywikibot team, 2003-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -31,7 +32,11 @@ unixColors = {
 
 
 class UnixUI(terminal_interface_base.UI):
+
+    """User interface for unix terminals."""
+
     def printColorized(self, text, targetStream):
+        """Print the text colorized using the Unix colors."""
         totalcount = 0
         for key, value in unixColors.items():
             ckey = '\03{%s}' % key
@@ -42,12 +47,14 @@ class UnixUI(terminal_interface_base.UI):
             # just to be sure, reset the color
             text += unixColors['default']
 
-        # .encoding does not mean we can write unicode
-        # to the stream pre-2.7.
-        if sys.version_info >= (2, 7) and \
-           hasattr(targetStream, 'encoding') and \
-           targetStream.encoding:
-            text = text.encode(targetStream.encoding, 'replace').decode(targetStream.encoding)
-            targetStream.write(text)
-        else:
-            targetStream.write(text.encode(self.encoding, 'replace'))
+        if sys.version_info[0] == 2:
+            # .encoding does not mean we can write unicode
+            # to the stream pre-2.7.
+            if (sys.version_info >= (2, 7) and
+                    hasattr(targetStream, 'encoding') and
+                    targetStream.encoding):
+                text = text.encode(targetStream.encoding, 'replace').decode(
+                    targetStream.encoding)
+            else:
+                text = text.encode(self.encoding, 'replace')
+        targetStream.write(text)

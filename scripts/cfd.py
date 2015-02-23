@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-This script processes the Categories for discussion working page.  It parses
-out the actions that need to be taken as a result of CFD discussions (as posted
-to the working page by an administrator) and performs them.
+This script processes the Categories for discussion working page.
+
+It parses out the actions that need to be taken as a result of CFD discussions
+(as posted to the working page by an administrator) and performs them.
 
 Syntax: python cfd.py
 
@@ -16,8 +17,9 @@ Syntax: python cfd.py
 __version__ = '$Id$'
 #
 
-import pywikibot
 import re
+import pywikibot
+from pywikibot import config2 as config
 import category
 
 # The location of the CFD working page.
@@ -46,6 +48,9 @@ findday = re.compile(r"\[\[(Wikipedia:Categories for (?:discussion|deletion)/Log
 
 
 class ReCheck:
+
+    """Helper class."""
+
     def __init__(self):
         self.result = None
 
@@ -54,8 +59,20 @@ class ReCheck:
         return self.result
 
 
-def main():
-    pywikibot.handleArgs()
+def main(*args):
+    """
+    Process command line arguments and perform task.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
+    pywikibot.handle_args(args)
+
+    if config.family != 'wikipedia' or config.mylang != 'en':
+        pywikibot.warning('CFD does work only on the English Wikipedia.')
+        return
 
     page = pywikibot.Page(pywikibot.Site(), cfdPage)
 

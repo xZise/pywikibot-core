@@ -6,7 +6,7 @@ This module also includes functions to load families, which are
 groups of wikis on the same topic in different languages.
 """
 #
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -14,48 +14,63 @@ __version__ = '$Id$'
 #
 
 import datetime
-import imp
 import itertools
 import os
 import re
 import sys
-from distutils.version import LooseVersion as LV
-from collections import Iterable, Container, namedtuple
 import threading
 import time
 import json
 import copy
+import mimetypes
+
+from collections import Iterable, Container, namedtuple
+from warnings import warn
 
 import pywikibot
-from pywikibot import config
-from pywikibot.tools import itergroup, deprecated, deprecate_arg
+import pywikibot.family
+from pywikibot.tools import (
+    itergroup, UnicodeMixin, ComparableMixin, SelfCallDict, SelfCallString,
+    deprecated, deprecate_arg, deprecated_args, remove_last_args,
+    redirect_func, manage_wrapping, MediaWikiVersion, normalize_username,
+)
 from pywikibot.throttle import Throttle
 from pywikibot.data import api
 from pywikibot.exceptions import (
     Error,
     PageRelatedError,
-    PageSaveRelatedError,
     EditConflict,
     PageCreatedConflict,
     PageDeletedConflict,
     ArticleExistsConflict,
+    IsNotRedirectPage,
+    CircularRedirect,
+    InterwikiRedirectPage,
     LockedPage,
     CascadeLockedPage,
     LockedNoPage,
     NoPage,
-    NoSuchSite,
+    UnknownSite,
+    SiteDefinitionError,
+    FamilyMaintenanceWarning,
     NoUsername,
     SpamfilterError,
+    NoCreateError,
     UserBlocked,
+    EntityTypeUnknownException,
 )
+
 from pywikibot.echo import Notification
 
 if sys.version_info[0] > 2:
     from urllib.parse import urlencode
     basestring = (str,)
     unicode = str
+    from itertools import zip_longest
 else:
     from urllib import urlencode
+    from itertools import izip_longest as zip_longest
+
 
 _logger = "wiki.site"
 
@@ -67,7 +82,7 @@ class PageInUse(pywikibot.Error):
 
 class LoginStatus(object):
 
-    """ Enum for Login statuses.
+    """Enum for Login statuses.
 
     >>> LoginStatus.NOT_ATTEMPTED
     -3
@@ -87,6 +102,7 @@ class LoginStatus(object):
 
     @classmethod
     def name(cls, search_value):
+        """Return the name of a LoginStatus by it's value."""
         for key, value in cls.__dict__.items():
             if key == key.upper() and value == search_value:
                 return key
@@ -94,58 +110,29 @@ class LoginStatus(object):
                        % search_value)
 
     def __init__(self, state):
+        """Constructor."""
         self.state = state
 
     def __repr__(self):
+        """Return internal representation."""
         return 'LoginStatus(%s)' % (LoginStatus.name(self.state))
 
-_families = {}
+
+Family = redirect_func(pywikibot.family.Family.load,
+                       target_module='pywikibot.family.Family',
+                       old_name='Family')
 
 
-def Family(fam=None, fatal=True):
-    """Import the named family.
+class Namespace(Iterable, ComparableMixin, UnicodeMixin):
 
-    @param fam: family name (if omitted, uses the configured default)
-    @type fam: str
-    @param fatal: if True, the bot will stop running if the given family is
-        unknown. If False, it will only raise a ValueError exception.
-    @param fatal: bool
-    @return: a Family instance configured for the named family.
-
-    """
-    if fam is None:
-        fam = config.family
-    if fam in _families:
-        return _families[fam]
-
-    try:
-        # Ignore warnings due to dots in family names.
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            myfamily = imp.load_source(fam, config.family_files[fam])
-    except (ImportError, KeyError):
-        if fatal:
-            pywikibot.error(u"""\
-Error importing the %s family. This probably means the family
-does not exist. Also check your configuration file."""
-                            % fam, exc_info=True)
-            sys.exit(1)
-        else:
-            raise Error("Family %s does not exist" % fam)
-    _families[fam] = myfamily.Family()
-    return _families[fam]
-
-
-class Namespace(Iterable):
-
-    """ Namespace site data object.
+    """Namespace site data object.
 
     This is backwards compatible with the structure of entries
-    in site._namespaces which were a list of
-    [customised namespace,
-     canonical namespace name?,
-     namespace alias*]
+    in site._namespaces which were a list of::
+
+        [customised namespace,
+         canonical namespace name?,
+         namespace alias*]
 
     If the canonical_name is not provided for a namespace between -2
     and 15, the MediaWiki 1.14+ built-in names are used.
@@ -233,15 +220,8 @@ class Namespace(Iterable):
         else:
             self.aliases = aliases
 
-        self.info = kwargs
-
-    def __getattr__(self, attr):
-        """Look for undefined attributes in info."""
-        if attr in self.info:
-            return self.info[attr]
-        else:
-            raise AttributeError("%s instance has no attribute '%s'"
-                                 % (self.__class__.__name__, attr))
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     def _distinct(self):
         if self.custom_name == self.canonical_name:
@@ -252,6 +232,7 @@ class Namespace(Iterable):
     def _contains_lowercase_name(self, name):
         """Determine a lowercase normalised name is a name of this namespace.
 
+        @rtype: bool
         """
         return name in [x.lower() for x in self._distinct()]
 
@@ -263,6 +244,7 @@ class Namespace(Iterable):
 
         @param item: name to check
         @type item: basestring
+        @rtype: bool
         """
         if item == '' and self.id == 0:
             return True
@@ -297,28 +279,42 @@ class Namespace(Iterable):
         else:
             return self.aliases[index - 1]
 
-    def __str__(self):
-        """Return a string representation."""
-        if sys.version_info[0] > 2:
-            return self.__unicode__()
-
-        if self.id == 0:
-            return ':'
-        elif self.id in (6, 14):
-            return ':' + self.canonical_name + ':'
+    @staticmethod
+    def _colons(id, name):
+        """Return the name with required colons, depending on the ID."""
+        if id == 0:
+            return u':'
+        elif id in (6, 14):
+            return u':' + name + u':'
         else:
-            return self.canonical_name + ':'
+            return u'' + name + u':'
+
+    def __str__(self):
+        """Return the canonical string representation."""
+        return self.canonical_prefix()
 
     def __unicode__(self):
-        """Return a unicode string representation."""
-        if self.id == 0:
-            return u':'
-        elif self.id in (6, 14):
-            return u':' + self.custom_name + u':'
-        else:
-            return u'' + self.custom_name + u':'
+        """Return the custom string representation."""
+        return self.custom_prefix()
+
+    def canonical_prefix(self):
+        """Return the canonical name with required colons."""
+        return Namespace._colons(self.id, self.canonical_name)
+
+    def custom_prefix(self):
+        """Return the custom name with required colons."""
+        return Namespace._colons(self.id, self.custom_name)
+
+    def __int__(self):
+        """Return the namespace id."""
+        return self.id
 
     def __index__(self):
+        """Return the namespace id."""
+        return self.id
+
+    def __hash__(self):
+        """Return the namespace id."""
         return self.id
 
     def __eq__(self, other):
@@ -329,43 +325,50 @@ class Namespace(Iterable):
             return self.id == other.id
         elif isinstance(other, basestring):
             return other in self
-        elif other is None:
-            return self.id == 0
 
     def __ne__(self, other):
         """Compare whether two namespace objects are not equal."""
-        if self.id == other.id:
-            return False
-        else:
-            return True
+        return not self.__eq__(other)
 
-    def __cmp__(self, other):
-        """Compare two namespace ids."""
-        if self.id == other.id:
-            return 0
-        elif self.id > other.id:
-            return 1
-        else:
-            return -1
+    def __mod__(self, other):
+        """Apply modulo on the namespace id."""
+        return self.id.__mod__(other)
+
+    def __sub__(self, other):
+        """Apply subtraction on the namespace id."""
+        return -(other) + self.id
+
+    def __add__(self, other):
+        """Apply addition on the namespace id."""
+        return other + self.id
+
+    def _cmpkey(self):
+        """Return the ID as a comparison key."""
+        return self.id
 
     def __repr__(self):
         """Return a reconstructable representation."""
-        if self.info:
+        standard_attr = ['id', 'custom_name', 'canonical_name', 'aliases']
+        extra = [(key, self.__dict__[key])
+                 for key in sorted(self.__dict__)
+                 if key not in standard_attr]
+
+        if extra:
             kwargs = ', ' + ', '.join([key + '=' + repr(value)
                                        for (key, value) in
-                                       [(key, self.info[key])
-                                        for key in sorted(self.info)]])
+                                       extra])
         else:
             kwargs = ''
+
         return '%s(id=%d, custom_name=%r, canonical_name=%r, aliases=%r%s)' \
                % (self.__class__.__name__, self.id, self.custom_name,
                   self.canonical_name, self.aliases, kwargs)
 
-    @staticmethod
-    def builtin_namespaces(use_image_name=False):
+    @classmethod
+    def builtin_namespaces(cls, use_image_name=False):
         """Return a dict of the builtin namespaces."""
-        return dict([(i, Namespace(i, use_image_name=use_image_name))
-                     for i in range(-2, 16)])
+        return dict((i, cls(i, use_image_name=use_image_name, case='first-letter'))
+                     for i in range(-2, 16))
 
     @staticmethod
     def normalize_name(name):
@@ -386,25 +389,26 @@ class Namespace(Iterable):
 
         # Discard leading colon
         if count >= 2 and parts[0] == '' and parts[1]:
-            return parts[1]
+            return parts[1].strip()
         elif parts[0]:
-            return parts[0]
+            return parts[0].strip()
         return False
 
-    @staticmethod
-    def lookup_name(name, namespaces=None):
-        """Find the namespace for a name.
+    @classmethod
+    def lookup_name(cls, name, namespaces=None):
+        """Find the Namespace for a name.
 
         @param name: Name of the namespace.
+        @type name: basestring
         @param namespaces: namespaces to search
                            default: builtins only
         @type namespaces: dict of Namespace
         @return: Namespace or None
         """
         if not namespaces:
-            namespaces = Namespace.builtin_namespaces()
+            namespaces = cls.builtin_namespaces()
 
-        name = Namespace.normalize_name(name)
+        name = cls.normalize_name(name)
         if name is False:
             return None
         name = name.lower()
@@ -415,8 +419,63 @@ class Namespace(Iterable):
 
         return None
 
+    @staticmethod
+    def resolve(identifiers, namespaces=None):
+        """
+        Resolve namespace identifiers to obtain Namespace objects.
 
-class BaseSite(object):
+        Identifiers may be any value for which int() produces a valid
+        namespace id, except bool, or any string which Namespace.lookup_name
+        successfully finds.  A numerical string is resolved as an integer.
+
+        @param identifiers: namespace identifiers
+        @type identifiers: iterable of basestring or Namespace key,
+            or a single instance of those types
+        @param namespaces: namespaces to search (default: builtins only)
+        @type namespaces: dict of Namespace
+        @return: list of Namespace objects in the same order as the
+            identifiers
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
+        """
+        if not namespaces:
+            namespaces = Namespace.builtin_namespaces()
+
+        if isinstance(identifiers, (basestring, Namespace)):
+            identifiers = [identifiers]
+        else:
+            # convert non-iterators to single item list
+            try:
+                iter(identifiers)
+            except TypeError:
+                identifiers = [identifiers]
+
+        # lookup namespace names, and assume anything else is a key.
+        # int(None) raises TypeError; however, bool needs special handling.
+        result = [NotImplemented if isinstance(ns, bool) else
+                  Namespace.lookup_name(ns, namespaces)
+                  if isinstance(ns, basestring) and
+                      not ns.lstrip('-').isdigit() else
+                  namespaces[int(ns)] if int(ns) in namespaces
+                  else None
+                  for ns in identifiers]
+
+        if NotImplemented in result:
+            raise TypeError('identifiers contains inappropriate types: %r'
+                            % identifiers)
+
+        # Namespace.lookup_name returns None if the name is not recognised
+        if None in result:
+            raise KeyError(u'Namespace identifier(s) not recognised: %s'
+                           % u','.join([str(identifier) for identifier, ns
+                                        in zip(identifiers, result)
+                                        if ns is None]))
+
+        return result
+
+
+class BaseSite(ComparableMixin):
 
     """Site methods that are independent of the communication interface."""
 
@@ -434,9 +493,17 @@ class BaseSite(object):
         @type sysop: str
 
         """
-        self.__code = code.lower()
+        if code.lower() != code:
+            # Note the Site function in __init__ also emits a UserWarning
+            # for this condition, showing the callers file and line no.
+            pywikibot.log(u'BaseSite: code "%s" converted to lowercase' % code)
+            code = code.lower()
+        if not all(x in pywikibot.family.CODE_CHARACTERS for x in str(code)):
+            pywikibot.log(u'BaseSite: code "%s" contains invalid characters'
+                          % code)
+        self.__code = code
         if isinstance(fam, basestring) or fam is None:
-            self.__family = Family(fam, fatal=False)
+            self.__family = pywikibot.family.Family.load(fam)
         else:
             self.__family = fam
 
@@ -445,32 +512,30 @@ class BaseSite(object):
         if self.__code in self.__family.obsolete:
             if self.__family.obsolete[self.__code] is not None:
                 self.__code = self.__family.obsolete[self.__code]
+                # Note the Site function in __init__ emits a UserWarning
+                # for this condition, showing the callers file and line no.
+                pywikibot.log(u'Site %s instantiated using code %s'
+                              % (self, code))
             else:
                 # no such language anymore
                 self.obsolete = True
+                pywikibot.log(u'Site %s instantiated and marked "obsolete" '
+                              u'to prevent access' % self)
         elif self.__code not in self.languages():
             if self.__family.name in list(self.__family.langs.keys()) and \
                len(self.__family.langs) == 1:
-                oldcode = self.__code
                 self.__code = self.__family.name
                 if self.__family == pywikibot.config.family \
-                        and oldcode == pywikibot.config.mylang:
+                        and code == pywikibot.config.mylang:
                     pywikibot.config.mylang = self.__code
+                    warn(u'Global configuration variable "mylang" changed to '
+                         u'"%s" while instantiating site %s'
+                         % (self.__code, self), UserWarning)
             else:
-                raise NoSuchSite("Language %s does not exist in family %s"
-                                 % (self.__code, self.__family.name))
+                raise UnknownSite(u"Language '%s' does not exist in family %s"
+                                  % (self.__code, self.__family.name))
 
-        self.nocapitalize = self.code in self.family.nocapitalize
-        if not self.nocapitalize:
-            if user:
-                user = user[0].upper() + user[1:]
-            if sysop:
-                sysop = sysop[0].upper() + sysop[1:]
-        if user:
-            user = user.replace('_', ' ')
-        if sysop:
-            sysop = sysop.replace('_', ' ')
-        self._username = [user, sysop]
+        self._username = [normalize_username(user), normalize_username(sysop)]
 
         self.use_hard_category_redirects = (
             self.code in self.family.use_hard_category_redirects)
@@ -478,6 +543,11 @@ class BaseSite(object):
         # following are for use with lock_page and unlock_page methods
         self._pagemutex = threading.Lock()
         self._locked_pages = []
+
+    @property
+    @deprecated("APISite.siteinfo['case'] or Namespace.case == 'case-sensitive'")
+    def nocapitalize(self):
+        return self.siteinfo['case'] == 'case-sensitive'
 
     @property
     def throttle(self):
@@ -510,16 +580,44 @@ class BaseSite(object):
         """
         return self.__code
 
-    def __cmp__(self, other):
+    @property
+    def doc_subpage(self):
+        """Return the documentation subpage for this Site.
+
+        @return: tuple
+
+        """
+        if not hasattr(self, '_doc_subpage'):
+            try:
+                doc, codes = self.family.doc_subpages.get('_default', ((), []))
+                if self.code not in codes:
+                    try:
+                        doc = self.family.doc_subpages[self.code]
+                    # Language not defined in doc_subpages in x_family.py file
+                    # It will use default for the family.
+                    # should it just raise an Exception and fail?
+                    # this will help to check the dictionary ...
+                    except KeyError:
+                        warn(u"Site {0} has no language defined in "
+                             u"doc_subpages dict in {1}_family.py file"
+                             .format(self, self.family.name),
+                             FamilyMaintenanceWarning, 2)
+            # doc_subpages not defined in x_family.py file
+            except AttributeError:
+                doc = ()  # default
+                warn(u"Site {0} has no doc_subpages dict in {1}_family.py file"
+                     .format(self, self.family.name),
+                     FamilyMaintenanceWarning, 2)
+            self._doc_subpage = doc
+
+        return self._doc_subpage
+
+    def _cmpkey(self):
         """Perform equality and inequality tests on Site objects."""
-        if not isinstance(other, BaseSite):
-            return 1
-        if self.family == other.family:
-            return cmp(self.code, other.code)
-        return cmp(self.family.name, other.family.name)
+        return (self.family.name, self.code)
 
     def __getstate__(self):
-        """ Remove Lock based classes before pickling. """
+        """Remove Lock based classes before pickling."""
         new = self.__dict__.copy()
         del new['_pagemutex']
         if '_throttle' in new:
@@ -527,7 +625,7 @@ class BaseSite(object):
         return new
 
     def __setstate__(self, attrs):
-        """ Restore things removed in __getstate__. """
+        """Restore things removed in __getstate__."""
         self.__dict__.update(attrs)
         self._pagemutex = threading.Lock()
 
@@ -539,6 +637,7 @@ class BaseSite(object):
             return self._username[False]
 
     def username(self, sysop=False):
+        """Return the username/sysopname used for the site."""
         return self._username[sysop]
 
     def __getattr__(self, attr):
@@ -555,11 +654,14 @@ class BaseSite(object):
             raise AttributeError("%s instance has no attribute '%s'"
                                  % (self.__class__.__name__, attr))
 
-    def sitename(self):
+    def __str__(self):
         """Return string representing this Site's name and code."""
         return self.family.name + ':' + self.code
 
-    __str__ = sitename
+    @property
+    def sitename(self):
+        """String representing this Site's name and code."""
+        return SelfCallString(self.__str__())
 
     def __repr__(self):
         return 'Site("%s", "%s")' % (self.code, self.family.name)
@@ -577,20 +679,99 @@ class BaseSite(object):
         return [lang for lang in self.languages()
                 if lang[:1].upper() + lang[1:] not in nsnames]
 
+    def _cache_interwikimap(self, force=False):
+        """Cache the interwikimap with usable site instances."""
+        # _iw_sites is a local cache to return a APISite instance depending
+        # on the interwiki prefix of that site
+        if force or not hasattr(self, '_iw_sites'):
+            self._iw_sites = {}
+            for iw in self.siteinfo['interwikimap']:
+                try:
+                    site = (pywikibot.Site(url=iw['url']), 'local' in iw)
+                except Error:
+                    site = (None, False)
+                self._iw_sites[iw['prefix']] = site
+
+    def interwiki(self, prefix):
+        """
+        Return the site for a corresponding interwiki prefix.
+
+        @raise SiteDefinitionError: if the url given in the interwiki table
+            doesn't match any of the existing families.
+        @raise KeyError: if the prefix is not an interwiki prefix.
+        """
+        self._cache_interwikimap()
+        if prefix in self._iw_sites:
+            site = self._iw_sites[prefix]
+            if site[0]:
+                return site[0]
+            else:
+                raise SiteDefinitionError(
+                    u"No family/site found for prefix '{0}'".format(prefix))
+        else:
+            raise KeyError(u"'{0}' is not an interwiki prefix.".format(prefix))
+
+    def interwiki_prefix(self, site):
+        """
+        Return the interwiki prefixes going to that site.
+
+        The interwiki prefixes are ordered first by length (shortest first)
+        and then alphabetically.
+
+        @param site: The targeted site, which might be it's own.
+        @type site: L{BaseSite}
+        @return: The interwiki prefixes
+        @rtype: list (guaranteed to be not empty)
+        @raise KeyError: if there is no interwiki prefix for that site.
+        """
+        assert(site is not None)
+        self._cache_interwikimap()
+        prefixes = set([prefix
+                        for prefix, cache_entry in self._iw_sites.items()
+                        if cache_entry[0] == site])
+        if not prefixes:
+            raise KeyError(
+                u"There is no interwiki prefix to '{0}'".format(site))
+        return sorted(prefixes, key=lambda p: (len(p), p))
+
+    def local_interwiki(self, prefix):
+        """
+        Return whether the interwiki prefix is local.
+
+        A local interwiki prefix is handled by the target site like a normal
+        link. So if that link also contains an interwiki link it does follow
+        it as long as it's a local link.
+
+        @raise SiteDefinitionError: if the url given in the interwiki table
+            doesn't match any of the existing families.
+        @raise KeyError: if the prefix is not an interwiki prefix.
+        """
+        # Request if necessary
+        self.interwiki(prefix)
+        return self._iw_sites[prefix][1]
+
     def ns_index(self, namespace):
-        """Given a namespace name, return its int index, or None if invalid."""
-        for ns in self.namespaces():
-            if namespace.lower() in [name.lower()
-                                     for name in self.namespaces()[ns]]:
-                return ns
+        """
+        Return the Namespace for a given namespace name.
 
-    getNamespaceIndex = ns_index  # for backwards-compatibility
+        @param namespace: name
+        @type namespace: unicode
+        @return: The matching Namespace object on this Site
+        @rtype: Namespace, or None if invalid
+        """
+        return Namespace.lookup_name(namespace, self.namespaces)
 
+    # for backwards-compatibility
+    getNamespaceIndex = redirect_func(ns_index, old_name='getNamespaceIndex',
+                                      class_name='BaseSite')
+
+    @property
     def namespaces(self):
         """Return dict of valid namespaces on this wiki."""
         if not hasattr(self, '_namespaces'):
-            use_image_name = LV(self.version()) < LV("1.14")
-            self._namespaces = Namespace.builtin_namespaces(use_image_name)
+            use_image_name = MediaWikiVersion(self.version()) < MediaWikiVersion("1.14")
+            self._namespaces = SelfCallDict(
+                Namespace.builtin_namespaces(use_image_name))
         return self._namespaces
 
     def ns_normalize(self, value):
@@ -603,22 +784,23 @@ class BaseSite(object):
         index = self.ns_index(value)
         return self.namespace(index)
 
-    normalizeNamespace = ns_normalize  # for backwards-compatibility
+    # for backwards-compatibility
+    normalizeNamespace = redirect_func(ns_normalize,
+                                       old_name='normalizeNamespace',
+                                       class_name='BaseSite')
 
-    def redirect(self, default=True):
-        """Return list of localized redirect tags for the site.
-
-        If default is True, falls back to 'REDIRECT' if the site has no
-        special redirect tag.
-
-        """
+    @remove_last_args(('default', ))
+    def redirect(self):
+        """Return list of localized redirect tags for the site."""
         return [u"REDIRECT"]
 
-    def pagenamecodes(self, default=True):
+    @remove_last_args(('default', ))
+    def pagenamecodes(self):
         """Return list of localized PAGENAME tags for the site."""
         return [u"PAGENAME"]
 
-    def pagename2codes(self, default=True):
+    @remove_last_args(('default', ))
+    def pagename2codes(self):
         """Return list of localized PAGENAMEE tags for the site."""
         return [u"PAGENAMEE"]
 
@@ -636,9 +818,9 @@ class BaseSite(object):
         """
         self._pagemutex.acquire()
         try:
-            while page in self._locked_pages:
+            while page.title(withSection=False) in self._locked_pages:
                 if not block:
-                    raise PageInUse
+                    raise PageInUse(page.title(withSection=False))
                 time.sleep(.25)
             self._locked_pages.append(page.title(withSection=False))
         finally:
@@ -706,53 +888,42 @@ class BaseSite(object):
                           re.IGNORECASE | re.UNICODE | re.DOTALL)
 
     def sametitle(self, title1, title2):
-        """Return True if title1 and title2 identify the same wiki page."""
-        # title1 and title2 may be unequal but still identify the same page,
-        # if they use different aliases for the same namespace
+        """
+        Return True if title1 and title2 identify the same wiki page.
 
-        def valid_namespace(alias, ns):
-            """Determine if a string is a valid alias for a namespace.
-
-            @param alias: namespace alias
-            @type alias: unicode
-            @param ns: namespace
-            @type ns: int
-
-            @return: bool
-            """
-            for text in self.namespace(ns, all=True):
-                if text.lower() == alias.lower():
-                    return True
-            return False
+        title1 and title2 may be unequal but still identify the same page,
+        if they use different aliases for the same namespace.
+        """
+        def ns_split(title):
+            """Separate the namespace from the name."""
+            ns, delim, name = title.partition(':')
+            if delim:
+                ns = Namespace.lookup_name(ns, self.namespaces)
+            if not delim or not ns:
+                return default_ns, title
+            else:
+                return ns, name
 
         if title1 == title2:
             return True
+        # Replace underscores with spaces and multiple combinations of them
+        # with only one space
+        title1 = re.sub(r'[_ ]+', ' ', title1)
+        title2 = re.sub(r'[_ ]+', ' ', title2)
+        if title1 == title2:
+            return True
+        default_ns = self.namespaces[0]
         # determine whether titles contain namespace prefixes
-        if ":" in title1:
-            ns1, name1 = title1.split(":", 1)
-        else:
-            ns1, name1 = 0, title1
-        if ":" in title2:
-            ns2, name2 = title2.split(":", 1)
-        else:
-            ns2, name2 = 0, title2
-        for space in self.namespaces():  # iterate over all valid namespaces
-            if not isinstance(ns1, int) and valid_namespace(ns1, space):
-                ns1 = space
-            if not isinstance(ns2, int) and valid_namespace(ns2, space):
-                ns2 = space
-        if not isinstance(ns1, int):
-            # no valid namespace prefix found, so the string followed by ":"
-            # must be part of the title
-            name1 = ns1 + ":" + name1
-            ns1 = 0
-        if not isinstance(ns2, int):
-            name2 = ns2 + ":" + name2
-            ns2 = 0
-        if ns1 != ns2:
+        ns1_obj, name1 = ns_split(title1)
+        ns2_obj, name2 = ns_split(title2)
+        if ns1_obj != ns2_obj:
             # pages in different namespaces
             return False
-        if self.case() == "first-letter":
+        name1 = name1.strip()
+        name2 = name2.strip()
+        # If the namespace has a case definition it's overriding the site's
+        # case definition
+        if ns1_obj.case == 'first-letter':
             name1 = name1[:1].upper() + name1[1:]
             name2 = name2[:1].upper() + name2[1:]
         return name1 == name2
@@ -760,21 +931,27 @@ class BaseSite(object):
     # namespace shortcuts for backwards-compatibility
 
     def special_namespace(self):
+        """Return local name for the Special: namespace."""
         return self.namespace(-1)
 
     def image_namespace(self):
+        """Return local name for the File namespace."""
         return self.namespace(6)
 
     def mediawiki_namespace(self):
+        """Return local name for the MediaWiki namespace."""
         return self.namespace(8)
 
     def template_namespace(self):
+        """Return local name for the Template namespace."""
         return self.namespace(10)
 
     def category_namespace(self):
+        """Return local name for the Category namespace."""
         return self.namespace(14)
 
     def category_namespaces(self):
+        """Return names for the Category namespace."""
         return self.namespace(14, all=True)
 
     # site-specific formatting preferences
@@ -852,7 +1029,7 @@ class BaseSite(object):
 
 
 def must_be(group=None, right=None):
-    """ Decorator to require a certain user status when method is called.
+    """Decorator to require a certain user status when method is called.
 
     @param group: The group the logged in user should belong to
                   this parameter can be overridden by
@@ -866,8 +1043,8 @@ def must_be(group=None, right=None):
     def decorator(fn):
         def callee(self, *args, **kwargs):
             if self.obsolete:
-                raise NoSuchSite("Language %s in family %s is obsolete"
-                                 % (self.code, self.family.name))
+                raise UnknownSite("Language %s in family %s is obsolete"
+                                  % (self.code, self.family.name))
             grp = kwargs.pop('as_group', group)
             if grp == 'user':
                 self.login(False)
@@ -876,30 +1053,39 @@ def must_be(group=None, right=None):
             else:
                 raise Exception("Not implemented")
             return fn(self, *args, **kwargs)
-        callee.__name__ = fn.__name__
-        callee.__doc__ = fn.__doc__
+
+        if not __debug__:
+            return fn
+
+        manage_wrapping(callee, fn)
+
         return callee
 
     return decorator
 
 
 def need_version(version):
-    """ Decorator to require a certain MediaWiki version number.
+    """Decorator to require a certain MediaWiki version number.
 
-    @param number: the mw version number required
+    @param version: the mw version number required
+    @type version: str
     @return: a decorator to make sure the requirement is satisfied when
         the decorated function is called.
     """
     def decorator(fn):
         def callee(self, *args, **kwargs):
-            if LV(self.version()) < LV(version):
+            if MediaWikiVersion(self.version()) < MediaWikiVersion(version):
                 raise NotImplementedError(
                     u'Method or function "%s"\n'
                     u"isn't implemented in MediaWiki version < %s"
                     % (fn.__name__, version))
             return fn(self, *args, **kwargs)
-        callee.__name__ = fn.__name__
-        callee.__doc__ = fn.__doc__
+
+        if not __debug__:
+            return fn
+
+        manage_wrapping(callee, fn)
+
         return callee
     return decorator
 
@@ -930,10 +1116,10 @@ class Siteinfo(Container):
         Return the default value for different properties.
 
         If the property is 'restrictions' it returns a dictionary with:
-            'cascadinglevels': 'sysop'
-            'semiprotectedlevels': 'autoconfirmed'
-            'levels': '' (everybody), 'autoconfirmed', 'sysop'
-            'types': 'create', 'edit', 'move', 'upload'
+         - 'cascadinglevels': 'sysop'
+         - 'semiprotectedlevels': 'autoconfirmed'
+         - 'levels': '' (everybody), 'autoconfirmed', 'sysop'
+         - 'types': 'create', 'edit', 'move', 'upload'
         Otherwise it returns L{pywikibot.tools.EMPTY_DEFAULT}.
 
         @param key: The property name
@@ -994,7 +1180,10 @@ class Siteinfo(Container):
                 site=self._site,
                 action='query',
                 meta='siteinfo',
-                siprop='|'.join(props))
+                siprop=props)
+            # With 1.25wmf5 it'll require continue or rawcontinue. As we don't
+            # continue anyway we just always use continue.
+            request['continue'] = True
             # warnings are handled later
             request._warning_handler = warn_handler
             data = request.submit()
@@ -1029,12 +1218,13 @@ class Siteinfo(Container):
 
     @staticmethod
     def _is_expired(cache_date, expire):
+        """Return true if the cache date is expired."""
         if expire is False:  # can never expire
             return False
         elif not cache_date:  # default values are always expired
             return True
         else:
-            return datetime.datetime.utcnow() - expire < cache_date
+            return cache_date + expire >= datetime.datetime.utcnow()
 
     def _get_general(self, key, expiry):
         """
@@ -1183,14 +1373,75 @@ class TokenWallet(object):
     """Container for tokens."""
 
     def __init__(self, site):
+        """Constructor."""
         self.site = site
-        self.site._tokens = {}
+        self._tokens = {}
+        self.failed_cache = set()  # cache unavailable tokens.
+
+    def load_tokens(self, types, all=False):
+        """
+        Preload one or multiple tokens.
+
+        @param types: the types of token.
+        @type  types: iterable
+        @param all: load all available tokens, if None only if it can be done
+            in one request.
+        @type all: bool
+        """
+        assert(self.site.user())
+
+        self._tokens.setdefault(self.site.user(), {}).update(
+            self.site.get_tokens(types, all=all))
+
+        # Preload all only the first time.
+        # When all=True types is extended in site.get_tokens().
+        # Keys not recognised as tokens, are cached so they are not requested
+        # any longer.
+        if all is not False:
+            for key in types:
+                if key not in self._tokens[self.site.user()]:
+                    self.failed_cache.add((self.site.user(), key))
 
     def __getitem__(self, key):
-        storage = self.site._tokens.setdefault(self.site.user(), {})
-        if key not in storage:
-            self.site.preload_tokens([key])
-        return storage[key]
+        """Get token value for the given key."""
+        assert(self.site.user())
+
+        user_tokens = self._tokens.setdefault(self.site.user(), {})
+        # always preload all for users without tokens
+        failed_cache_key = (self.site.user(), key)
+
+        try:
+            key = self.site.validate_tokens([key])[0]
+        except IndexError:
+            raise Error(
+                u"Requested token '{0}' is invalid on {1} wiki."
+                .format(key, self.site))
+
+        if (key not in user_tokens and
+                failed_cache_key not in self.failed_cache):
+                    self.load_tokens([key], all=False if user_tokens else None)
+
+        if key in user_tokens:
+            return user_tokens[key]
+        else:
+            # token not allowed for self.site.user() on self.site
+            self.failed_cache.add(failed_cache_key)
+            # to be changed back to a plain KeyError?
+            raise Error(
+                u"Action '{0}' is not allowed for user {1} on {2} wiki."
+                .format(key, self.site.user(), self.site))
+
+    def __contains__(self, key):
+        """Return True if the given token name is cached."""
+        return key in self._tokens.setdefault(self.site.user(), {})
+
+    def __str__(self):
+        """Return a str representation of the internal tokens dictionary."""
+        return self._tokens.__str__()
+
+    def __repr__(self):
+        """Return a representation of the internal tokens dictionary."""
+        return self._tokens.__repr__()
 
 
 class APISite(BaseSite):
@@ -1210,8 +1461,6 @@ class APISite(BaseSite):
 #    postForm: Post form data to an address at this site.
 #    postData: Post encoded form data to an http address at this site.
 #
-#    version: Return MediaWiki version string from Family file.
-#    live_version: Return version number read from Special:Version.
 #    checkCharset(charset): Warn if charset doesn't match family file.
 #
 #    linktrail: Return regex for trailing chars displayed as part of a link.
@@ -1222,35 +1471,91 @@ class APISite(BaseSite):
 #    Pages; see method docs for details) --
 #
 
+    # Constants for token management.
+    # For all MediaWiki versions prior to 1.20.
+    # 'patrol' is indirectly supported via 'edit' token or recentchanges.
+    # It will be converted in site.validate_tokens()/site.get_tokens().
+    TOKENS_0 = set(['edit',
+                    'delete',
+                    'protect',
+                    'move',
+                    'block',
+                    'unblock',
+                    'email',
+                    'import',
+                    'watch',
+                    'patrol',
+                    ])
+
+    # For all MediaWiki versions, with 1.20 <= version < 1.24wmf19
+    TOKENS_1 = set(['block',
+                    'centralauth',
+                    'delete',
+                    'deleteglobalaccount',
+                    'undelete',
+                    'edit',
+                    'email',
+                    'import',
+                    'move',
+                    'options',
+                    'patrol',
+                    'protect',
+                    'setglobalaccountstatus',
+                    'unblock',
+                    'watch',
+                    ])
+
+    # For all MediaWiki versions >= 1.24wmf19
+    TOKENS_2 = set(['csrf',
+                    'deleteglobalaccount',
+                    'patrol',
+                    'rollback',
+                    'setglobalaccountstatus',
+                    'userrights',
+                    'watch',
+                    ])
+
     def __init__(self, code, fam=None, user=None, sysop=None):
-        """ Constructor. """
+        """Constructor."""
         BaseSite.__init__(self, code, fam, user, sysop)
         self._msgcache = {}
         self._loginstatus = LoginStatus.NOT_ATTEMPTED
         self._siteinfo = Siteinfo(self)
+        self._paraminfo = api.ParamInfo(self)
         self.tokens = TokenWallet(self)
 
-    @staticmethod
-    def fromDBName(dbname):
+    def __getstate__(self):
+        """Remove TokenWallet before pickling, for security reasons."""
+        new = super(APISite, self).__getstate__()
+        del new['tokens']
+        return new
+
+    def __setstate__(self, attrs):
+        """Restore things removed in __getstate__."""
+        super(APISite, self).__setstate__(attrs)
+        self.tokens = TokenWallet(self)
+
+    @classmethod
+    def fromDBName(cls, dbname):
         # TODO this only works for some WMF sites
         req = api.CachedRequest(datetime.timedelta(days=10),
                                 site=pywikibot.Site('meta', 'meta'),
                                 action='sitematrix')
         data = req.submit()
-        for num in data['sitematrix']:
-            if num == 'count':
+        for key, val in data['sitematrix'].items():
+            if key == 'count':
                 continue
-            if 'code' in data['sitematrix'][num]:
-                lang = data['sitematrix'][num]['code']
-                for site in data['sitematrix'][num]['site']:
+            if 'code' in val:
+                lang = val['code']
+                for site in val['site']:
                     if site['dbname'] == dbname:
                         if site['code'] == 'wiki':
                             site['code'] = 'wikipedia'
-                        return APISite(lang, site['code'])
+                        return cls(lang, site['code'])
             else:
-                for site in data['sitematrix'][num]:
+                for site in val:
                     if site['dbname'] == dbname:
-                        return APISite(site['code'], site['code'])
+                        return cls(site['code'], site['code'])
         raise ValueError("Cannot parse a site out of %s." % dbname)
 
     def _generator(self, gen_class, type_arg=None, namespaces=None,
@@ -1267,13 +1572,19 @@ class APISite(BaseSite):
         @type type_arg: str
         @param namespaces: if not None, limit the query to namespaces in this
             list
-        @type namespaces: int, or list of ints
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param step: if not None, limit each API call to this many items
         @type step: int
         @param total: if not None, limit the generator to yielding this many
             items in total
         @type total: int
-
+        @return: iterable with parameters set
+        @rtype: QueryGenerator
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         if type_arg is not None:
             gen = gen_class(type_arg, site=self, **args)
@@ -1305,7 +1616,7 @@ class APISite(BaseSite):
         if sysop and 'sysop' not in self.userinfo['groups']:
             return False
 
-        if not self.userinfo['name']:
+        if 'name' not in self.userinfo or not self.userinfo['name']:
             return False
 
         if self.userinfo['name'] != self._username[sysop]:
@@ -1372,10 +1683,12 @@ class APISite(BaseSite):
         else:
             self._loginstatus = LoginStatus.NOT_LOGGED_IN  # failure
 
-    forceLogin = login  # alias for backward-compatibility
+    # alias for backward-compatibility
+    forceLogin = redirect_func(login, old_name='forceLogin',
+                               class_name='APISite')
 
     def logout(self):
-        """ Logout of the site and load details for the logged out user.
+        """Logout of the site and load details for the logged out user.
 
         Also logs out of the global account if linked to the user.
         """
@@ -1400,10 +1713,9 @@ class APISite(BaseSite):
           - blockinfo: present if user is blocked (dict)
 
         """
-        if (not hasattr(self, "_userinfo")
-                or "rights" not in self._userinfo
-                or self._userinfo['name']
-                   != self._username["sysop" in self._userinfo["groups"]]):
+        if (not hasattr(self, '_userinfo') or
+                'rights' not in self._userinfo or
+                self._userinfo['name'] != self._username['sysop' in self._userinfo['groups']]):
             uirequest = api.Request(
                 site=self,
                 action="query",
@@ -1486,8 +1798,8 @@ class APISite(BaseSite):
         @rtype: C{set} of L{Namespace}
         """
         # TODO: Integrate into _userinfo
-        if (force or not hasattr(self, "_useroptions")
-                or self.user() != self._useroptions['_name']):
+        if (force or not hasattr(self, '_useroptions') or
+                self.user() != self._useroptions['_name']):
             uirequest = api.Request(
                 site=self,
                 action="query",
@@ -1504,8 +1816,8 @@ class APISite(BaseSite):
             self._useroptions['_name'] = (
                 None if 'anon' in uidata['query']['userinfo'] else
                 uidata['query']['userinfo']['name'])
-        return set(ns for ns in self.namespaces().values() if ns.id >= 0
-                   and self._useroptions['searchNs{0}'.format(ns.id)] in ['1', True])
+        return set(ns for ns in self.namespaces().values() if ns.id >= 0 and
+                   self._useroptions['searchNs{0}'.format(ns.id)] in ['1', True])
 
     def assert_valid_iter_params(self, msg_prefix, start, end, reverse):
         """Validate iterating API parameters."""
@@ -1579,8 +1891,7 @@ class APISite(BaseSite):
             # is supported by the site
             req = api.Request(site=self,
                               action='echomarkread',
-                              token=self.token(pywikibot.Page(self, u'Main Page'),
-                                               'edit'),  # Use a dummy page
+                              token=self.tokens['edit'],
                               **kwargs)
             data = req.submit()
             try:
@@ -1607,22 +1918,19 @@ class APISite(BaseSite):
                 amlang=self.lang,
             )
 
+            for msg in msg_query:
+                if 'missing' not in msg:
+                    self._msgcache[msg['name']] = msg['*']
+
             # Return all messages
             if keys == u'*' or keys == [u'*']:
-                for msg in msg_query:
-                    if 'missing' not in msg:
-                        self._msgcache[msg['name']] = msg['*']
                 return self._msgcache
-            # Return only given keys
             else:
-                for _key in keys:
-                    for msg in msg_query:
-                        if msg['name'] == _key and 'missing' not in msg:
-                            self._msgcache[_key] = msg['*']
-                            break
-                    else:
-                        raise KeyError("Site %(self)s has no message '%(_key)s'"
-                                       % locals())
+                # Check requested keys
+                for key in keys:
+                    if key not in self._msgcache:
+                        raise KeyError("Site %s has no message '%s'"
+                                       % (self, key))
 
         return dict((_key, self._msgcache[_key]) for _key in keys)
 
@@ -1721,7 +2029,7 @@ class APISite(BaseSite):
 
     @need_version("1.12")
     def expand_text(self, text, title=None, includecomments=None):
-        """ Parse the given text for preprocessing and rendering.
+        """Parse the given text for preprocessing and rendering.
 
         e.g expand templates and strip comments if includecomments
         parameter is not True. Keeps text inside
@@ -1737,12 +2045,16 @@ class APISite(BaseSite):
         @return: unicode
 
         """
+        if not isinstance(text, basestring):
+            raise ValueError('text must be a string')
+        if not text:
+            return ''
         req = api.Request(site=self, action='expandtemplates', text=text)
         if title is not None:
             req['title'] = title
         if includecomments is True:
             req['includecomments'] = u''
-        if LV(self.version()) > LV("1.24wmf7"):
+        if MediaWikiVersion(self.version()) > MediaWikiVersion("1.24wmf7"):
             key = 'wikitext'
             req['prop'] = key
         else:
@@ -1770,16 +2082,17 @@ class APISite(BaseSite):
         time. It requests to expand the text '{{CURRENTTIMESTAMP}}' for older
         wikis.
 
-        @return the current server time
+        @return: the current server time
         @rtype: L{Timestamp}
         """
-        if LV(self.version()) >= LV("1.16"):
+        if MediaWikiVersion(self.version()) >= MediaWikiVersion("1.16"):
             return pywikibot.Timestamp.fromISOformat(
                 self.siteinfo.get('time', expiry=0))
         else:
             return pywikibot.Timestamp.fromtimestampformat(
                 self.expand_text("{{CURRENTTIMESTAMP}}"))
 
+    @need_version("1.14")
     def getmagicwords(self, word):
         """Return list of localized "word" magic words for the site."""
         if not hasattr(self, "_magicwords"):
@@ -1792,12 +2105,9 @@ class APISite(BaseSite):
         else:
             return [word]
 
-    def redirect(self, default=True):
-        """Return the preferred localized #REDIRECT keyword.
-
-        Argument is ignored (but maintained for backwards-compatibility).
-
-        """
+    @remove_last_args(('default', ))
+    def redirect(self):
+        """Return the localized #REDIRECT keyword."""
         # return the magic word without the preceding '#' character
         return self.getmagicwords("redirect")[0].lstrip("#")
 
@@ -1818,23 +2128,24 @@ class APISite(BaseSite):
             pattern = None
         return BaseSite.redirectRegex(self, pattern)
 
-    def pagenamecodes(self, default=True):
+    @remove_last_args(('default', ))
+    def pagenamecodes(self):
         """Return list of localized PAGENAME tags for the site."""
         return self.getmagicwords("pagename")
 
-    def pagename2codes(self, default=True):
+    @remove_last_args(('default', ))
+    def pagename2codes(self):
         """Return list of localized PAGENAMEE tags for the site."""
         return self.getmagicwords("pagenamee")
 
     def _build_namespaces(self):
-
-        self._namespaces = {}
+        _namespaces = SelfCallDict()
 
         # In MW 1.14, API siprop 'namespaces' added 'canonical',
         # and Image became File with Image as an alias.
         # For versions lower than 1.14, APISite needs to override
         # the defaults defined in Namespace.
-        is_mw114 = LV(self.version()) >= LV('1.14')
+        is_mw114 = MediaWikiVersion(self.version()) >= MediaWikiVersion('1.14')
 
         for nsdata in self.siteinfo.get('namespaces', cache=False).values():
             ns = nsdata.pop('id')
@@ -1848,24 +2159,29 @@ class APISite(BaseSite):
                 if is_mw114:
                     canonical_name = nsdata.pop('canonical')
 
+            if 'case' not in nsdata:
+                nsdata['case'] = self.siteinfo['case']
+
             namespace = Namespace(ns, canonical_name, custom_name,
                                   use_image_name=not is_mw114,
                                   **nsdata)
-            self._namespaces[ns] = namespace
+            _namespaces[ns] = namespace
 
         for item in self.siteinfo.get('namespacealiases'):
             ns = int(item['id'])
-            if item['*'] not in self._namespaces[ns]:
-                self._namespaces[ns].aliases.append(item['*'])
+            if item['*'] not in _namespaces[ns]:
+                _namespaces[ns].aliases.append(item['*'])
+
+        self._namespaces = _namespaces
 
     @need_version("1.14")
     @deprecated("has_extension")
     def hasExtension(self, name, unknown=None):
-        """ Determine whether extension `name` is loaded.
+        """Determine whether extension `name` is loaded.
 
         Use L{has_extension} instead!
 
-        @param name: The extension to check for, case insenstive
+        @param name: The extension to check for, case insensitive
         @type name: str
         @param unknown: Old parameter which shouldn't be used anymore.
         @return: If the extension is loaded
@@ -1878,9 +2194,9 @@ class APISite(BaseSite):
 
     @need_version("1.14")
     def has_extension(self, name):
-        """ Determine whether extension `name` is loaded.
+        """Determine whether extension `name` is loaded.
 
-        @param name: The extension to check for, case insenstive
+        @param name: The extension to check for, case insensitive
         @type name: str
         @return: If the extension is loaded
         @rtype: bool
@@ -1896,8 +2212,11 @@ class APISite(BaseSite):
         """Site information dict."""
         return self._siteinfo
 
+    @deprecated('use siteinfo or Namespace instance')
     def case(self):
         """Return this site's capitalization rule."""
+        # This is the global setting via $wgCapitalLinks, it is used whenever
+        # the namespaces don't propagate the namespace specific value.
         return self.siteinfo['case']
 
     def dbName(self):
@@ -1909,6 +2228,24 @@ class APISite(BaseSite):
         return self.siteinfo['lang']
 
     lang = property(fget=language, doc=language.__doc__)
+
+    def version(self):
+        """
+        Return live project version number as a string.
+
+        This overwrites the corresponding family method for APISite class. Use
+        L{pywikibot.tools.MediaWikiVersion} to compare MediaWiki versions.
+        """
+        version = self.force_version()
+        if not version:
+            try:
+                version = self.siteinfo.get('generator', expiry=1).split(' ')[1]
+            except pywikibot.data.api.APIError:
+                # May occur if you are not logged in (no API read permissions).
+                pywikibot.exception('You have no API read permissions. Seems '
+                                    'you are not logged in')
+                version = self.family.version(self.code)
+        return version
 
     @property
     def has_image_repository(self):
@@ -1954,6 +2291,7 @@ class APISite(BaseSite):
         # 'title' is expected to be URL-encoded already
         return self.siteinfo["articlepath"].replace("$1", title)
 
+    @property
     def namespaces(self):
         """Return dict of valid namespaces on this wiki."""
         if not hasattr(self, '_namespaces'):
@@ -1968,9 +2306,10 @@ class APISite(BaseSite):
 
         """
         if all:
-            return self.namespaces()[num]
-        return self.namespaces()[num][0]
+            return self.namespaces[num]
+        return self.namespaces[num][0]
 
+    @deprecated("version()")
     def live_version(self, force=False):
         """Return the 'real' version number found on [[Special:Version]].
 
@@ -1992,6 +2331,16 @@ class APISite(BaseSite):
         except api.APIError:  # May occur if you are not logged in (no API read permissions).
             return (0, 0, 0)
 
+    def _update_page(self, page, query, method_name):
+        for pageitem in query:
+            if not self.sametitle(pageitem['title'],
+                                  page.title(withSection=False)):
+                pywikibot.warning(
+                    u"{0}: Query on {1} returned data on '{2}'".format(
+                    method_name, page, pageitem['title']))
+                continue
+            api.update_page(page, pageitem, query.props)
+
     def loadpageinfo(self, page, preload=False):
         """Load page info from api and store in page attributes."""
         title = page.title(withSection=False)
@@ -2003,14 +2352,7 @@ class APISite(BaseSite):
                                 type_arg="info",
                                 titles=title.encode(self.encoding()),
                                 inprop=inprop)
-
-        for pageitem in query:
-            if not self.sametitle(pageitem['title'], title):
-                pywikibot.warning(
-                    u"loadpageinfo: Query on %s returned data on '%s'"
-                    % (page, pageitem['title']))
-                continue
-            api.update_page(page, pageitem)
+        self._update_page(page, query, 'loadpageinfo')
 
     def loadcoordinfo(self, page):
         """Load [[mw:Extension:GeoData]] info."""
@@ -2022,27 +2364,16 @@ class APISite(BaseSite):
                                         'country', 'region',
                                         'globe'],
                                 coprimary='all')
-        for pageitem in query:
-            if not self.sametitle(pageitem['title'], title):
-                pywikibot.warning(
-                    u"loadcoordinfo: Query on %s returned data on '%s'"
-                    % (page, pageitem['title']))
-                continue
-            api.update_page(page, pageitem)
+        self._update_page(page, query, 'loadcoordinfo')
 
     def loadpageprops(self, page):
+        """Load page props for the given page."""
         title = page.title(withSection=False)
         query = self._generator(api.PropertyGenerator,
                                 type_arg="pageprops",
                                 titles=title.encode(self.encoding()),
                                 )
-        for pageitem in query:
-            if not self.sametitle(pageitem['title'], title):
-                pywikibot.warning(
-                    u"loadpageprops: Query on %s returned data on '%s'"
-                    % (page, pageitem['title']))
-                continue
-            api.update_page(page, pageitem)
+        self._update_page(page, query, 'loadpageprops')
 
     def loadimageinfo(self, page, history=False):
         """Load image info from api and save in page attributes.
@@ -2060,22 +2391,27 @@ class APISite(BaseSite):
                                         "url", "size", "sha1", "mime",
                                         "metadata", "archivename"],
                                 **args)
+        # kept for backward compatibility
+        # TODO: when backward compatibility can be broken, adopt
+        # self._update_page() pattern and remove return
         for pageitem in query:
             if not self.sametitle(pageitem['title'], title):
                 raise Error(
                     u"loadimageinfo: Query on %s returned data on '%s'"
                     % (page, pageitem['title']))
-            api.update_page(page, pageitem)
+            api.update_page(page, pageitem, query.props)
+
             if "imageinfo" not in pageitem:
                 if "missing" in pageitem:
                     raise NoPage(page)
-
                 raise PageRelatedError(
                     page,
                     u"loadimageinfo: Query on %s returned no imageinfo")
-            return (pageitem['imageinfo']
-                    if history else pageitem['imageinfo'][0])
 
+        return (pageitem['imageinfo']
+                if history else pageitem['imageinfo'][0])
+
+    @deprecated('Check the content model instead')
     def loadflowinfo(self, page):
         """
         Load Flow-related information about a given page.
@@ -2087,13 +2423,7 @@ class APISite(BaseSite):
                                 type_arg="flowinfo",
                                 titles=title.encode(self.encoding()),
                                 )
-        for pageitem in query:
-            if not self.sametitle(pageitem['title'], title):
-                pywikibot.warning(
-                    u"loadflowinfo: Query on %s returned data on '%s'"
-                    % (page, pageitem['title']))
-                continue
-            api.update_page(page, pageitem)
+        self._update_page(page, query, 'loadflowinfo')
 
     def page_exists(self, page):
         """Return True if and only if page is an existing page on site."""
@@ -2135,11 +2465,25 @@ class APISite(BaseSite):
         return page._isredir
 
     def getredirtarget(self, page):
-        """Return Page object for the redirect target of page."""
+        """
+        Return page object for the redirect target of page.
+
+        @param page: page to search redirects for
+        @type page: BasePage
+        @return: redirect target of page
+        @rtype: BasePage
+
+        @raise IsNotRedirectPage: page is not a redirect
+        @raise RuntimeError: no redirects found
+        @raise CircularRedirect: page is a circular redirect
+        @raise InterwikiRedirectPage: the redirect target is
+            on another site
+        """
         if not self.page_isredirect(page):
-            raise pywikibot.IsNotRedirectPage(page)
+            raise IsNotRedirectPage(page)
         if hasattr(page, '_redirtarget'):
             return page._redirtarget
+
         title = page.title(withSection=False)
         query = api.Request(site=self, action="query", prop="info",
                             inprop="protection|talkid|subjectid",
@@ -2150,35 +2494,64 @@ class APISite(BaseSite):
             raise RuntimeError(
                 "getredirtarget: No 'redirects' found for page %s."
                 % title.encode(self.encoding()))
+
         redirmap = dict((item['from'],
                          {'title': item['to'],
                           'section': u'#' + item['tofragment']
                           if 'tofragment' in item and item['tofragment']
                           else ''})
                         for item in result['query']['redirects'])
-        if 'normalized' in result['query']:
-            for item in result['query']['normalized']:
-                if item['from'] == title:
-                    title = item['to']
-                    break
+
+        # Normalize title
+        for item in result['query'].get('normalized', []):
+            if item['from'] == title:
+                title = item['to']
+                break
+
         if title not in redirmap:
             raise RuntimeError(
                 "getredirtarget: 'redirects' contains no key for page %s."
                 % title.encode(self.encoding()))
         target_title = u'%(title)s%(section)s' % redirmap[title]
-        if target_title == title or "pages" not in result['query']:
-            # no "pages" element indicates a circular redirect
-            raise pywikibot.CircularRedirect(target_title)
+
+        if self.sametitle(title, target_title):
+            raise CircularRedirect(page)
+
+        if "pages" not in result['query']:
+            # No "pages" element might indicate a circular redirect
+            # Check that a "to" link is also a "from" link in redirmap
+            for _from, _to in redirmap.items():
+                if _to['title'] in redirmap:
+                    raise CircularRedirect(page)
+            else:
+                target = pywikibot.Page(source=page.site, title=target_title)
+
+                # Check if target is on another site.
+                if target.site != page.site:
+                    raise InterwikiRedirectPage(page, target)
+                else:
+                    # Redirect to Special: & Media: pages, which do not work
+                    # like redirects, but are rendered like a redirect.
+                    page._redirtarget = target
+                    return page._redirtarget
+
         pagedata = list(result['query']['pages'].values())[0]
-        # there should be only one value in 'pages', and it is the target
+        # There should be only one value in 'pages' (the ultimate
+        # target, also in case of double redirects).
         if self.sametitle(pagedata['title'], target_title):
+            # target_title is the ultimate target
             target = pywikibot.Page(self, pagedata['title'], pagedata['ns'])
-            api.update_page(target, pagedata)
+            api.update_page(target, pagedata, ['info'])
             page._redirtarget = target
         else:
-            # double redirect; target is an intermediate redirect
+            # Target is an intermediate redirect -> double redirect.
+            # Do not bypass double-redirects and return the ultimate target;
+            # it would be impossible to detect and fix double-redirects.
+            # This handles also redirects to sections, as sametitle()
+            # does not ignore sections.
             target = pywikibot.Page(self, target_title)
             page._redirtarget = target
+
         return page._redirtarget
 
     def preloadpages(self, pagelist, groupsize=50, templates=False,
@@ -2232,8 +2605,8 @@ class APISite(BaseSite):
                                 break
                         else:
                             pywikibot.warning(
-                                u"preloadpages: Query returned unexpected title"
-                                u"'%s'" % pagedata['title'])
+                                u"preloadpages: Query returned unexpected "
+                                u"title '%s'" % pagedata['title'])
                             continue
                 except KeyError:
                     pywikibot.debug(u"No 'title' in %s" % pagedata, _logger)
@@ -2241,59 +2614,139 @@ class APISite(BaseSite):
                     pywikibot.debug(u"titles=%s" % list(cache.keys()), _logger)
                     continue
                 page = cache[pagedata['title']]
-                api.update_page(page, pagedata)
+                api.update_page(page, pagedata, rvgen.props)
                 yield page
 
-    def preload_tokens(self, types):
+    def validate_tokens(self, types):
+        """Validate if requested tokens are acceptable.
+
+        Valid tokens depend on mw version.
+
+        """
+        _version = MediaWikiVersion(self.version())
+        if _version < MediaWikiVersion('1.20'):
+            valid_types = [token for token in types if token in self.TOKENS_0]
+
+            # Pre 1.17, preload token was the same as the edit token.
+            if _version < MediaWikiVersion('1.17'):
+                if 'patrol' in types and 'edit' not in valid_types:
+                    valid_types.append('edit')
+
+        elif _version < MediaWikiVersion('1.24wmf19'):
+            valid_types = [token for token in types if token in self.TOKENS_1]
+        else:
+            valid_types = []
+            for token in types:
+                if ((token in self.TOKENS_0 or token in self.TOKENS_1) and
+                        token not in self.TOKENS_2):
+                    token = 'csrf'
+                if token in self.TOKENS_2:
+                    valid_types.append(token)
+
+        return valid_types
+
+    def get_tokens(self, types, all=False):
         """Preload one or multiple tokens.
 
         For all MediaWiki versions prior to 1.20, only one token can be
-        retrieved at once. For MediaWiki versions since 1.24wmfXXX a new token
+        retrieved at once.
+        For MediaWiki versions since 1.24wmfXXX a new token
         system was introduced which reduced the amount of tokens available.
         Most of them were merged into the 'csrf' token. If the token type in
-        the parameter is not known it'll default to the 'csrf' token. The other
-        token types available are:
-        - deleteglobalaccount
-        - patrol
-        - rollback
-        - setglobalaccountstatus
-        - userrights
-        - watch
+        the parameter is not known it will default to the 'csrf' token.
+
+        The other token types available are:
+         - deleteglobalaccount
+         - patrol (*)
+         - rollback
+         - setglobalaccountstatus
+         - userrights
+         - watch
+
+         (*) Patrol was added in v1.14.
+             Until v1.16, the patrol token is same as the edit token.
+             For v1.17-19, the patrol token must be obtained from the query
+             list recentchanges.
 
         @param types: the types of token (e.g., "edit", "move", "delete");
             see API documentation for full list of types
         @type  types: iterable
+        @param all: load all available tokens, if None only if it can be done
+            in one request.
+        @type all: bool
+
+        return: a dict with retrieved valid tokens.
+
         """
-        storage = self._tokens.setdefault(self.user(), {})
-        if LV(self.version()) < LV('1.20'):
-            for tokentype in types:
-                query = api.PropertyGenerator('info',
-                                              titles='Dummy page',
-                                              intoken=tokentype,
-                                              site=self)
-                for item in query:
-                    pywikibot.debug(unicode(item), _logger)
+        def warn_handler(mod, text):
+            """Filter warnings for not available tokens."""
+            return re.match(r'Action \'\w+\' is not allowed for the current user',
+                            text)
+
+        user_tokens = {}
+        _version = MediaWikiVersion(self.version())
+        if _version < MediaWikiVersion('1.20'):
+            if all:
+                types.extend(self.TOKENS_0)
+            valid_tokens = set(self.validate_tokens(types))
+            # don't request patrol
+            query = api.PropertyGenerator('info',
+                                          titles='Dummy page',
+                                          intoken=valid_tokens - set(['patrol']),
+                                          site=self)
+            query.request._warning_handler = warn_handler
+
+            for item in query:
+                pywikibot.debug(unicode(item), _logger)
+                for tokentype in valid_tokens:
                     if (tokentype + 'token') in item:
-                        storage[tokentype] = item[tokentype + 'token']
+                        user_tokens[tokentype] = item[tokentype + 'token']
+
+            # patrol token require special handling.
+            # TODO: try to catch exceptions?
+            if 'patrol' in valid_tokens:
+                if MediaWikiVersion('1.14') <= _version < MediaWikiVersion('1.17'):
+                    user_tokens['patrol'] = user_tokens['edit']
+                else:
+                    req = api.Request(site=self, action='query',
+                                      list='recentchanges',
+                                      rctoken='patrol', rclimit=1)
+
+                    req._warning_handler = warn_handler
+                    data = req.submit()
+
+                    if 'query' in data:
+                        data = data['query']
+                    if 'recentchanges' in data:
+                        item = data['recentchanges'][0]
+                        pywikibot.debug(unicode(item), _logger)
+                        if 'patroltoken' in item:
+                            user_tokens['patrol'] = item['patroltoken']
         else:
-            if LV(self.version()) < LV('1.24wmf19'):
-                data = api.Request(site=self, action='tokens',
-                                   type='|'.join(types)).submit()
+            if _version < MediaWikiVersion('1.24wmf19'):
+                if all is not False:
+                    types.extend(self.TOKENS_1)
+                req = api.Request(site=self, action='tokens',
+                                   type='|'.join(self.validate_tokens(types)))
             else:
-                # TODO: Fetch that from the API with paraminfo
-                special_names = set('deleteglobalaccount', 'patrol', 'rollback',
-                                    'setglobalaccountstatus', 'userrights',
-                                    'watch')
-                new_tokens = [token if token in special_names else 'csrf'
-                              for token in types]
-                data = api.Request(action='query',
-                                   tokens='|'.join(new_tokens)).submit()
-                if 'query' in data:
-                    data = data['query']
+                if all is not False:
+                    types.extend(self.TOKENS_2)
+
+                req = api.Request(site=self, action='query', meta='tokens',
+                                   type='|'.join(self.validate_tokens(types)))
+
+            req._warning_handler = warn_handler
+            data = req.submit()
+
+            if 'query' in data:
+                data = data['query']
 
             if 'tokens' in data and data['tokens']:
-                storage.update(dict((key[:-5], val)
-                                    for key, val in data['tokens'].items()))
+                user_tokens = dict((key[:-5], val)
+                                    for key, val in data['tokens'].items()
+                                    if val != '+\\')
+
+        return user_tokens
 
     @deprecated("the 'tokens' property")
     def token(self, page, tokentype):
@@ -2320,11 +2773,16 @@ class APISite(BaseSite):
             both (no filtering).
         @param namespaces: If present, only return links from the namespaces
             in this list.
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param step: Limit on number of pages to retrieve per API query.
         @param total: Maximum number of pages to retrieve in total.
         @param content: if True, load the current content of each iterated page
             (default False)
-
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         bltitle = page.title(withSection=False).encode(self.encoding())
         blargs = {"gbltitle": bltitle}
@@ -2373,9 +2831,14 @@ class APISite(BaseSite):
             None, return both (no filtering).
         @param namespaces: If present, only return links from the namespaces
             in this list.
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param content: if True, load the current content of each iterated page
             (default False)
-
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         eiargs = {"geititle":
                   page.title(withSection=False).encode(self.encoding())}
@@ -2390,7 +2853,18 @@ class APISite(BaseSite):
     def pagereferences(self, page, followRedirects=False, filterRedirects=None,
                        withTemplateInclusion=True, onlyTemplateInclusion=False,
                        namespaces=None, step=None, total=None, content=False):
-        """Convenience method combining pagebacklinks and page_embeddedin."""
+        """
+        Convenience method combining pagebacklinks and page_embeddedin.
+
+        @param namespaces: If present, only return links from the namespaces
+            in this list.
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
+        """
         if onlyTemplateInclusion:
             return self.page_embeddedin(page, namespaces=namespaces,
                                         filterRedirects=filterRedirects,
@@ -2415,12 +2889,16 @@ class APISite(BaseSite):
         """Iterate internal wikilinks contained (or transcluded) on page.
 
         @param namespaces: Only iterate pages in these namespaces (default: all)
-        @type namespaces: list of ints
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param follow_redirects: if True, yields the target of any redirects,
             rather than the redirect page
         @param content: if True, load the current content of each iterated page
             (default False)
-
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         plargs = {}
         if hasattr(page, "_pageid"):
@@ -2428,11 +2906,10 @@ class APISite(BaseSite):
         else:
             pltitle = page.title(withSection=False).encode(self.encoding())
             plargs['titles'] = pltitle
-        if follow_redirects:
-            plargs['redirects'] = ''
         plgen = self._generator(api.PageGenerator, type_arg="links",
                                 namespaces=namespaces, step=step, total=total,
-                                g_content=content, **plargs)
+                                g_content=content, redirects=follow_redirects,
+                                **plargs)
         return plgen
 
     @deprecate_arg("withSortKey", None)  # Sortkey doesn't work with generator
@@ -2473,9 +2950,16 @@ class APISite(BaseSite):
                       content=False):
         """Iterate templates transcluded (not just linked) on the page.
 
+        @param namespaces: Only iterate pages in these namespaces
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param content: if True, load the current content of each iterated page
             (default False)
 
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         tltitle = page.title(withSection=False).encode(self.encoding())
         tlgen = self._generator(api.PageGenerator, type_arg="templates",
@@ -2483,19 +2967,19 @@ class APISite(BaseSite):
                                 step=step, total=total, g_content=content)
         return tlgen
 
-    def categorymembers(self, category, namespaces=None, sortby="",
+    def categorymembers(self, category, namespaces=None, sortby=None,
                         reverse=False, starttime=None, endtime=None,
                         startsort=None, endsort=None, step=None, total=None,
-                        content=False):
+                        content=False, member_type=None):
         """Iterate members of specified category.
 
         @param category: The Category to iterate.
         @param namespaces: If present, only return category members from
-            these namespaces. For example, use namespaces=[14] to yield
-            subcategories, use namespaces=[6] to yield image files, etc. Note,
-            however, that the iterated values are always Page objects, even
-            if in the Category or Image namespace.
-        @type namespaces: list of ints
+            these namespaces. To yield subcategories or files, use
+            parameter member_type instead.
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param sortby: determines the order in which results are generated,
             valid values are "sortkey" (default, results ordered by category
             sort key) or "timestamp" (results ordered by time page was
@@ -2517,7 +3001,15 @@ class APISite(BaseSite):
         @type endsort: str
         @param content: if True, load the current content of each iterated page
             (default False)
+        @type content: bool
+        @param member_type: member type; if member_type includes 'page' and is
+            used in conjunction with sortby="timestamp", the API may limit
+            results to only pages in the first 50 namespaces.
+        @type member_type: str or iterable of str; values: page, subcat, file
 
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         if category.namespace() != 14:
             raise Error(
@@ -2531,14 +3023,61 @@ class APISite(BaseSite):
             cmargs["gcmsort"] = sortby
         elif sortby:
             raise ValueError(
-                "categorymembers: invalid sortby value '%(sortby)s'"
-                % locals())
+                "categorymembers: invalid sortby value '%s'"
+                % sortby)
         if starttime and endtime and starttime > endtime:
             raise ValueError(
                 "categorymembers: starttime must be before endtime")
         if startsort and endsort and startsort > endsort:
             raise ValueError(
                 "categorymembers: startsort must be less than endsort")
+
+        if isinstance(member_type, basestring):
+            member_type = set([member_type])
+
+        if (member_type and
+                (sortby == 'timestamp' or
+                 MediaWikiVersion(self.version()) < MediaWikiVersion("1.12"))):
+            # Retrofit cmtype/member_type, available on MW API 1.12+,
+            # to use namespaces available on earlier versions.
+
+            # Covert namespaces to a known type
+            namespaces = set(Namespace.resolve(namespaces or [],
+                                               self.namespaces()))
+
+            if 'page' in member_type:
+                excluded_namespaces = set()
+                if 'file' not in member_type:
+                    excluded_namespaces.add(6)
+                if 'subcat' not in member_type:
+                    excluded_namespaces.add(14)
+
+                if namespaces:
+                    if excluded_namespaces.intersect(namespaces):
+                        raise ValueError(
+                            'incompatible namespaces %r and member_type %r'
+                            % (namespaces, member_type))
+                    # All excluded namespaces are not present in `namespaces`.
+                else:
+                    # If the number of namespaces is greater than permitted by
+                    # the API, it will issue a warning and use the namespaces
+                    # up until the limit, which will usually be sufficient.
+                    # TODO: QueryGenerator should detect when the number of
+                    # namespaces requested is higher than available, and split
+                    # the request into several batches.
+                    excluded_namespaces.add([-1, -2])
+                    namespaces = set(self.namespaces()) - excluded_namespaces
+            else:
+                if 'file' in member_type:
+                    namespaces.add(6)
+                if 'subcat' in member_type:
+                    namespaces.add(14)
+
+            member_type = None
+
+        if member_type:
+            cmargs['gcmtype'] = member_type
+
         if reverse:
             cmargs["gcmdir"] = "desc"
             # API wants start/end params in opposite order if using descending
@@ -2546,12 +3085,12 @@ class APISite(BaseSite):
             (starttime, endtime) = (endtime, starttime)
             (startsort, endsort) = (endsort, startsort)
         if starttime and sortby == "timestamp":
-            cmargs["gcmstart"] = str(starttime)
+            cmargs["gcmstart"] = starttime
         elif starttime:
             raise ValueError("categorymembers: "
                              "invalid combination of 'sortby' and 'starttime'")
         if endtime and sortby == "timestamp":
-            cmargs["gcmend"] = str(endtime)
+            cmargs["gcmend"] = endtime
         elif endtime:
             raise ValueError("categorymembers: "
                              "invalid combination of 'sortby' and 'endtime'")
@@ -2669,9 +3208,9 @@ class APISite(BaseSite):
         if endid:
             rvargs[u"rvendid"] = endid
         if starttime:
-            rvargs[u"rvstart"] = str(starttime)
+            rvargs[u"rvstart"] = starttime
         if endtime:
-            rvargs[u"rvend"] = str(endtime)
+            rvargs[u"rvend"] = endtime
         if user:
             rvargs[u"rvuser"] = user
         elif excludeuser:
@@ -2693,7 +3232,7 @@ class APISite(BaseSite):
                     % (page, pagedata['title']))
             if "missing" in pagedata:
                 raise NoPage(page)
-            api.update_page(page, pagedata)
+            api.update_page(page, pagedata, rvgen.props)
 
     def pageinterwiki(self, page):
         # No such function in the API (this method isn't called anywhere)
@@ -2750,12 +3289,7 @@ class APISite(BaseSite):
         ciquery = self._generator(api.PropertyGenerator,
                                   type_arg="categoryinfo",
                                   titles=cititle.encode(self.encoding()))
-        for pageitem in ciquery:
-            if not self.sametitle(pageitem['title'], cititle):
-                raise Error(
-                    u"categoryinfo: Query on %s returned data on '%s'"
-                    % (category, pageitem['title']))
-            api.update_page(category, pageitem)
+        self._update_page(category, ciquery, 'categoryinfo')
 
     def categoryinfo(self, category):
         if not hasattr(category, "_catinfo"):
@@ -2766,9 +3300,7 @@ class APISite(BaseSite):
                                  'subcats': 0}
         return category._catinfo
 
-    @deprecate_arg("throttle", None)
-    @deprecate_arg("limit", "total")
-    @deprecate_arg("includeredirects", "filterredir")
+    @deprecated_args(throttle=None, limit="total", includeredirects="filterredir")
     def allpages(self, start="!", prefix="", namespace=0, filterredir=None,
                  filterlanglinks=None, minsize=None, maxsize=None,
                  protect_type=None, protect_level=None, reverse=False,
@@ -2781,7 +3313,7 @@ class APISite(BaseSite):
         @param start: Start at this title (page need not exist).
         @param prefix: Only yield pages starting with this string.
         @param namespace: Iterate pages from this (single) namespace
-           (default: 0)
+        @type namespace: int or Namespace.
         @param filterredir: if True, only yield redirects; if False (and not
             None), only yield non-redirects (default: yield both)
         @param filterlanglinks: if True, only yield pages with language links;
@@ -2801,11 +3333,10 @@ class APISite(BaseSite):
         @param includeredirects: DEPRECATED, use filterredir instead
         @param content: if True, load the current content of each iterated page
             (default False)
-
+        @raises KeyError: the namespace identifier was not resolved
+        @raises TypeError: the namespace identifier has an inappropriate
+            type such as bool, or an iterable with more than one namespace
         """
-        if not isinstance(namespace, int):
-            raise Error("allpages: only one namespace permitted.")
-
         if includeredirects is not None:
             if includeredirects:
                 if includeredirects == "only":
@@ -2816,19 +3347,18 @@ class APISite(BaseSite):
                 filterredir = False
 
         apgen = self._generator(api.PageGenerator, type_arg="allpages",
-                                gapnamespace=str(namespace),
+                                namespaces=namespace,
                                 gapfrom=start, step=step, total=total,
                                 g_content=content)
         if prefix:
             apgen.request["gapprefix"] = prefix
         if filterredir is not None:
-            apgen.request["gapfilterredir"] = (filterredir
-                                               and "redirects"
-                                               or "nonredirects")
+            apgen.request['gapfilterredir'] = ('redirects' if filterredir else
+                                               'nonredirects')
         if filterlanglinks is not None:
-            apgen.request["gapfilterlanglinks"] = (filterlanglinks
-                                                   and "withlanglinks"
-                                                   or "withoutlanglinks")
+            apgen.request['gapfilterlanglinks'] = ('withlanglinks'
+                                                   if filterlanglinks else
+                                                   'withoutlanglinks')
         if isinstance(minsize, int):
             apgen.request["gapminsize"] = str(minsize)
         if isinstance(maxsize, int):
@@ -2862,25 +3392,23 @@ class APISite(BaseSite):
         @param start: Start at this title (page need not exist).
         @param prefix: Only yield pages starting with this string.
         @param namespace: Iterate pages from this (single) namespace
-            (default: 0)
+        @type namespace: int or Namespace
         @param unique: If True, only iterate each link title once (default:
             iterate once for each linking page)
         @param fromids: if True, include the pageid of the page containing
             each link (default: False) as the '_fromid' attribute of the Page;
             cannot be combined with unique
-
+        @raises KeyError: the namespace identifier was not resolved
+        @raises TypeError: the namespace identifier has an inappropriate
+            type such as bool, or an iterable with more than one namespace
         """
         if unique and fromids:
             raise Error("alllinks: unique and fromids cannot both be True.")
-        if not isinstance(namespace, int):
-            raise Error("alllinks: only one namespace permitted.")
         algen = self._generator(api.ListGenerator, type_arg="alllinks",
-                                alnamespace=str(namespace), alfrom=start,
-                                step=step, total=total)
+                                namespaces=namespace, alfrom=start,
+                                step=step, total=total, alunique=unique)
         if prefix:
             algen.request["alprefix"] = prefix
-        if unique:
-            algen.request["alunique"] = ""
         if fromids:
             algen.request["alprop"] = "title|ids"
         for link in algen:
@@ -2925,7 +3453,7 @@ class APISite(BaseSite):
         return self.allcategories(total=limit)
 
     def isBot(self, username):
-        """Return True is username is a bot user. """
+        """Return True is username is a bot user."""
         return username in [userdata['name'] for userdata in self.botusers()]
 
     def botusers(self, step=None, total=None):
@@ -3029,21 +3557,21 @@ class APISite(BaseSite):
         if starttime and endtime:
             if reverse:
                 if starttime > endtime:
-                    raise pywikibot.Error(
+                    raise Error(
                         "blocks: "
                         "starttime must be before endtime with reverse=True")
             else:
                 if endtime > starttime:
-                    raise pywikibot.Error(
+                    raise Error(
                         "blocks: "
                         "endtime must be before starttime with reverse=False")
         bkgen = self._generator(api.ListGenerator, type_arg="blocks",
                                 step=step, total=total)
         bkgen.request["bkprop"] = "id|user|by|timestamp|expiry|reason|range|flags"
         if starttime:
-            bkgen.request["bkstart"] = str(starttime)
+            bkgen.request["bkstart"] = starttime
         if endtime:
-            bkgen.request["bkend"] = str(endtime)
+            bkgen.request["bkend"] = endtime
         if reverse:
             bkgen.request["bkdir"] = "newer"
         if blockids:
@@ -3075,22 +3603,28 @@ class APISite(BaseSite):
         @param image: the image to search for (FilePage need not exist on
             the wiki)
         @type image: FilePage
+        @param namespaces: If present, only iterate pages in these namespaces
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param filterredir: if True, only yield redirects; if False (and not
             None), only yield non-redirects (default: yield both)
         @param content: if True, load the current content of each iterated page
             (default False)
-
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         iuargs = dict(giutitle=image.title(withSection=False))
         if filterredir is not None:
-            iuargs["giufilterredir"] = (filterredir and "redirects"
-                                        or "nonredirects")
+            iuargs['giufilterredir'] = ('redirects' if filterredir else
+                                        'nonredirects')
         iugen = self._generator(api.PageGenerator, type_arg="imageusage",
                                 namespaces=namespaces, step=step,
                                 total=total, g_content=content, **iuargs)
         return iugen
 
-    def logevents(self, logtype=None, user=None, page=None,
+    def logevents(self, logtype=None, user=None, page=None, namespace=None,
                   start=None, end=None, reverse=False, step=None, total=None):
         """Iterate all log entries.
 
@@ -3100,10 +3634,14 @@ class APISite(BaseSite):
             "patrol", "merge")
         @param user: only iterate entries that match this user name
         @param page: only iterate entries affecting this page
+        @param namespace: namespace to retrieve logevents from
+        @type namespace: int or Namespace
         @param start: only iterate entries from and after this Timestamp
         @param end: only iterate entries up to and through this Timestamp
         @param reverse: if True, iterate oldest entries first (default: newest)
-
+        @raises KeyError: the namespace identifier was not resolved
+        @raises TypeError: the namespace identifier has an inappropriate
+            type such as bool, or an iterable with more than one namespace
         """
         if start and end:
             self.assert_valid_iter_params('logevents', start, end, reverse)
@@ -3117,11 +3655,13 @@ class APISite(BaseSite):
         if page is not None:
             legen.request["letitle"] = page.title(withSection=False)
         if start is not None:
-            legen.request["lestart"] = str(start)
+            legen.request["lestart"] = start
         if end is not None:
-            legen.request["leend"] = str(end)
+            legen.request["leend"] = end
         if reverse:
             legen.request["ledir"] = "newer"
+        if namespace:
+            legen.request["lenamespace"] = namespace
         return legen
 
     def recentchanges(self, start=None, end=None, reverse=False,
@@ -3137,6 +3677,10 @@ class APISite(BaseSite):
         @type end: pywikibot.Timestamp
         @param reverse: if True, start with oldest changes (default: newest)
         @type reverse: bool
+        @param namespaces: only iterate pages in these namespaces
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param pagelist: iterate changes to pages in this list only
         @param pagelist: list of Pages
         @param changetype: only iterate changes of this type ("edit" for
@@ -3165,7 +3709,9 @@ class APISite(BaseSite):
         @type user: basestring|list
         @param excludeuser: if not None, exclude edits by this user or users
         @type excludeuser: basestring|list
-
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         if start and end:
             self.assert_valid_iter_params('recentchanges', start, end, reverse)
@@ -3174,24 +3720,22 @@ class APISite(BaseSite):
                                 rcprop="user|comment|timestamp|title|ids"
                                        "|sizes|redirect|loginfo|flags",
                                 namespaces=namespaces, step=step,
-                                total=total)
+                                total=total, rctoponly=topOnly)
         if start is not None:
-            rcgen.request["rcstart"] = str(start)
+            rcgen.request["rcstart"] = start
         if end is not None:
-            rcgen.request["rcend"] = str(end)
+            rcgen.request["rcend"] = end
         if reverse:
             rcgen.request["rcdir"] = "newer"
         if pagelist:
-            if LV(self.version()) > LV("1.14"):
+            if MediaWikiVersion(self.version()) > MediaWikiVersion("1.14"):
                 pywikibot.warning(
                     u"recentchanges: pagelist option is disabled; ignoring.")
             else:
-                rcgen.request["rctitles"] = u"|".join(p.title(withSection=False)
-                                                      for p in pagelist)
+                rcgen.request["rctitles"] = (p.title(withSection=False)
+                                             for p in pagelist)
         if changetype:
             rcgen.request["rctype"] = changetype
-        if topOnly:
-            rcgen.request["rctoponly"] = ""
         filters = {'minor': showMinor,
                    'bot': showBot,
                    'anon': showAnon,
@@ -3199,14 +3743,10 @@ class APISite(BaseSite):
                    }
         if showPatrolled is not None and (
                 self.has_right('patrol') or self.has_right('patrolmarks')):
-            rcgen.request['rcprop'] += '|patrolled'
+            rcgen.request['rcprop'] += ['patrolled']
             filters['patrolled'] = showPatrolled
-        rcshow = []
-        for item in filters:
-            if filters[item] is not None:
-                rcshow.append(filters[item] and item or ("!" + item))
-        if rcshow:
-            rcgen.request["rcshow"] = "|".join(rcshow)
+        rcgen.request['rcshow'] = api.OptionSet(self, 'recentchanges', 'show',
+                                                filters)
 
         if user:
             rcgen.request['rcuser'] = user
@@ -3216,7 +3756,7 @@ class APISite(BaseSite):
 
         return rcgen
 
-    @deprecate_arg("number", "limit")
+    @deprecated_args(number="total")
     def search(self, searchstring, namespaces=None, where="text",
                getredirects=False, step=None, total=None, content=False):
         """Iterate Pages that contain the searchstring.
@@ -3228,13 +3768,17 @@ class APISite(BaseSite):
         @type searchstring: unicode
         @param where: Where to search; value must be "text" or "titles" (many
             wikis do not support title search)
-        @param namespaces: search only in these namespaces (defaults to 0)
-        @type namespaces: list of ints, or an empty list to signal all
-            namespaces
-        @param getredirects: if True, include redirects in results
+        @param namespaces: search only in these namespaces (defaults to all)
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
+        @param getredirects: if True, include redirects in results. Since
+            version MediaWiki 1.23 it will always return redirects.
         @param content: if True, load the current content of each iterated page
             (default False)
-
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         if not searchstring:
             raise Error("search: searchstring cannot be empty")
@@ -3249,8 +3793,8 @@ class APISite(BaseSite):
                                 gsrsearch=searchstring, gsrwhat=where,
                                 namespaces=namespaces, step=step,
                                 total=total, g_content=content)
-        if getredirects:
-            srgen.request["gsrredirects"] = ""
+        if MediaWikiVersion(self.version()) < MediaWikiVersion('1.23'):
+            srgen.request['gsrredirects'] = getredirects
         return srgen
 
     def usercontribs(self, user=None, userprefix=None, start=None, end=None,
@@ -3266,11 +3810,17 @@ class APISite(BaseSite):
         @param start: Iterate contributions starting at this Timestamp
         @param end: Iterate contributions ending at this Timestamp
         @param reverse: Iterate oldest contributions first (default: newest)
+        @param namespaces: only iterate pages in these namespaces
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param showMinor: if True, iterate only minor edits; if False and
             not None, iterate only non-minor edits (default: iterate both)
         @param top_only: if True, iterate only edits which are the latest
             revision
-
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         if not (user or userprefix):
             raise Error(
@@ -3282,7 +3832,7 @@ class APISite(BaseSite):
         ucgen = self._generator(api.ListGenerator, type_arg="usercontribs",
                                 ucprop="ids|title|timestamp|comment|flags",
                                 namespaces=namespaces, step=step,
-                                total=total)
+                                total=total, uctoponly=top_only)
         if user:
             ucgen.request["ucuser"] = user
         if userprefix:
@@ -3293,10 +3843,9 @@ class APISite(BaseSite):
             ucgen.request["ucend"] = str(end)
         if reverse:
             ucgen.request["ucdir"] = "newer"
-        if showMinor is not None:
-            ucgen.request["ucshow"] = showMinor and "minor" or "!minor"
-        if top_only:
-            ucgen.request["uctoponly"] = ""
+        option_set = api.OptionSet(self, 'usercontribs', 'show')
+        option_set['minor'] = showMinor
+        ucgen.request['ucshow'] = option_set
         return ucgen
 
     def watchlist_revs(self, start=None, end=None, reverse=False,
@@ -3309,13 +3858,19 @@ class APISite(BaseSite):
         @param start: Iterate revisions starting at this Timestamp
         @param end: Iterate revisions ending at this Timestamp
         @param reverse: Iterate oldest revisions first (default: newest)
+        @param namespaces: only iterate pages in these namespaces
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param showMinor: if True, only list minor edits; if False (and not
             None), only list non-minor edits
         @param showBot: if True, only list bot edits; if False (and not
             None), only list non-bot edits
         @param showAnon: if True, only list anon edits; if False (and not
             None), only list non-anon edits
-
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         if start and end:
             self.assert_valid_iter_params('watchlist_revs', start, end, reverse)
@@ -3326,22 +3881,19 @@ class APISite(BaseSite):
                                 step=step, total=total)
         # TODO: allow users to ask for "patrol" as well?
         if start is not None:
-            wlgen.request["wlstart"] = str(start)
+            wlgen.request["wlstart"] = start
         if end is not None:
-            wlgen.request["wlend"] = str(end)
+            wlgen.request["wlend"] = end
         if reverse:
             wlgen.request["wldir"] = "newer"
         filters = {'minor': showMinor,
                    'bot': showBot,
                    'anon': showAnon}
-        wlshow = []
-        for item in filters:
-            if filters[item] is not None:
-                wlshow.append(filters[item] and item or ("!" + item))
-        if wlshow:
-            wlgen.request["wlshow"] = "|".join(wlshow)
+        wlgen.request['wlshow'] = api.OptionSet(self, 'watchlist', 'show',
+                                                filters)
         return wlgen
 
+    # TODO: T75370
     def deletedrevs(self, page, start=None, end=None, reverse=None,
                     get_text=False, step=None, total=None):
         """Iterate deleted revisions.
@@ -3395,9 +3947,9 @@ class APISite(BaseSite):
             drgen.request['drprop'] = (drgen.request['drprop'] +
                                        "|content|token")
         if start is not None:
-            drgen.request["drstart"] = str(start)
+            drgen.request["drstart"] = start
         if end is not None:
-            drgen.request["drend"] = str(end)
+            drgen.request["drend"] = end
         if reverse:
             drgen.request["drdir"] = "newer"
         return drgen
@@ -3429,6 +3981,11 @@ class APISite(BaseSite):
 
     @deprecated("Site.randompages()")
     def randomredirectpage(self):
+        """
+        DEPRECATED: Use Site.randompages() instead.
+
+        @return: Return a random redirect page
+        """
         return self.randompages(total=1, redirects=True)
 
     def randompages(self, step=None, total=10, namespaces=None,
@@ -3440,17 +3997,20 @@ class APISite(BaseSite):
 
         @param total: the maximum number of pages to iterate (default: 1)
         @param namespaces: only iterate pages in these namespaces.
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
         @param redirects: if True, include only redirect pages in results
             (default: include only non-redirects)
         @param content: if True, load the current content of each iterated page
             (default False)
-
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         rngen = self._generator(api.PageGenerator, type_arg="random",
                                 namespaces=namespaces, step=step, total=total,
-                                g_content=content)
-        if redirects:
-            rngen.request["grnredirect"] = ""
+                                g_content=content, grnredirect=redirects)
         return rngen
 
     # Catalog of editpage error codes, for use in generating messages.
@@ -3459,14 +4019,19 @@ class APISite(BaseSite):
         "noapiwrite": "API editing not enabled on %(site)s wiki",
         "writeapidenied": "User %(user)s is not authorized to edit on %(site)s wiki",
         "cantcreate": "User %(user)s not authorized to create new pages on %(site)s wiki",
-        "cantcreate-anon": """Bot is not logged in, and anon users are not authorized to create new pages on %(site)s wiki""",
-        "noimageredirect-anon": """Bot is not logged in, and anon users are not authorized to create image redirects on %(site)s wiki""",
+        "cantcreate-anon":
+            "Bot is not logged in, and anon users are not authorized to create "
+            "new pages on %(site)s wiki",
+        "noimageredirect-anon":
+            "Bot is not logged in, and anon users are not authorized to create "
+            "image redirects on %(site)s wiki",
         "noimageredirect": "User %(user)s not authorized to create image redirects on %(site)s wiki",
         "filtered": "%(info)s",
         "contenttoobig": "%(info)s",
-        "noedit-anon": """Bot is not logged in, and anon users are not authorized to edit on %(site)s wiki""",
+        "noedit-anon": "Bot is not logged in, and anon users are not authorized to edit on %(site)s wiki",
         "noedit": "User %(user)s not authorized to edit pages on %(site)s wiki",
 
+        "missingtitle": NoCreateError,
         "editconflict": EditConflict,
         "articleexists": PageCreatedConflict,
         "pagedeleted": PageDeletedConflict,
@@ -3496,9 +4061,10 @@ class APISite(BaseSite):
             to one of "watch", "unwatch", "preferences", "nochange":
             * watch: add the page to the watchlist
             * unwatch: remove the page from the watchlist
-            * preferences: use the preference settings (Default)
+            The following settings are supported by mw >= 1.16 only
+            * preferences: use the preference settings (default)
             * nochange: don't change the watchlist
-        @param botflag: if True, mark edit with bot flag
+        @param bot: if True, mark edit with bot flag
         @return: True if edit succeeded, False if it failed
 
         """
@@ -3506,42 +4072,35 @@ class APISite(BaseSite):
         if text is None:
             raise Error("editpage: no text to be saved")
         try:
-            lastrev = page.latestRevision()
+            lastrev = page.latest_revision
         except NoPage:
             lastrev = None
             if not recreate:
                 raise
         token = self.tokens['edit']
-        # getting token also updates the 'lastrevid' value, which allows us to
-        # detect if page has been changed since last time text was retrieved.
-
-        # note that the server can still return an 'editconflict' error
-        # if the page is updated after the token is retrieved but
-        # before the page is saved.
+        if bot is None:
+            bot = ("bot" in self.userinfo["rights"])
         self.lock_page(page)
-        if lastrev is not None and page.latestRevision() != lastrev:
-            raise EditConflict(page)
         params = dict(action="edit",
                       title=page.title(withSection=False),
-                      text=text, token=token, summary=summary)
-        if bot:
-            params["bot"] = ""
+                      text=text, token=token, summary=summary, bot=bot,
+                      recreate=recreate, createonly=createonly,
+                      nocreate=nocreate, minor=minor,
+                      notminor=not minor and notminor)
+
         if lastrev is not None:
-            if lastrev not in page._revisions:
-                self.loadrevisions(page)
-            params["basetimestamp"] = page._revisions[lastrev].timestamp
-        if minor:
-            params['minor'] = ""
-        elif notminor:
-            params['notminor'] = ""
-        if recreate:
-            params['recreate'] = ""
-        if createonly:
-            params['createonly'] = ""
-        if nocreate:
-            params['nocreate'] = ""
-        if watch in ["watch", "unwatch", "preferences", "nochange"]:
-            params['watchlist'] = watch
+            params['basetimestamp'] = lastrev.timestamp
+
+        watch_items = set(["watch", "unwatch", "preferences", "nochange"])
+        if watch in watch_items:
+            if MediaWikiVersion(self.version()) < MediaWikiVersion("1.16"):
+                if watch in ['preferences', 'nochange']:
+                    pywikibot.warning(u'The watch value {0} is not supported '
+                                      'by {1}'.format(watch, self))
+                else:
+                    params[watch] = True
+            else:
+                params['watchlist'] = watch
         elif watch:
             pywikibot.warning(
                 u"editpage: Invalid watch value '%(watch)s' ignored."
@@ -3560,9 +4119,7 @@ class APISite(BaseSite):
                         % err.code,
                         _logger)
                 if err.code in self._ep_errors:
-                    if issubclass(self._ep_errors[err.code], PageSaveRelatedError):
-                        raise self._ep_errors[err.code](page)
-                    else:
+                    if isinstance(self._ep_errors[err.code], basestring):
                         errdata = {
                             'site': self,
                             'title': page.title(withSection=False),
@@ -3570,6 +4127,8 @@ class APISite(BaseSite):
                             'info': err.info
                         }
                         raise Error(self._ep_errors[err.code] % errdata)
+                    else:
+                        raise self._ep_errors[err.code](page)
                 pywikibot.debug(
                     u"editpage: Unexpected error code '%s' received."
                     % err.code,
@@ -3615,6 +4174,12 @@ class APISite(BaseSite):
                         return False
                 elif 'spamblacklist' in result['edit']:
                     raise SpamfilterError(page, result['edit']['spamblacklist'])
+                elif 'code' in result['edit'] and 'info' in result['edit']:
+                    self.unlock_page(page)
+                    pywikibot.error(
+                        u"editpage: %s\n%s, "
+                        % (result['edit']['code'], result['edit']['info']))
+                    return False
                 else:
                     self.unlock_page(page)
                     pywikibot.error(u"editpage: unknown failure reason %s"
@@ -3685,12 +4250,9 @@ class APISite(BaseSite):
         token = self.tokens['move']
         self.lock_page(page)
         req = api.Request(site=self, action="move", to=newtitle,
-                          token=token, reason=summary)
+                          token=token, reason=summary, movetalk=movetalk,
+                          noredirect=noredirect)
         req['from'] = oldtitle  # "from" is a python keyword
-        if movetalk:
-            req['movetalk'] = ""
-        if noredirect:
-            req['noredirect'] = ""
         try:
             result = req.submit()
             pywikibot.debug(u"movepage response: %s" % result,
@@ -3765,20 +4327,20 @@ class APISite(BaseSite):
 
         """
         if len(page._revisions) < 2:
-            raise pywikibot.Error(
+            raise Error(
                 u"Rollback of %s aborted; load revision history first."
                 % page.title(asLink=True))
-        last_rev = page._revisions[page.latestRevision()]
+        last_rev = page.latest_revision
         last_user = last_rev.user
         for rev in sorted(list(page._revisions.keys()), reverse=True):
             # start with most recent revision first
             if rev.user != last_user:
                 break
         else:
-            raise pywikibot.Error(
+            raise Error(
                 u"Rollback of %s aborted; only one user in revision history."
                 % page.title(asLink=True))
-        token = self.token(page, "rollback")
+        token = self.tokens["rollback"]
         self.lock_page(page)
         req = api.Request(site=self, action="rollback",
                           title=page.title(withSection=False),
@@ -3806,23 +4368,69 @@ class APISite(BaseSite):
     _dl_errors = {
         "noapiwrite": "API editing not enabled on %(site)s wiki",
         "writeapidenied": "User %(user)s not allowed to edit through the API",
-        "permissiondenied": "User %(user)s not authorized to delete pages on %(site)s wiki.",
+        "permissiondenied": "User %(user)s not authorized to (un)delete "
+                            "pages on %(site)s wiki.",
         "cantdelete": "Could not delete [[%(title)s]]. Maybe it was deleted already.",
+        "cantundelete": "Could not undelete [[%(title)s]]. "
+                        "Revision may not exist or was already undeleted."
     }  # other errors shouldn't occur because of pre-submission checks
 
     @must_be(group='sysop')
-    def deletepage(self, page, summary):
+    @deprecate_arg("summary", "reason")
+    def deletepage(self, page, reason):
         """Delete page from the wiki. Requires appropriate privilege level.
 
         @param page: Page to be deleted.
-        @param summary: Edit summary (required!).
+        @type page: Page
+        @param reason: Deletion reason.
+        @type reason: basestring
 
         """
         token = self.tokens['delete']
         self.lock_page(page)
         req = api.Request(site=self, action="delete", token=token,
                           title=page.title(withSection=False),
-                          reason=summary)
+                          reason=reason)
+        try:
+            req.submit()
+        except api.APIError as err:
+            errdata = {
+                'site': self,
+                'title': page.title(withSection=False),
+                'user': self.user(),
+            }
+            if err.code in self._dl_errors:
+                raise Error(self._dl_errors[err.code] % errdata)
+            pywikibot.debug(u"delete: Unexpected error code '%s' received."
+                            % err.code,
+                            _logger)
+            raise
+        finally:
+            self.unlock_page(page)
+
+    @must_be(group='sysop')
+    @deprecate_arg("summary", "reason")
+    def undelete_page(self, page, reason, revisions=None):
+        """Undelete page from the wiki. Requires appropriate privilege level.
+
+        @param page: Page to be deleted.
+        @type page: Page
+        @param revisions: List of timestamps to restore. If None, restores all revisions.
+        @type revisions: list
+        @param reason: Undeletion reason.
+        @type reason: basestring
+
+        """
+        token = self.tokens['undelete']
+        self.lock_page(page)
+
+        if revisions is None:
+            req = api.Request(site=self, action='undelete', token=token,
+                              title=page.title(withSection=False), reason=reason)
+        else:
+            req = api.Request(site=self, action='undelete', token=token,
+                              title=page.title(withSection=False),
+                              timestamps=revisions, reason=reason)
         try:
             req.submit()
         except api.APIError as err:
@@ -3852,7 +4460,7 @@ class APISite(BaseSite):
         """
         Return the protection types available on this site.
 
-        @return protection types available
+        @return: protection types available
         @rtype: set of unicode instances
         @see: L{Siteinfo._get_default()}
         """
@@ -3862,7 +4470,7 @@ class APISite(BaseSite):
         """
         Return the protection levels available on this site.
 
-        @return protection types available
+        @return: protection types available
         @rtype: set of unicode instances
         @see: L{Siteinfo._get_default()}
         """
@@ -3898,8 +4506,6 @@ class APISite(BaseSite):
                           protections=protectList,
                           reason=reason,
                           **kwargs)
-        if isinstance(expiry, pywikibot.Timestamp):
-            expiry = expiry.toISOformat()
         if expiry:
             req['expiry'] = expiry
         try:
@@ -3920,34 +4526,155 @@ class APISite(BaseSite):
 
     # TODO: implement undelete
 
-    # TODO: implement patrol
+    _patrol_errors = {
+        "nosuchrcid": "There is no change with rcid %(rcid)s",
+        "nosuchrevid": "There is no change with revid %(revid)s",
+        "patroldisabled": "Patrolling is disabled on %(site)s wiki",
+        "noautopatrol": "User %(user)s has no permission to patrol its own changes, 'autopatrol' is needed",
+        "notpatrollable": "The revision %(revid)s can't be patrolled as it's too old."
+    }
+
+    def patrol(self, rcid=None, revid=None, revision=None):
+        """Return a generator of patrolled pages.
+
+        Pages to be patrolled are identified by rcid, revid or revision.
+        At least one of the parameters is mandatory.
+        See https://www.mediawiki.org/wiki/API:Patrol.
+
+        @param rcid: an int/string/iterable/iterator providing rcid of pages
+            to be patrolled.
+        @type rcid: iterable/iterator which returns a number or string which
+             contains only digits; it also supports a string (as above) or int
+        @param revid: an int/string/iterable/iterator providing revid of pages
+            to be patrolled.
+        @type revid: iterable/iterator which returns a number or string which
+             contains only digits; it also supports a string (as above) or int.
+        @param revision: an Revision/iterable/iterator providing Revision object
+            of pages to be patrolled.
+        @type revision: iterable/iterator which returns a Revision object; it
+            also supports a single Revision.
+        @rtype: iterator of dict with 'rcid', 'ns' and 'title'
+            of the patrolled page.
+
+        """
+        # If patrol is not enabled, attr will be set the first time a
+        # request is done.
+        if hasattr(self, u'_patroldisabled'):
+            if self._patroldisabled:
+                return
+
+        if all(_ is None for _ in [rcid, revid, revision]):
+            raise Error('No rcid, revid or revision provided.')
+
+        if isinstance(rcid, int) or isinstance(rcid, basestring):
+            rcid = set([rcid])
+        if isinstance(revid, int) or isinstance(revid, basestring):
+            revid = set([revid])
+        if isinstance(revision, pywikibot.page.Revision):
+            revision = set([revision])
+
+        # Handle param=None.
+        rcid = rcid or set()
+        revid = revid or set()
+        revision = revision or set()
+
+        # TODO: remove exeception for mw < 1.22
+        if (revid or revision) and MediaWikiVersion(self.version()) < MediaWikiVersion("1.22"):
+            raise NotImplementedError(
+                u'Support of "revid" parameter\n'
+                u'is not implemented in MediaWiki version < "1.22"')
+        else:
+            combined_revid = set(revid) | set(r.revid for r in revision)
+
+        gen = itertools.chain(
+            zip_longest(rcid, [], fillvalue='rcid'),
+            zip_longest(combined_revid, [], fillvalue='revid'))
+
+        token = self.tokens['patrol']
+
+        for idvalue, idtype in gen:
+            req = api.Request(site=self, action='patrol',
+                              token=token, **{idtype: idvalue})
+
+            try:
+                result = req.submit()
+            except api.APIError as err:
+                # patrol is disabled, store in attr to avoid other requests
+                if err.code == u'patroldisabled':
+                    self._patroldisabled = True
+                    return
+
+                errdata = {
+                    'site': self,
+                    'user': self.user(),
+                }
+                errdata[idtype] = idvalue
+                if err.code in self._patrol_errors:
+                    raise Error(self._patrol_errors[err.code] % errdata)
+                pywikibot.debug(u"protect: Unexpected error code '%s' received."
+                                % err.code,
+                                _logger)
+                raise
+
+            yield result['patrol']
 
     @must_be(group='sysop')
     def blockuser(self, user, expiry, reason, anononly=True, nocreate=True,
                   autoblock=True, noemail=False, reblock=False):
+        """
+        Block a user for certain amount of time and for a certain reason.
 
+        @param user: The username/IP to be blocked without a namespace.
+        @type user: User
+        @param expiry: The length or date/time when the block expires. If
+            'never', 'infinite', 'indefinite' it never does. If the value is
+            given as a basestring it's parsed by php's strtotime function:
+                http://php.net/manual/en/function.strtotime.php
+            The relative format is described there:
+                http://php.net/manual/en/datetime.formats.relative.php
+            It is recommended to not use a basestring if possible to be
+            independent of the API.
+        @type expiry: Timestamp/datetime (absolute),
+            basestring (relative/absolute) or False ('never')
+        @param reason: The reason for the block.
+        @type reason: basestring
+        @param anononly: Disable anonymous edits for this IP.
+        @type anononly: boolean
+        @param nocreate: Prevent account creation.
+        @type nocreate: boolean
+        @param autoblock: Automatically block the last used IP address and all
+            subsequent IP addresses from which this account logs in.
+        @type autoblock: boolean
+        @param noemail: Prevent user from sending email through the wiki.
+        @type noemail: boolean
+        @param reblock: If the user is already blocked, overwrite the existing
+            block.
+        @type reblock: boolean
+        @return: The data retrieved from the API request.
+        @rtype: dict
+        """
         token = self.tokens['block']
-        if isinstance(expiry, pywikibot.Timestamp):
-            expiry = expiry.toISOformat()
+        if expiry is False:
+            expiry = 'never'
         req = api.Request(site=self, action='block', user=user.username,
-                          expiry=expiry, reason=reason, token=token)
-        if anononly:
-            req['anononly'] = ''
-        if nocreate:
-            req['nocreate'] = ''
-        if autoblock:
-            req['autoblock'] = ''
-        if noemail:
-            req['noemail'] = ''
-        if reblock:
-            req['reblock'] = ''
+                          expiry=expiry, reason=reason, token=token,
+                          anononly=anononly, nocreate=nocreate,
+                          autoblock=autoblock, noemail=noemail,
+                          reblock=reblock)
 
         data = req.submit()
         return data
 
     @must_be(group='sysop')
     def unblockuser(self, user, reason):
+        """
+        Remove the block for the user.
 
+        @param user: The username/IP without a namespace.
+        @type user: User
+        @param reason: Reason for the unblock.
+        @type reason: basestring
+        """
         token = self.tokens['block']
         req = api.Request(site=self, action='unblock', user=user.username,
                           reason=reason, token=token)
@@ -3965,16 +4692,12 @@ class APISite(BaseSite):
         """
         token = self.tokens['watch']
         req = api.Request(action="watch", token=token,
-                          title=page.title(withSection=False))
-        if unwatch:
-            req["unwatch"] = ""
+                          title=page.title(withSection=False), unwatch=unwatch)
         result = req.submit()
         if "watch" not in result:
             pywikibot.error(u"watchpage: Unexpected API response:\n%s" % result)
             return False
-        watched = result["watch"]
-        return ((unwatch and "unwatched" in watched)
-                or (not unwatch and "watched" in result))
+        return ('unwatched' if unwatch else 'watched') in result["watch"]
 
     @must_be(group='user')
     def purgepages(self, pages, **kwargs):
@@ -4005,28 +4728,38 @@ class APISite(BaseSite):
 
     @deprecated("Site().exturlusage")
     def linksearch(self, siteurl, limit=None):
-        """Backwards-compatible interface to exturlusage()"""
+        """Backwards-compatible interface to exturlusage()."""
         return self.exturlusage(siteurl, total=limit)
 
-    def getFilesFromAnHash(self, hash_found=None):
-        """Return all images that have the same hash.
-
-        Useful to find duplicates or nowcommons.
-
-        NOTE: it returns also the image itself, if you don't want it, just
-        filter the list returned.
-
-        NOTE 2: it returns the image title WITHOUT the image namespace.
-
-        """
+    def _get_titles_with_hash(self, hash_found=None):
+        """Helper for the deprecated method get(Files|Images)FromAnHash."""
+        # This should be removed with together with get(Files|Images)FromHash
         if hash_found is None:
+            # This makes absolutely NO sense.
+            pywikibot.warning(
+                'The "hash_found" parameter in "getFilesFromAnHash" and '
+                '"getImagesFromAnHash" are not optional.')
             return
         return [image.title(withNamespace=False)
                 for image in self.allimages(sha1=hash_found)]
 
-    @deprecated('Site().getFilesFromAnHash')
+    @deprecated('Site().allimages')
+    def getFilesFromAnHash(self, hash_found=None):
+        """
+        Return all files that have the same hash.
+
+        DEPRECATED: Use L{APISite.allimages} instead using 'sha1'.
+        """
+        return self._get_titles_with_hash(hash_found)
+
+    @deprecated('Site().allimages')
     def getImagesFromAnHash(self, hash_found=None):
-        return self.getFilesFromAnHash(hash_found)
+        """
+        Return all images that have the same hash.
+
+        DEPRECATED: Use L{APISite.allimages} instead using 'sha1'.
+        """
+        return self._get_titles_with_hash(hash_found)
 
     @must_be(group='user')
     def is_uploaddisabled(self):
@@ -4044,8 +4777,7 @@ class APISite(BaseSite):
             #    filekey, file, url, statuskey is required
             # TODO: is there another way?
             try:
-                dummy = pywikibot.FilePage(self, title='dummy')
-                token = self.token(dummy, 'edit')
+                token = self.tokens['edit']
                 req = api.Request(site=self, action="upload",
                                   token=token, throttle=False)
                 req.submit()
@@ -4088,7 +4820,6 @@ class APISite(BaseSite):
             and the chunk size is positive but lower than the file size.
         @type chunk_size: int
         """
-
         upload_warnings = {
             # map API warning codes to user error messages
             # %(msg)s will be replaced by message string from API responsse
@@ -4103,12 +4834,11 @@ class APISite(BaseSite):
 
         # check for required user right
         if "upload" not in self.userinfo["rights"]:
-            raise pywikibot.Error(
+            raise Error(
                 "User '%s' does not have upload rights on site %s."
                 % (self.user(), self))
         # check for required parameters
-        if (source_filename and source_url)\
-                or (source_filename is None and source_url is None):
+        if bool(source_filename) == bool(source_url):
             raise ValueError("APISite.upload: must provide either "
                              "source_filename or source_url, not both.")
         if comment is None:
@@ -4122,7 +4852,10 @@ class APISite(BaseSite):
             text = comment
         token = self.tokens['edit']
         result = None
+        file_page_title = filepage.title(withNamespace=False)
         if source_filename:
+            # TODO: Dummy value to allow also Unicode names, see bug 73661
+            mime_filename = 'FAKE-NAME'
             # upload local file
             # make sure file actually exists
             if not os.path.isfile(source_filename):
@@ -4131,19 +4864,23 @@ class APISite(BaseSite):
             additional_parameters = {}
             throttle = True
             filesize = os.path.getsize(source_filename)
-            if (chunk_size > 0 and chunk_size < filesize and
-                    LV(self.version()) >= LV('1.20')):
-                offset = 0
-                file_key = None
-                with open(source_filename, 'rb') as f:
+            chunked_upload = (chunk_size > 0 and chunk_size < filesize and
+                              MediaWikiVersion(self.version()) >= MediaWikiVersion('1.20'))
+            with open(source_filename, 'rb') as f:
+                if chunked_upload:
+                    offset = 0
+                    file_key = None
                     while True:
                         f.seek(offset)
                         chunk = f.read(chunk_size)
                         req = api.Request(site=self, action='upload', token=token,
-                                          stash='1', offset=offset, filesize=filesize,
-                                          filename=filepage.title(withNamespace=False),
+                                          stash=True, offset=offset, filesize=filesize,
+                                          filename=file_page_title,
+                                          ignorewarnings=ignore_warnings,
                                           mime_params={}, throttle=throttle)
-                        req.mime_params['chunk'] = (chunk, None, {'filename': req.params['filename']})
+                        req.mime_params['chunk'] = (chunk,
+                                                    ("application", "octet-stream"),
+                                                    {'filename': mime_filename})
                         if file_key:
                             req['filekey'] = file_key
                         try:
@@ -4154,38 +4891,49 @@ class APISite(BaseSite):
                             if error.code == u'uploaddisabled':
                                 self._uploaddisabled = True
                             raise error
-                        if 'warnings' in data:
+                        if 'warnings' in data and not ignore_warnings:
                             result = data
                             break
                         file_key = data['filekey']
                         throttle = False
-                        new_offset = int(data['offset'])
-                        if offset + len(chunk) != new_offset:
-                            pywikibot.warning('Unexpected offset.')
-                        offset = new_offset
+                        if 'offset' in data:
+                            new_offset = int(data['offset'])
+                            if offset + len(chunk) != new_offset:
+                                pywikibot.warning('Unexpected offset.')
+                            offset = new_offset
+                        else:
+                            pywikibot.warning('Offset was not supplied.')
+                            offset += len(chunk)
                         if data['result'] != 'Continue':  # finished
                             additional_parameters['filekey'] = file_key
                             break
-            else:
-                additional_parameters = {'file': source_filename, 'mime': True}
+                else:  # not chunked upload
+                    file_contents = f.read()
+                    filetype = (mimetypes.guess_type(source_filename)[0] or
+                                'application/octet-stream')
+                    additional_parameters = {
+                        'mime_params': {
+                            'file': (file_contents,
+                                     filetype.split('/'),
+                                     {'filename': mime_filename})
+                        }
+                    }
             req = api.Request(site=self, action="upload", token=token,
-                              filename=filepage.title(withNamespace=False),
+                              filename=file_page_title,
                               comment=comment, text=text, throttle=throttle,
                               **additional_parameters)
         else:
             # upload by URL
             if "upload_by_url" not in self.userinfo["rights"]:
-                raise pywikibot.Error(
+                raise Error(
                     "User '%s' is not authorized to upload by URL on site %s."
                     % (self.user(), self))
             req = api.Request(site=self, action="upload", token=token,
-                              filename=filepage.title(withNamespace=False),
+                              filename=file_page_title,
                               url=source_url, comment=comment, text=text)
         if not result:
-            if watch:
-                req["watch"] = ""
-            if ignore_warnings:
-                req["ignorewarnings"] = ""
+            req['watch'] = watch
+            req['ignorewarnings'] = ignore_warnings
             try:
                 result = req.submit()
                 self._uploaddisabled = False
@@ -4197,7 +4945,8 @@ class APISite(BaseSite):
             result = result["upload"]
             pywikibot.debug(result, _logger)
 
-        if "warnings" in result:
+        if "warnings" in result and not ignore_warnings:
+            # TODO: Handle multiple warnings at the same time
             warning = list(result["warnings"].keys())[0]
             message = result["warnings"][warning]
             raise pywikibot.UploadWarning(warning, upload_warnings[warning]
@@ -4212,11 +4961,11 @@ class APISite(BaseSite):
                 filepage._imageinfo = result["imageinfo"]
             return
 
-    @deprecate_arg("number", "step")
-    @deprecate_arg("repeat", None)
-    @deprecate_arg("namespace", "namespaces")
-    @deprecate_arg("rc_show", None)
-    @deprecate_arg("get_redirect", None)  # 20120822
+    @deprecated_args(number="step",
+                     repeat=None,
+                     namespace="namespaces",
+                     rc_show=None,
+                     get_redirect=None)  # 20120822
     def newpages(self, user=None, returndict=False,
                  start=None, end=None, reverse=False, showBot=False,
                  showRedirects=False, excludeuser=None,
@@ -4233,6 +4982,13 @@ class APISite(BaseSite):
         timestamp (unicode), length (int), an empty unicode string, username
         or IP address (str), comment (unicode).
 
+        @param namespaces: only iterate pages in these namespaces
+        @type namespaces: iterable of basestring or Namespace key,
+            or a single instance of those types.  May be a '|' separated
+            list of namespace identifiers.
+        @raises KeyError: a namespace identifier was not resolved
+        @raises TypeError: a namespace identifier has an inappropriate
+            type such as NoneType or bool
         """
         # TODO: update docstring
 
@@ -4276,18 +5032,23 @@ class APISite(BaseSite):
             yield (filepage, date, user, comment)
 
     @deprecated("Site().newfiles()")
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def newimages(self, *args, **kwargs):
+        """
+        Yield information about newly uploaded files.
+
+        DEPRECATED: Use newfiles() instead.
+        """
         return self.newfiles(*args, **kwargs)
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def longpages(self, step=None, total=None):
         """Yield Pages and lengths from Special:Longpages.
 
         Yields a tuple of Page object, length(int).
 
+        @param step: request batch size
+        @param total: number of pages to return
         """
         lpgen = self._generator(api.ListGenerator,
                                 type_arg="querypage", qppage="Longpages",
@@ -4296,13 +5057,14 @@ class APISite(BaseSite):
             yield (pywikibot.Page(self, pageitem['title']),
                    int(pageitem['value']))
 
-    @deprecate_arg("number", "total")
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number="total", repeat=None)
     def shortpages(self, step=None, total=None):
         """Yield Pages and lengths from Special:Shortpages.
 
         Yields a tuple of Page object, length(int).
 
+        @param step: request batch size
+        @param total: number of pages to return
         """
         spgen = self._generator(api.ListGenerator,
                                 type_arg="querypage", qppage="Shortpages",
@@ -4311,19 +5073,25 @@ class APISite(BaseSite):
             yield (pywikibot.Page(self, pageitem['title']),
                    int(pageitem['value']))
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def deadendpages(self, step=None, total=None):
-        """Yield Page objects retrieved from Special:Deadendpages."""
+        """Yield Page objects retrieved from Special:Deadendpages.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         degen = self._generator(api.PageGenerator,
                                 type_arg="querypage", gqppage="Deadendpages",
                                 step=step, total=total)
         return degen
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def ancientpages(self, step=None, total=None):
-        """Yield Pages, datestamps from Special:Ancientpages."""
+        """Yield Pages, datestamps from Special:Ancientpages.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         apgen = self._generator(api.ListGenerator,
                                 type_arg="querypage", qppage="Ancientpages",
                                 step=step, total=total)
@@ -4331,20 +5099,24 @@ class APISite(BaseSite):
             yield (pywikibot.Page(self, pageitem['title']),
                    pywikibot.Timestamp.fromISOformat(pageitem['timestamp']))
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def lonelypages(self, step=None, total=None):
-        """Yield Pages retrieved from Special:Lonelypages."""
+        """Yield Pages retrieved from Special:Lonelypages.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         lpgen = self._generator(api.PageGenerator,
                                 type_arg="querypage", gqppage="Lonelypages",
                                 step=step, total=total)
         return lpgen
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def unwatchedpages(self, step=None, total=None):
         """Yield Pages from Special:Unwatchedpages (requires Admin privileges).
 
+        @param step: request batch size
+        @param total: number of pages to return
         """
         uwgen = self._generator(api.PageGenerator,
                                 type_arg="querypage", gqppage="Unwatchedpages",
@@ -4354,28 +5126,48 @@ class APISite(BaseSite):
     def wantedpages(self, step=None, total=None):
         """Yield Pages from Special:Wantedpages.
 
+        @param step: request batch size
+        @param total: number of pages to return
         """
         wpgen = self._generator(api.PageGenerator,
                                 type_arg="querypage", gqppage="Wantedpages",
                                 step=step, total=total)
         return wpgen
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    def wantedcategories(self, step=None, total=None):
+        """Yield Pages from Special:Wantedcategories.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
+        wcgen = self._generator(api.CategoryPageGenerator,
+                                type_arg="querypage", gqppage="Wantedcategories",
+                                step=step, total=total)
+
+        return wcgen
+
+    @deprecated_args(number=None, repeat=None)
     def uncategorizedcategories(self, number=None, repeat=True,
                                 step=None, total=None):
-        """Yield Categories from Special:Uncategorizedcategories."""
+        """Yield Categories from Special:Uncategorizedcategories.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         ucgen = self._generator(api.CategoryPageGenerator,
                                 type_arg="querypage",
                                 gqppage="Uncategorizedcategories",
                                 step=step, total=total)
         return ucgen
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def uncategorizedimages(self, number=None, repeat=True,
                             step=None, total=None):
-        """Yield FilePages from Special:Uncategorizedimages."""
+        """Yield FilePages from Special:Uncategorizedimages.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         uigen = self._generator(api.ImagePageGenerator,
                                 type_arg="querypage",
                                 gqppage="Uncategorizedimages",
@@ -4385,32 +5177,41 @@ class APISite(BaseSite):
     # synonym
     uncategorizedfiles = uncategorizedimages
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def uncategorizedpages(self, number=None, repeat=True,
                            step=None, total=None):
-        """Yield Pages from Special:Uncategorizedpages."""
+        """Yield Pages from Special:Uncategorizedpages.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         upgen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="Uncategorizedpages",
                                 step=step, total=total)
         return upgen
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def uncategorizedtemplates(self, number=None, repeat=True, step=None,
                                total=None):
-        """Yield Pages from Special:Uncategorizedtemplates."""
+        """Yield Pages from Special:Uncategorizedtemplates.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         utgen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="Uncategorizedtemplates",
                                 step=step, total=total)
         return utgen
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def unusedcategories(self, step=None, total=None):
-        """Yield Category objects from Special:Unusedcategories."""
+        """Yield Category objects from Special:Unusedcategories.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         ucgen = self._generator(api.CategoryPageGenerator,
                                 type_arg="querypage",
                                 gqppage="Unusedcategories",
@@ -4418,7 +5219,11 @@ class APISite(BaseSite):
         return ucgen
 
     def unusedfiles(self, step=None, total=None):
-        """Yield FilePage objects from Special:Unusedimages."""
+        """Yield FilePage objects from Special:Unusedimages.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         uigen = self._generator(api.ImagePageGenerator,
                                 type_arg="querypage",
                                 gqppage="Unusedimages",
@@ -4426,15 +5231,21 @@ class APISite(BaseSite):
         return uigen
 
     @deprecated("Site().unusedfiles()")
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def unusedimages(self, *args, **kwargs):
+        """Yield FilePage objects from Special:Unusedimages.
+
+        DEPRECATED: Use L{APISite.unusedfiles} instead.
+        """
         return self.unusedfiles(*args, **kwargs)
 
-    @deprecate_arg("number", None)
-    @deprecate_arg("repeat", None)
+    @deprecated_args(number=None, repeat=None)
     def withoutinterwiki(self, step=None, total=None):
-        """Yield Pages without language links from Special:Withoutinterwiki."""
+        """Yield Pages without language links from Special:Withoutinterwiki.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         wigen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="Withoutinterwiki",
@@ -4443,7 +5254,11 @@ class APISite(BaseSite):
 
     @need_version("1.18")
     def broken_redirects(self, step=None, total=None):
-        """Yield Pages without language links from Special:BrokenRedirects."""
+        """Yield Pages without language links from Special:BrokenRedirects.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         brgen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="BrokenRedirects",
@@ -4452,7 +5267,11 @@ class APISite(BaseSite):
 
     @need_version("1.18")
     def double_redirects(self, step=None, total=None):
-        """Yield Pages without language links from Special:BrokenRedirects."""
+        """Yield Pages without language links from Special:BrokenRedirects.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         drgen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="DoubleRedirects",
@@ -4461,7 +5280,11 @@ class APISite(BaseSite):
 
     @need_version("1.18")
     def redirectpages(self, step=None, total=None):
-        """Yield redirect pages from Special:ListRedirects."""
+        """Yield redirect pages from Special:ListRedirects.
+
+        @param step: request batch size
+        @param total: number of pages to return
+        """
         lrgen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="Listredirects",
@@ -4473,9 +5296,9 @@ class DataSite(APISite):
 
     """Wikibase data capable site."""
 
-    def __init__(self, code, fam, user, sysop):
+    def __init__(self, *args, **kwargs):
         """Constructor."""
-        APISite.__init__(self, code, fam, user, sysop)
+        super(DataSite, self).__init__(*args, **kwargs)
         self._item_namespace = None
         self._property_namespace = None
 
@@ -4485,7 +5308,10 @@ class DataSite(APISite):
         self._property_namespace = False
 
         for namespace in self.namespaces().values():
-            content_model = namespace.info.get('defaultcontentmodel')
+            if not hasattr(namespace, 'defaultcontentmodel'):
+                continue
+
+            content_model = namespace.defaultcontentmodel
             if content_model == 'wikibase-item':
                 self._item_namespace = namespace
             elif content_model == 'wikibase-property':
@@ -4505,7 +5331,7 @@ class DataSite(APISite):
         if isinstance(self._item_namespace, Namespace):
             return self._item_namespace
         else:
-            raise pywikibot.exceptions.EntityTypeUnknownException(
+            raise EntityTypeUnknownException(
                 '%r does not support entity type "item"'
                 % self)
 
@@ -4523,7 +5349,7 @@ class DataSite(APISite):
         if isinstance(self._property_namespace, Namespace):
             return self._property_namespace
         else:
-            raise pywikibot.exceptions.EntityTypeUnknownException(
+            raise EntityTypeUnknownException(
                 '%r does not support entity type "property"'
                 % self)
 
@@ -4610,16 +5436,26 @@ class DataSite(APISite):
         Note that pages will be iterated in a different order
         than in the underlying pagelist.
 
-        @param pagelist: an iterable that yields ItemPage objects
+        @param pagelist: an iterable that yields either WikibasePage objects,
+                         or Page objects linked to an ItemPage.
         @param groupsize: how many pages to query at a time
         @type groupsize: int
         """
         for sublist in itergroup(pagelist, groupsize):
             req = {'ids': [], 'titles': [], 'sites': []}
             for p in sublist:
-                ident = p._defined_by()
-                for key in ident:
-                    req[key].append(ident[key])
+                if isinstance(p, pywikibot.page.WikibasePage):
+                    ident = p._defined_by()
+                    for key in ident:
+                        req[key].append(ident[key])
+                else:
+                    assert(p.site.has_data_repository)
+                    if (p.site == p.site.data_repository() and
+                            p.namespace() == p.data_repository.item_namespace):
+                        req['ids'].append(p.title(withNamespace=False))
+                    else:
+                        req['sites'].append(p.site.dbName())
+                        req['titles'].append(p._link._text)
 
             req = api.Request(site=self, action='wbgetentities', **req)
             data = req.submit()
@@ -4682,7 +5518,7 @@ class DataSite(APISite):
 
         params = dict(action='wbcreateclaim',
                       entity=item.getID(),
-                      baserevid=item.latestRevision(),
+                      baserevid=item.latest_revision_id,
                       snaktype=claim.getSnakType(),
                       property=claim.getID(),
                       )
@@ -4717,7 +5553,7 @@ class DataSite(APISite):
             raise NotImplementedError
         if not claim.snak:
             # We need to already have the snak value
-            raise pywikibot.NoPage(claim)
+            raise NoPage(claim)
         params = dict(action='wbsetclaimvalue',
                       claim=claim.snak,
                       snaktype=snaktype,
@@ -4948,6 +5784,31 @@ class DataSite(APISite):
         }
         result = self.editEntity({}, data, bot=bot, **kwargs)
         return pywikibot.ItemPage(self, result['entity']['id'])
+
+    def search_entities(self, search, language, limit=None, **kwargs):
+        """
+        Search for pages or properties that contain the given text.
+
+        @param search: Text to find.
+        @type search: str
+        @param language: Language to search in.
+        @type language: str
+        @param limit: Maximum number of pages to retrieve in total, or None in
+            case of no limit.
+        @type limit: int or None
+        @return: 'search' list from API output.
+        """
+        lang_codes = [lang['code'] for lang in self._siteinfo.get('languages')]
+        if language not in lang_codes:
+            raise ValueError(u'Data site used does not support provided '
+                             u'language.')
+
+        gen = api.APIGenerator('wbsearchentities', data_name='search',
+                               search=search, language=language, **kwargs)
+        gen.set_query_increment(50)
+        if limit is not None:
+            gen.set_maximum_items(limit)
+        return gen
 
     # deprecated BaseSite methods
     def fam(self):

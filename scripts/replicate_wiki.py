@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8  -*-
 """
-This bot replicates all pages (from specific namespaces) in a wiki to a second
-wiki within one family.
+This bot replicates pages in a wiki to a second wiki within one family.
 
 Example:
 python replicate_wiki.py [-r] -ns 10 -f wikipedia -o nl li fy
@@ -18,8 +17,23 @@ replicate_replace = {
     'wikipedia:li': {'Hoofdpagina': 'Veurblaad'}
 }
 
-to replace all occurences of 'Hoofdpagina' with 'Veurblaad' when writing to
+to replace all occurrences of 'Hoofdpagina' with 'Veurblaad' when writing to
 liwiki. Note that this does not take the origin wiki into account.
+
+The following parameters are supported:
+-r                actually replace pages (without this option
+--replace         you will only get an overview page)
+
+-o                original wiki
+--original
+
+destination_wiki  destination wiki(s)
+
+-ns               specify namespace
+--namespace
+
+-dns              destination namespace (if different)
+--dest-namespace
 """
 #
 # (C) Kasper Souren, 2012-2013
@@ -64,7 +78,7 @@ class SyncSites:
 
         pywikibot.output("Syncing from " + original_wiki)
 
-        family = options.family or config.family
+        family = config.family
 
         sites = options.destination_wiki
 
@@ -81,7 +95,7 @@ class SyncSites:
 
         self.differences = {}
         self.user_diff = {}
-        pywikibot.output('Syncing to', newline=False)
+        pywikibot.output('Syncing to ', newline=False)
         for s in self.sites:
             s.login()
             self.differences[s] = []
@@ -116,8 +130,8 @@ class SyncSites:
         ]
 
         if self.options.namespace:
-            pywikibot.output(str(options.namespace))
-            namespaces = [int(options.namespace)]
+            pywikibot.output(str(self.options.namespace))
+            namespaces = [int(self.options.namespace)]
         pywikibot.output("Checking these namespaces: %s\n" % (namespaces,))
 
         for ns in namespaces:
@@ -176,8 +190,8 @@ class SyncSites:
         txt1 = page1.text
 
         for site in self.sites:
-            if options.dest_namespace:
-                prefix = namespaces(site)[int(options.dest_namespace)]
+            if self.options.dest_namespace:
+                prefix = namespaces(site)[int(self.options.dest_namespace)]
                 if prefix:
                     prefix += ':'
                 new_pagename = prefix + page1.titleWithoutNamespace()
@@ -213,28 +227,30 @@ class SyncSites:
             sys.stdout.flush()
 
 
-if __name__ == '__main__':
+def main(*args):
     from argparse import ArgumentParser
 
-    parser = ArgumentParser()
-    parser.add_argument("-f", "--family", dest="family",
-                        help="wiki family")
+    my_args = pywikibot.handle_args(args)
 
+    parser = ArgumentParser(add_help=False)
     parser.add_argument("-r", "--replace", action="store_true",
-                        help="actually replace pages (without this option you will only get an overview page)")
+                        help="actually replace pages (without this "
+                             "option you will only get an overview page)")
     parser.add_argument("-o", "--original", dest="original_wiki",
                         help="original wiki")
-    parser.add_argument('destination_wiki', metavar='destination', type=str, nargs='+',
-                        help='destination wiki(s)')
+    parser.add_argument('destination_wiki', metavar='destination',
+                        type=str, nargs='+', help='destination wiki(s)')
     parser.add_argument("-ns", "--namespace", dest="namespace",
                         help="specify namespace")
     parser.add_argument("-dns", "--dest-namespace", dest="dest_namespace",
                         help="destination namespace (if different)")
 
-    (options, args) = parser.parse_known_args()
+    options = parser.parse_args(my_args)
 
-    # sync is global for convenient IPython debugging
     sync = SyncSites(options)
     sync.check_sysops()
     sync.check_namespaces()
     sync.generate_overviews()
+
+if __name__ == '__main__':
+    main()

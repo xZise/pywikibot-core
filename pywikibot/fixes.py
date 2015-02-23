@@ -1,15 +1,15 @@
 # -*- coding: utf-8  -*-
 """File containing all standard fixes."""
-
 #
 # (C) Pywikibot team, 2008-2010
 #
 # Distributed under the terms of the MIT license.
 #
 __version__ = '$Id$'
-#
 
-help = u"""
+parameter_help = u"""
+                  Currently available predefined fixes are:
+
                   * HTML        - Convert HTML tags to wiki syntax, and
                                   fix XHTML.
                   * isbn        - Fix badly formatted ISBNs.
@@ -31,8 +31,9 @@ help = u"""
                   * fckeditor   - Try to convert FCKeditor HTML tags to wiki
                                   syntax.
                                   https://lists.wikimedia.org/pipermail/wikibots-l/2009-February/000290.html
-
 """
+
+__doc__ = __doc__ + parameter_help
 
 fixes = {
     # These replacements will convert HTML to wiki syntax where possible, and
@@ -67,9 +68,9 @@ fixes = {
             # Keep in mind that MediaWiki automatically converts <br> to <br />
             # when rendering pages, so you might comment the next two lines out
             # to save some time/edits.
-            #(r'(?i)<br>',                      r'<br />'),
+            (r'(?i)<br *>',                      r'<br />'),
             # linebreak with attributes
-            #(r'(?i)<br ([^>/]+?)>',            r'<br \1 />'),
+            (r'(?i)<br ([^>/]+?)>',            r'<br \1 />'),
             (r'(?i)<b>(.*?)</b>',              r"'''\1'''"),
             (r'(?i)<strong>(.*?)</strong>',    r"'''\1'''"),
             (r'(?i)<i>(.*?)</i>',              r"''\1''"),
@@ -77,7 +78,7 @@ fixes = {
             # horizontal line without attributes in a single line
             (r'(?i)([\r\n])<hr[ /]*>([\r\n])', r'\1----\2'),
             # horizontal line without attributes with more text in the same line
-            #(r'(?i) +<hr[ /]*> +',             r'\r\n----\r\n'),
+            #   (r'(?i) +<hr[ /]*> +',             r'\r\n----\r\n'),
             # horizontal line with attributes; can't be done with wiki syntax
             # so we only make it XHTML compliant
             (r'(?i)<hr ([^>/]+?)>',            r'<hr \1 />'),
@@ -108,27 +109,34 @@ fixes = {
             'de': u'Bot: korrigiere Grammatik',
         },
         'replacements': [
-            #(u'([Ss]owohl) ([^,\.]+?), als auch',                                                            r'\1 \2 als auch'),
-            #(u'([Ww]eder) ([^,\.]+?), noch', r'\1 \2 noch'),
+            #   (u'([Ss]owohl) ([^,\.]+?), als auch', r'\1 \2 als auch'),
+            #   (u'([Ww]eder) ([^,\.]+?), noch', r'\1 \2 noch'),
             #
             # Vorsicht bei Substantiven, z. B. 3-Jähriger!
-            (u'(\d+)(minütig|stündig|tägig|wöchig|jährig|minütlich|stündlich|täglich|wöchentlich|jährlich|fach|mal|malig|köpfig|teilig|gliedrig|geteilt|elementig|dimensional|bändig|eckig|farbig|stimmig)', r'\1-\2'),
+            (u'(\d+)(minütig|stündig|tägig|wöchig|jährig|minütlich|stündlich'
+             u'|täglich|wöchentlich|jährlich|fach|mal|malig|köpfig|teilig'
+             u'|gliedrig|geteilt|elementig|dimensional|bändig|eckig|farbig'
+             u'|stimmig)', r'\1-\2'),
             # zusammengesetztes Wort, Bindestrich wird durchgeschleift
-            (u'(?<!\w)(\d+|\d+[\.,]\d+)(\$|€|DM|£|¥|mg|g|kg|ml|cl|l|t|ms|min|µm|mm|cm|dm|m|km|ha|°C|kB|MB|GB|TB|W|kW|MW|GW|PS|Nm|eV|kcal|mA|mV|kV|Ω|Hz|kHz|MHz|GHz|mol|Pa|Bq|Sv|mSv)([²³]?-[\w\[])',           r'\1-\2\3'),
+            (u'(?<!\w)(\d+|\d+[\.,]\d+)(\$|€|DM|£|¥|mg|g|kg|ml|cl|l|t|ms|min'
+             u'|µm|mm|cm|dm|m|km|ha|°C|kB|MB|GB|TB|W|kW|MW|GW|PS|Nm|eV|kcal'
+             u'|mA|mV|kV|Ω|Hz|kHz|MHz|GHz|mol|Pa|Bq|Sv|mSv)([²³]?-[\w\[])', r'\1-\2\3'),
             # Größenangabe ohne Leerzeichen vor Einheit
             # weggelassen wegen vieler falsch Positiver: s, A, V, C, S, J, %
-            (u'(?<!\w)(\d+|\d+[\.,]\d+)(\$|€|DM|£|¥|mg|g|kg|ml|cl|l|t|ms|min|µm|mm|cm|dm|m|km|ha|°C|kB|MB|GB|TB|W|kW|MW|GW|PS|Nm|eV|kcal|mA|mV|kV|Ω|Hz|kHz|MHz|GHz|mol|Pa|Bq|Sv|mSv)(?=\W|²|³|$)',          r'\1 \2'),
+            (u'(?<!\w)(\d+|\d+[\.,]\d+)(\$|€|DM|£|¥|mg|g|kg|ml|cl|l|t|ms|min'
+             u'|µm|mm|cm|dm|m|km|ha|°C|kB|MB|GB|TB|W|kW|MW|GW|PS|Nm|eV|kcal'
+             u'|mA|mV|kV|Ω|Hz|kHz|MHz|GHz|mol|Pa|Bq|Sv|mSv)(?=\W|²|³|$)', r'\1 \2'),
             # Temperaturangabe mit falsch gesetztem Leerzeichen
-            (u'(?<!\w)(\d+|\d+[\.,]\d+)° C(?=\W|²|³|$)',          r'\1' + u' °C'),
+            (u'(?<!\w)(\d+|\d+[\.,]\d+)° C(?=\W|²|³|$)', r'\1' + u' °C'),
             # Kein Leerzeichen nach Komma
-            (u'([a-zäöüß](\]\])?,)((\[\[)?[a-zäöüA-ZÄÖÜ])',                                                                          r'\1 \3'),
+            (u'([a-zäöüß](\]\])?,)((\[\[)?[a-zäöüA-ZÄÖÜ])', r'\1 \3'),
             # Leerzeichen und Komma vertauscht
-            (u'([a-zäöüß](\]\])?) ,((\[\[)?[a-zäöüA-ZÄÖÜ])',                                                                          r'\1, \3'),
+            (u'([a-zäöüß](\]\])?) ,((\[\[)?[a-zäöüA-ZÄÖÜ])', r'\1, \3'),
             # Plenks (d. h. Leerzeichen auch vor dem Komma/Punkt/Ausrufezeichen/Fragezeichen)
             # Achtung bei Französisch: https://de.wikipedia.org/wiki/Plenk#Sonderfall_Franz.C3.B6sisch
             # Leerzeichen vor Doppelpunkt/Semikolon kann korrekt sein, nach irgendeiner Norm für Zitationen.
-            (u'([a-zäöüß](\]\])?) ([,\.!\?]) ((\[\[)?[a-zäöüA-ZÄÖÜ])',                                                                          r'\1\3 \4'),
-            #(u'([a-z]\.)([A-Z])',                                                                             r'\1 \2'),
+            (u'([a-zäöüß](\]\])?) ([,\.!\?]) ((\[\[)?[a-zäöüA-ZÄÖÜ])', r'\1\3 \4'),
+            #   (u'([a-z]\.)([A-Z])', r'\1 \2'),
         ],
         'exceptions': {
             'inside-tags': [
@@ -162,11 +170,15 @@ fixes = {
                 r'/\w(,\w)*/',      # Laut-Aufzählung in der Linguistik
                 r'[xyz](,[xyz])+',  # Variablen in der Mathematik (unklar, ob Leerzeichen hier Pflicht sind)
                 r'(?m)^;(.*?)$',    # Definitionslisten, dort gibt es oft absichtlich Leerzeichen vor Doppelpunkten
-                r'\d+h( |&nbsp;)\d+m',  # Schreibweise für Zeiten, vor allem in Film-Infoboxen. Nicht korrekt, aber dafür schön kurz.
+                r'\d+h( |&nbsp;)\d+m',
+                # Schreibweise für Zeiten, vor allem in Film-Infoboxen.
+                # Nicht korrekt, aber dafür schön kurz.
                 r'(?i)\[\[(Bild|Image|Media):.+?\|',  # Dateinamen auslassen
-                r'{{bgc\|.*?}}',  # Hintergrundfarbe
+                r'{{bgc\|.*?}}',                      # Hintergrundfarbe
                 r'<sup>\d+m</sup>',                   # bei chemischen Formeln
-                r'\([A-Z][A-Za-z]*(,[A-Z][A-Za-z]*(<sup>.*?</sup>|<sub>.*?</sub>|))+\)'  # chemische Formel, z. B. AuPb(Pb,Sb,Bi)Te. Hier sollen keine Leerzeichen hinter die Kommata.
+                r'\([A-Z][A-Za-z]*(,[A-Z][A-Za-z]*(<sup>.*?</sup>|<sub>.*?</sub>|))+\)'
+                # chemische Formel, z. B. AuPb(Pb,Sb,Bi)Te.
+                # Hier sollen keine Leerzeichen hinter die Kommata.
             ],
             'title': [
                 r'Arsen',  # chemische Formel
@@ -207,7 +219,7 @@ fixes = {
             # external link starting with double bracket
             (r'\[\[(?P<url>https?://.+?)\]',   r'[\g<url>]'),
             # external link with forgotten closing bracket
-            #(r'\[(?P<url>https?://[^\]\s]+)\r\n',  r'[\g<url>]\r\n'),
+            #   (r'\[(?P<url>https?://[^\]\s]+)\r\n',  r'[\g<url>]\r\n'),
             # external link ending with double bracket.
             # do not change weblinks that contain wiki links inside
             # inside the description
@@ -283,7 +295,7 @@ fixes = {
             # external link starting with double bracket
             (r'\[\[(?P<url>https?://.+?)\]',   r'[\g<url>]'),
             # external link with forgotten closing bracket
-            #(r'\[(?P<url>https?://[^\]\s]+)\r\n',   r'[\g<url>]\r\n'),
+            #   (r'\[(?P<url>https?://[^\]\s]+)\r\n',   r'[\g<url>]\r\n'),
             # external link and description separated by a dash, with
             # whitespace in front of the dash, so that it is clear that
             # the dash is not a legitimate part of the URL.
@@ -291,7 +303,8 @@ fixes = {
             # dash in external link, where the correct end of the URL can
             # be detected from the file extension. It is very unlikely that
             # this will cause mistakes.
-            (r'\[(?P<url>https?://[^\|\] ]+?(\.pdf|\.html|\.htm|\.php|\.asp|\.aspx|\.jsp)) *\| *(?P<label>[^\|\]]+?)\]', r'[\g<url> \g<label>]'),
+            (r'\[(?P<url>https?://[^\|\] ]+?(\.pdf|\.html|\.htm|\.php|\.asp|\.aspx|\.jsp)) *\|'
+             r' *(?P<label>[^\|\]]+?)\]', r'[\g<url> \g<label>]'),
         ],
         'exceptions': {
             'inside-tags': [
@@ -382,22 +395,26 @@ fixes = {
         },
         'replacements': [
             # space after birth sign w/ year
-            #(u'\(\*(\d{3,4})', u'(* \\1'),
-            ## space after death sign w/ year
-            #(u'†(\d{3,4})', u'† \\1'),
-            #(u'&dagger;(\d{3,4})', u'† \\1'),
-            ## space after birth sign w/ linked date
-            #(u'\(\*\[\[(\d)', u'(* [[\\1'),
-            ## space after death sign w/ linked date
-            #(u'†\[\[(\d)', u'† [[\\1'),
-            #(u'&dagger;\[\[(\d)', u'† [[\\1'),
-            (u'\[\[(\d+\. (?:Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)) (\d{1,4})\]\]', u'[[\\1]] [[\\2]]'),
+            #   (u'\(\*(\d{3,4})', u'(* \\1'),
+            # space after death sign w/ year
+            #   (u'†(\d{3,4})', u'† \\1'),
+            #   (u'&dagger;(\d{3,4})', u'† \\1'),
+            # space after birth sign w/ linked date
+            #   (u'\(\*\[\[(\d)', u'(* [[\\1'),
+            # space after death sign w/ linked date
+            #   (u'†\[\[(\d)', u'† [[\\1'),
+            #   (u'&dagger;\[\[(\d)', u'† [[\\1'),
+            (u'\[\[(\d+\. (?:Januar|Februar|März|April|Mai|Juni|Juli|August|'
+             u'September|Oktober|November|Dezember)) (\d{1,4})\]\]', u'[[\\1]] [[\\2]]'),
             # Keine führende Null beim Datum (ersteinmal nur bei denen, bei denen auch ein Leerzeichen fehlt)
-            (u'0(\d+)\.(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)', r'\1. \2'),
+            (u'0(\d+)\.(Januar|Februar|März|April|Mai|Juni|Juli|August|'
+             u'September|Oktober|November|Dezember)', r'\1. \2'),
             # Kein Leerzeichen zwischen Tag und Monat
-            (u'(\d+)\.(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)', r'\1. \2'),
+            (u'(\d+)\.(Januar|Februar|März|April|Mai|Juni|Juli|August|'
+             u'September|Oktober|November|Dezember)', r'\1. \2'),
             # Kein Punkt vorm Jahr
-            (u'(\d+)\. (Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\.(\d{1,4})', r'\1. \2 \3'),
+            (u'(\d+)\. (Januar|Februar|März|April|Mai|Juni|Juli|August|'
+             u'September|Oktober|November|Dezember)\.(\d{1,4})', r'\1. \2 \3'),
         ],
         'exceptions': {
             'inside': [
@@ -429,10 +446,15 @@ fixes = {
             # and copying back the results.
 
             # ur'ISBN (978|979) *[\- −\.‐-―] *(\d+) *[\- −\.‐-―] *(\d+) *[\- −\.‐-―] *(\d+) *[\- −\.‐-―] *(\d)(?!\d)'
-            (u'ISBN (978|979) *[\\- \u2212\\.\u2010-\u2015] *(\\d+) *[\\- \u2212\\.\u2010-\u2015] *(\\d+) *[\\- \u2212\\.\u2010-\u2015] *(\\d+) *[\\- \u2212\\.\u2010-\u2015] *(\\d)(?!\\d)', r'ISBN \1-\2-\3-\4-\5'),  # ISBN-13
+            (u'ISBN (978|979) *[\\- \u2212\\.\u2010-\u2015] *(\\d+) *[\\- '
+             u'\u2212\\.\u2010-\u2015] *(\\d+) *[\\- \u2212\\.\u2010-\u2015] '
+             u'*(\\d+) *[\\- \u2212\\.\u2010-\u2015] *(\\d)(?!\\d)',
+             r'ISBN \1-\2-\3-\4-\5'),  # ISBN-13
 
             # ur'ISBN (\d+) *[\- −\.‐-―] *(\d+) *[\- −\.‐-―] *(\d+) *[\- −\.‐-―] *(\d|X|x)(?!\d)'
-            (u'ISBN (\\d+) *[\\- \u2212\\.\u2010-\u2015] *(\\d+) *[\\- \u2212\\.\u2010-\u2015] *(\\d+) *[\\- \u2212\\.\u2010-\u2015] *(\\d|X|x)(?!\\d)', r'ISBN \1-\2-\3-\4'),  # ISBN-10
+            (u'ISBN (\\d+) *[\\- \u2212\\.\u2010-\u2015] *(\\d+) *[\\- '
+             u'\u2212\\.\u2010-\u2015] *(\\d+) *[\\- \u2212\\.\u2010-\u2015] '
+             '*(\\d|X|x)(?!\\d)', r'ISBN \1-\2-\3-\4'),  # ISBN-10
             # missing space before ISBN-10 or before ISBN-13,
             # or non-breaking space.
             (r'ISBN(|&nbsp;| )((\d(-?)){12}\d|(\d(-?)){9}[\dXx])', r'ISBN \2'),
@@ -458,7 +480,9 @@ fixes = {
             'ar': u'تدقيق إملائي',
         },
         'replacements': [
-            #(u' ,', u' ،'), # FIXME: Do not replace comma in non-Arabic text, interwiki, image links or <math> syntax.
+            # FIXME: Do not replace comma in non-Arabic text,
+            # interwiki, image links or <math> syntax.
+            #   (u' ,', u' ،'),
             (r'\b' + u'إمرأة' + r'\b', u'امرأة'),
             (r'\b' + u'الى' + r'\b', u'إلى'),
             (r'\b' + u'إسم' + r'\b', u'اسم'),

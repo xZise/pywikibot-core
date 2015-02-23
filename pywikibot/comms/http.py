@@ -13,7 +13,7 @@ This module is responsible for
 """
 
 #
-# (C) Pywikibot team, 2007-2014
+# (C) Pywikibot team, 2007-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -42,39 +42,42 @@ if StrictVersion(httplib2.__version__) < StrictVersion("0.6.0"):
           httplib2.__file__)
     sys.exit(1)
 
-if sys.version_info[0] == 2:
+if sys.version_info[0] > 2:
+    from ssl import SSLError as SSLHandshakeError
+    import queue as Queue
+    from http import cookiejar as cookielib
+    from urllib.parse import quote
+else:
     if 'SSLHandshakeError' in httplib2.__dict__:
         from httplib2 import SSLHandshakeError
     elif httplib2.__version__ == '0.6.0':
         from httplib2 import ServerNotFoundError as SSLHandshakeError
 
     import Queue
-    import urlparse
     import cookielib
     from urllib2 import quote
-else:
-    from ssl import SSLError as SSLHandshakeError
-    import queue as Queue
-    import urllib.parse as urlparse
-    from http import cookiejar as cookielib
-    from urllib.parse import quote
 
 from pywikibot import config
-from pywikibot.exceptions import FatalServerError, Server504Error
+from pywikibot.exceptions import (
+    FatalServerError, Server504Error, Server414Error
+)
 from pywikibot.comms import threadedhttp
 from pywikibot.tools import deprecate_arg
 import pywikibot.version
 
+if sys.version_info[:3] >= (2, 7, 9):
+    # Python 2.7.9 includes a backport of the ssl module from Python 3
+    # https://www.python.org/dev/peps/pep-0466/
+    SSL_CERT_VERIFY_FAILED_MSG = "SSL: CERTIFICATE_VERIFY_FAILED"
+else:
+    # The OpenSSL error code for
+    #   certificate verify failed
+    # cf. `openssl errstr 14090086`
+    SSL_CERT_VERIFY_FAILED_MSG = ":14090086:"
+
 _logger = "comm.http"
 
-
 # global variables
-
-# The OpenSSL error code for
-#   certificate verify failed
-# cf. `openssl errstr 14090086`
-SSL_CERT_VERIFY_FAILED = ":14090086:"
-
 
 numthreads = 1
 threads = []
@@ -161,6 +164,17 @@ def user_agent_username(username=None):
 
 
 def user_agent(site=None, format_string=None):
+    """
+    Generate the user agent string for a given site and format.
+
+    @param site: The site for which this user agent is intended. May be None.
+    @type site: BaseSite
+    @param format_string: The string to which the values will be added using
+        str.format. Is using config.user_agent_format when it is None.
+    @type format_string: basestring
+    @return: The formatted user agent
+    @rtype: unicode
+    """
     values = USER_AGENT_PRODUCTS.copy()
 
     # This is the Pywikibot revision; also map it to {version} at present.
@@ -206,70 +220,144 @@ def user_agent(site=None, format_string=None):
 
 
 @deprecate_arg('ssl', None)
-def request(site=None, uri=None, *args, **kwargs):
-    """Queue a request to be submitted to Site.
+def request(site=None, uri=None, charset=None, *args, **kwargs):
+    """
+    Request to Site with default error handling and response decoding.
 
-    All parameters not listed below are the same as
-    L{httplib2.Http.request}.
+    See L{httplib2.Http.request} for additional parameters.
 
-    If the site argument is provided, the uri is relative to the site's
-    scriptpath.
+    If the site argument is provided, the uri is a relative uri from
+    and including the document root '/'.
 
-    If the site argument is None, the uri must be absolute, and is
-    used for requests to non wiki pages.
+    If the site argument is None, the uri must be absolute.
 
     @param site: The Site to connect to
-    @type site: L{pywikibot.site.Site}
+    @type site: L{pywikibot.site.BaseSite}
     @param uri: the URI to retrieve
     @type uri: str
-    @return: The received data (a unicode string).
-
+    @param charset: Either a valid charset (usable for str.decode()) or None
+        to automatically chose the charset from the returned header (defaults
+        to latin-1)
+    @type charset: CodecInfo, str, None
+    @return: The received data
+    @rtype: a unicode string
     """
     assert(site or uri)
-    if site:
-        proto = site.protocol()
-        if proto == 'https':
-            host = site.ssl_hostname()
-            uri = site.ssl_pathprefix() + uri
-        else:
-            host = site.hostname()
-        baseuri = urlparse.urljoin("%s://%s" % (proto, host), uri)
-    else:
-        baseuri = uri
+    if not site:
+        # TODO: deprecate this usage, once the library code has been
+        # migrated to using the other request methods.
+        r = fetch(uri, *args, **kwargs)
+        return r.content
+
+    baseuri = site.base_url(uri)
+
+    kwargs.setdefault("disable_ssl_certificate_validation",
+                      site.ignore_certificate_error())
 
     format_string = kwargs.setdefault("headers", {}).get("user-agent")
     kwargs["headers"]["user-agent"] = user_agent(site, format_string)
+    kwargs['charset'] = charset
 
-    request = threadedhttp.HttpRequest(baseuri, *args, **kwargs)
-    http_queue.put(request)
-    while not request.lock.acquire(False):
-        time.sleep(0.1)
+    r = fetch(baseuri, *args, **kwargs)
+    return r.content
 
+
+def error_handling_callback(request):
+    """
+    Raise exceptions and log alerts.
+
+    @param request: Request that has completed
+    @rtype request: L{threadedhttp.HttpRequest}
+    """
     # TODO: do some error correcting stuff
     if isinstance(request.data, SSLHandshakeError):
-        if SSL_CERT_VERIFY_FAILED in str(request.data):
+        if SSL_CERT_VERIFY_FAILED_MSG in str(request.data):
             raise FatalServerError(str(request.data))
 
     # if all else fails
     if isinstance(request.data, Exception):
         raise request.data
 
-    if request.data[0].status == 504:
-        raise Server504Error("Server %s timed out" % site.hostname())
+    if request.status == 504:
+        raise Server504Error("Server %s timed out" % request.hostname)
+
+    if request.status == 414:
+        raise Server414Error('Too long GET request')
 
     # HTTP status 207 is also a success status for Webdav FINDPROP,
     # used by the version module.
-    if request.data[0].status not in (200, 207):
+    if request.status not in (200, 207):
         pywikibot.warning(u"Http response status %(status)s"
                           % {'status': request.data[0].status})
 
-    pos = request.data[0]['content-type'].find('charset=')
-    if pos >= 0:
-        pos += len('charset=')
-        encoding = request.data[0]['content-type'][pos:]
-    else:
-        encoding = 'ascii'
-        # Don't warn, many pages don't contain one
-        pywikibot.log(u"Http response doesn't contain a charset.")
 
-    return request.data[1].decode(encoding)
+def _enqueue(uri, method="GET", body=None, headers=None, **kwargs):
+    """
+    Enqueue non-blocking threaded HTTP request with callback.
+
+    Callbacks, including the default error handler if enabled, are run in the
+    HTTP thread, where exceptions are logged but are not able to be caught.
+    The default error handler is called first, then 'callback' (singular),
+    followed by each callback in 'callbacks' (plural).  All callbacks are
+    invoked, even if the default error handler detects a problem, so they
+    must check request.exception before using the response data.
+
+    Note: multiple async requests do not automatically run concurrently,
+    as they are limited by the number of http threads in L{numthreads},
+    which is set to 1 by default.
+
+    @see: L{httplib2.Http.request} for parameters.
+
+    @kwarg default_error_handling: Use default error handling
+    @type default_error_handling: bool
+    @kwarg callback: Method to call once data is fetched
+    @type callback: callable
+    @kwarg callbacks: Methods to call once data is fetched
+    @type callbacks: list of callable
+    @rtype: L{threadedhttp.HttpRequest}
+    """
+    default_error_handling = kwargs.pop('default_error_handling', None)
+    callback = kwargs.pop('callback', None)
+
+    callbacks = []
+    if default_error_handling:
+        callbacks.append(error_handling_callback)
+    if callback:
+        callbacks.append(callback)
+
+    callbacks += kwargs.pop('callbacks', [])
+
+    if not headers:
+        headers = {}
+
+    user_agent_format_string = headers.get("user-agent", None)
+    if not user_agent_format_string or '{' in user_agent_format_string:
+        headers["user-agent"] = user_agent(None, user_agent_format_string)
+
+    request = threadedhttp.HttpRequest(
+        uri, method, body, headers, callbacks, **kwargs)
+    http_queue.put(request)
+    return request
+
+
+def fetch(uri, method="GET", body=None, headers=None,
+          default_error_handling=True, **kwargs):
+    """
+    Blocking HTTP request.
+
+    Note: The callback runs in the HTTP thread, where exceptions are logged
+    but are not able to be caught.
+
+    See L{httplib2.Http.request} for parameters.
+
+    @param default_error_handling: Use default error handling
+    @type default_error_handling: bool
+    @rtype: L{threadedhttp.HttpRequest}
+    """
+    request = _enqueue(uri, method, body, headers, **kwargs)
+    request._join()  # wait for it
+    # Run the error handling callback in the callers thread so exceptions
+    # may be caught.
+    if default_error_handling:
+        error_handling_callback(request)
+    return request

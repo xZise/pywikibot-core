@@ -1,8 +1,8 @@
 # -*- coding: utf-8  -*-
 """
-This script works similar to solve_disambiguation.py. It is supposed to fix
-links that contain common spelling mistakes. This is only possible on wikis
-that have a template for these misspellings.
+This script fixes links that contain common spelling mistakes.
+
+This is only possible on wikis that have a template for these misspellings.
 
 Command line options:
 
@@ -44,6 +44,8 @@ these misspellings.\n"""
 
 
 class MisspellingRobot(DisambiguationRobot):
+
+    """Spelling bot."""
 
     misspellingTemplate = {
         'da': None,                     # uses simple redirects
@@ -127,14 +129,22 @@ class MisspellingRobot(DisambiguationRobot):
                                         {'page': disambPage.title()})
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     # the option that's always selected when the bot wonders what to do with
     # a link. If it's None, the user is prompted (default behaviour).
     always = None
     main_only = False
     firstPageTitle = None
 
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         if arg.startswith('-always:'):
             always = arg[8:]
         elif arg.startswith('-start'):

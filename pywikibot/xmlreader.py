@@ -1,6 +1,7 @@
 # -*- coding: utf-8  -*-
-
 """
+XML reading module.
+
 Each XmlEntry object represents a page, as read from an XML source
 
 The XmlDump class reads a pages_current XML dump (like the ones offered on
@@ -51,6 +52,7 @@ class XmlEntry:
     def __init__(self, title, ns, id, text, username, ipedit, timestamp,
                  editRestriction, moveRestriction, revisionid, comment,
                  redirect):
+        """Constructor."""
         # TODO: there are more tags we can read.
         self.title = title
         self.ns = ns
@@ -77,12 +79,15 @@ class XmlParserThread(threading.Thread):
 
     There surely are more elegant ways to do this.
     """
+
     def __init__(self, filename, handler):
+        """Constructor."""
         threading.Thread.__init__(self)
         self.filename = filename
         self.handler = handler
 
     def run(self):
+        """Parse the file in a single thread."""
         xml.sax.parse(self.filename, self.handler)
 
 
@@ -98,7 +103,9 @@ class XmlDump(object):
         If True, parse all revisions instead of only the latest one.
         Default: False.
     """
+
     def __init__(self, filename, allrevisions=False):
+        """Constructor."""
         self.filename = filename
         if allrevisions:
             self._parse = self._parse_all
@@ -122,19 +129,22 @@ class XmlDump(object):
                                       bufsize=65535).stdout
         else:
             # assume it's an uncompressed XML file
-            source = open(self.filename)
-        context = iterparse(source, events=("start", "end", "start-ns"))
-        self.root = None
+            source = open(self.filename, 'rb')
+        try:
+            context = iterparse(source, events=("start", "end", "start-ns"))
+            self.root = None
 
-        for event, elem in context:
-            if event == "start-ns" and elem[0] == "":
-                self.uri = elem[1]
-                continue
-            if event == "start" and self.root is None:
-                self.root = elem
-                continue
-            for rev in self._parse(event, elem):
-                yield rev
+            for event, elem in context:
+                if event == "start-ns" and elem[0] == "":
+                    self.uri = elem[1]
+                    continue
+                if event == "start" and self.root is None:
+                    self.root = elem
+                    continue
+                for rev in self._parse(event, elem):
+                    yield rev
+        finally:
+            source.close()
 
     def _parse_only_latest(self, event, elem):
         """Parser that yields only the latest revision."""

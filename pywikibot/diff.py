@@ -1,7 +1,5 @@
 # -*- coding: utf-8  -*-
-"""
-User-interface related functions
-"""
+"""Diff module."""
 #
 # (C) Pywikibot team, 2014
 #
@@ -18,14 +16,12 @@ else:
     from itertools import izip_longest as zip_longest
 
 import pywikibot
+from pywikibot.backports import format_range_unified  # introduced in 2.7.2
 
 
 class Hunk(object):
-    """One change hunk between a and b.
 
-    a and b: two sequences of lines.
-    grouped_opcode: list of 5-tuples describing how to turn a into b.
-        it has the same format as returned by difflib.get_opcodes().
+    """One change hunk between a and b.
 
     Note: parts of this code are taken from by difflib.get_grouped_opcodes().
 
@@ -36,6 +32,15 @@ class Hunk(object):
     PENDING = 0
 
     def __init__(self, a, b, grouped_opcode):
+        """
+        Constructor.
+
+        @param a: sequence of lines
+        @param b: sequence of lines
+        @param grouped_opcode: list of 5-tuples describing how to turn a into b.
+            it has the same format as returned by difflib.get_opcodes().
+
+        """
         self.a = a
         self.b = b
         self.group = grouped_opcode
@@ -61,14 +66,12 @@ class Hunk(object):
 
     def get_header(self):
         """Provide header of unified diff."""
-
-        a_rng = difflib._format_range_unified(*self.a_rng)
-        b_rng = difflib._format_range_unified(*self.b_rng)
-        return '@@ -{} +{} @@{}'.format(a_rng, b_rng, '\n')
+        a_rng = format_range_unified(*self.a_rng)
+        b_rng = format_range_unified(*self.b_rng)
+        return '@@ -{0} +{1} @@\n'.format(a_rng, b_rng)
 
     def create_diff(self):
         """Generator of diff text for this hunk, without formatting."""
-
         # make sure each line ends with '\n' to prevent
         # behaviour like http://bugs.python.org/issue2142
         def check_line(l):
@@ -77,22 +80,23 @@ class Hunk(object):
             return l
 
         for tag, i1, i2, j1, j2 in self.group:
+            # equal/delete/insert add additional space after the sign as it's
+            # what difflib.ndiff does do too.
             if tag == 'equal':
                 for line in self.a[i1:i2]:
-                    yield ' ' + check_line(line)
+                    yield '  ' + check_line(line)
             if tag in ('delete'):
                 for line in self.a[i1:i2]:
-                    yield '-' + check_line(line)
+                    yield '- ' + check_line(line)
             if tag in ('insert'):
                 for line in self.b[j1:j2]:
-                    yield '+' + check_line(line)
+                    yield '+ ' + check_line(line)
             if tag in ('replace'):
                 for line in difflib.ndiff(self.a[i1:i2], self.b[j1:j2]):
                     yield check_line(line)
 
     def format_diff(self):
         """Color diff lines."""
-
         diff = iter(self.diff)
 
         l1, l2 = '', next(diff)
@@ -121,7 +125,6 @@ class Hunk(object):
         line_ref: string.
 
         """
-
         color = line[0]
 
         if line_ref is None:
@@ -132,20 +135,20 @@ class Hunk(object):
                 return line
 
         colored_line = u''
-        state = 'Close'
+        color_closed = True
         for char, char_ref in zip_longest(line, line_ref.strip(), fillvalue=' '):
             char_tagged = char
-            if state == 'Close':
+            if color_closed:
                 if char_ref != ' ':
                     char_tagged = '\03{%s}%s' % (self.colors[color], char)
-                    state = 'Open'
-            elif state == 'Open':
+                    color_closed = False
+            else:
                 if char_ref == ' ':
                     char_tagged = '\03{default}%s' % char
-                    state = 'Close'
+                    color_closed = True
             colored_line += char_tagged
 
-        if state == 'Open':
+        if not color_closed:
             colored_line += '\03{default}'
 
         return colored_line
@@ -155,6 +158,7 @@ class Hunk(object):
         return self.b[self.b_rng[0]:self.b_rng[1]]
 
     def __str__(self):
+        """Return the diff as plain text."""
         return u''.join(self.diff_plain_text)
 
     def __repr__(self):
@@ -165,23 +169,25 @@ class Hunk(object):
 
 
 class PatchManager(object):
+
     """Apply patches to text_a to obtain a new text.
 
     If all hunks are approved, text_b will be obtained.
-        letter by letter.
-
     """
 
     def __init__(self, text_a, text_b, n=0, by_letter=False):
         """Constructor.
 
-           text_a: string
-           text_b: string
-           n: int, line of context as defined in difflib.get_grouped_opcodes().
-           by_letter: if text_a and text_b are single lines, comparison can be done
-
+        @param text_a: base text
+        @type text_a: basestring
+        @param text_b: target text
+        @type text_b: basestring
+        @param n: line of context as defined in difflib.get_grouped_opcodes().
+        @type n: int
+        @param by_letter: if text_a and text_b are single lines, comparison can be done
+            letter by letter.
+        @type by_letter: bool
         """
-
         if '\n' in text_a or '\n' in text_b:
             self.a = text_a.splitlines(1)
             self.b = text_b.splitlines(1)
@@ -204,13 +210,12 @@ class PatchManager(object):
     def get_blocks(self):
         """Return list with blocks of indexes which compose a and, where applicable, b.
 
-        Format of each block:
+        Format of each block::
+
             [-1, (i1, i2), (-1, -1)] -> block a[i1:i2] does not change from a to b
                 then is there is no corresponding hunk.
             [hunk index, (i1, i2), (j1, j2)] -> block a[i1:i2] becomes b[j1:j2]
-
         """
-
         blocks = []
         i2 = 0
         for hunk_idx, group in enumerate(self.groups):
@@ -228,14 +233,18 @@ class PatchManager(object):
 
         # there is a section of unchanged text at the end of a, b.
         if i2 < len(self.a):
-            rng = (-1, (last[2], len(self.a)), (-1, -1))
+            rng = (-1, (i2, len(self.a)), (-1, -1))
             blocks.append(rng)
 
         return blocks
 
-    def review_hunks(self):
-        "Review hunks."
+    def print_hunks(self):
+        """Print the headers and diff texts of all hunks to the output."""
+        for hunk in self.hunks:
+            pywikibot.output(hunk.header + hunk.diff_text)
 
+    def review_hunks(self):
+        """Review hunks."""
         help_msg = ['y -> accept this hunk',
                     'n -> do not accept this hunk',
                     's -> do not accept this hunk and stop reviewing',
@@ -245,8 +254,8 @@ class PatchManager(object):
                     ]
 
         question = 'Accept this hunk?'
-        answers = ['yes', 'no', 'stop', 'all', 'review', 'help']
-        hotkeys = ['y', 'n', 's', 'a', 'r', 'h']
+        answers = [('yes', 'y'), ('no', 'n'), ('stop', 's'), ('all', 'a'),
+                   ('review', 'r'), ('help', 'h')]
         actions = {'y': Hunk.APPR,
                    'n': Hunk.NOT_APPR,
                    's': Hunk.NOT_APPR,
@@ -261,7 +270,8 @@ class PatchManager(object):
             hunk = pending.pop(0)
 
             pywikibot.output(hunk.header + hunk.diff_text)
-            choice = pywikibot.inputChoice(question, answers, hotkeys, default='r')
+            choice = pywikibot.input_choice(question, answers, default='r',
+                                            automatic_quit=False)
 
             if choice in actions.keys():
                 hunk.reviewed = actions[choice]
@@ -285,7 +295,6 @@ class PatchManager(object):
 
     def apply(self):
         """Apply changes. If there are undecided changes, ask to review."""
-
         if any(h.reviewed == h.PENDING for h in self.hunks):
             pywikibot.output("There are unreviewed hunks.\n"
                              "Please review them before proceeding.\n")
@@ -318,7 +327,6 @@ def cherry_pick(oldtext, newtext, n=0, by_letter=False):
     by_letter: if text_a and text_b are single lines, comparison can be done
 
     """
-
     patch = PatchManager(oldtext, newtext, n=n, by_letter=by_letter)
     pywikibot.output('\03{{lightpurple}}\n{:*^50}\03{{default}}\n'.format('  ALL CHANGES  '))
 

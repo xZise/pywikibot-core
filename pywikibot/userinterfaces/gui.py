@@ -9,7 +9,7 @@ Useful for editing the contents of an article.
 # (C) Rob W.W. Hooft, 2003
 # (C) Daniel Herding, 2004
 #     Wikiwichtel
-# (C) pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2014
 #
 # Distributed under the terms of the MIT license.
 #
@@ -30,14 +30,18 @@ from idlelib import SearchDialog, ReplaceDialog, configDialog
 from idlelib.configHandler import idleConf
 from idlelib.MultiCall import MultiCallCreator
 
+import pywikibot
+
 
 class TextEditor(ScrolledText):
+
     """A text widget with some editing enhancements.
 
     A lot of code here is copied or adapted from the idlelib/EditorWindow.py
     file in the standard Python distribution.
 
     """
+
     def __init__(self, master=None, **kwargs):
         # get default settings from user's IDLE configuration
         currentTheme = idleConf.CurrentTheme()
@@ -194,17 +198,17 @@ class TextEditor(ScrolledText):
                 # start from the beginning (and when we come to the end, stop)
                 idx = '1.0'
                 while True:
-                    # find next occurence, exit loop if no more
+                    # find next occurrence, exit loop if no more
                     idx = self.search(s, idx, nocase=1, stopindex=Tkinter.END)
                     if not idx:
                         break
-                    # index right after the end of the occurence
+                    # index right after the end of the occurrence
                     lastidx = '%s+%dc' % (idx, len(s))
-                    # tag the whole occurence (start included, stop excluded)
+                    # tag the whole occurrence (start included, stop excluded)
                     self.tag_add('found', idx, lastidx)
-                    # prepare to search for next occurence
+                    # prepare to search for next occurrence
                     idx = lastidx
-                # use a red foreground for all the tagged occurences
+                # use a red foreground for all the tagged occurrences
                 self.tag_config('found', foreground='red')
                 found = self.tag_nextrange('found', 1.0)
                 if found:
@@ -230,6 +234,8 @@ class TextEditor(ScrolledText):
 
 
 class EditBoxWindow(Tkinter.Frame):
+
+    """Edit box window."""
 
     def __init__(self, parent=None, **kwargs):
         if parent is None:
@@ -328,10 +334,15 @@ class EditBoxWindow(Tkinter.Frame):
         """
         Provide user with editor to modify text.
 
-        Parameters:
-            * text      - a Unicode string
-            * jumpIndex - an integer: position at which to put the caret
-            * highlight - a substring; each occurence will be highlighted
+        @param text: the text to be edited
+        @type text: unicode
+        @param jumpIndex: position at which to put the caret
+        @type jumpIndex: int
+        @param highlight: each occurrence of this substring will be highlighted
+        @type highlight: unicode
+        @return: the modified text, or None if the user didn't save the text
+            file in his text editor
+        @rtype: unicode or None
         """
         self.text = None
         # put given text into our textarea
@@ -375,8 +386,8 @@ class EditBoxWindow(Tkinter.Frame):
         # if the editbox contains ASCII characters only, get() will
         # return string, otherwise unicode (very annoying). We only want
         # it to return unicode, so we work around this.
-        if isinstance(self.text, str):
-            self.text = unicode(self.text)
+        if sys.version[0] == 2 and isinstance(self.text, str):
+            self.text = unicode(self.text)  # noqa
         self.parent.destroy()
 
     def debug(self, event=None):
@@ -386,6 +397,8 @@ class EditBoxWindow(Tkinter.Frame):
 
 # the following class isn't used anywhere in the framework: ####
 class ListBoxWindow:
+
+    """List box window."""
 
     # called when user pushes the OK button.
     # closes the window.
@@ -430,16 +443,104 @@ class ListBoxWindow:
         return self.list
 
 
-if __name__ == "__main__":
-    import pywikibot
-    try:
-        root = Tkinter.Tk()
-        root.resizable(width=Tkinter.FALSE, height=Tkinter.FALSE)
-        root.title("pywikibot GUI")
-        page = pywikibot.Page(pywikibot.Site(), u'Main Page')
-        content = page.get()
-        myapp = EditBoxWindow(root)
-        myapp.bind("<Control-d>", myapp.debug)
-        v = myapp.edit(content, highlight=page.title())
-    finally:
-        pywikibot.stopme()
+class Tkdialog:
+
+    """The dialog window for image info."""
+
+    def __init__(self, photo_description, photo, filename):
+        """Constructor."""
+        self.root = Tkinter.Tk()
+        # "%dx%d%+d%+d" % (width, height, xoffset, yoffset)
+        self.root.geometry("%ix%i+10-10" % (pywikibot.config.tkhorsize,
+                                            pywikibot.config.tkvertsize))
+
+        self.root.title(filename)
+        self.photo_description = photo_description
+        self.filename = filename
+        self.photo = photo
+        self.skip = False
+        self.exit = False
+
+        # --Init of the widgets
+        # The image
+        self.image = self.get_image(self.photo, 800, 600)
+        self.image_panel = Tkinter.Label(self.root, image=self.image)
+
+        self.image_panel.image = self.image
+
+        # The filename
+        self.filename_label = Tkinter.Label(self.root, text=u"Suggested filename")
+        self.filename_field = Tkinter.Entry(self.root, width=100)
+        self.filename_field.insert(Tkinter.END, filename)
+
+        # The description
+        self.description_label = Tkinter.Label(self.root,
+                                               text=u"Suggested description")
+        self.description_scrollbar = Tkinter.Scrollbar(self.root,
+                                                       orient=Tkinter.VERTICAL)
+        self.description_field = Tkinter.Text(self.root)
+        self.description_field.insert(Tkinter.END, photo_description)
+        self.description_field.config(state=Tkinter.NORMAL, height=12, width=100,
+                                      padx=0, pady=0, wrap=Tkinter.WORD,
+                                      yscrollcommand=self.description_scrollbar.set)
+        self.description_scrollbar.config(command=self.description_field.yview)
+
+        # The buttons
+        self.ok_button = Tkinter.Button(self.root, text="OK",
+                                        command=self.ok_file)
+        self.skip_button = Tkinter.Button(self.root, text="Skip",
+                                          command=self.skip_file)
+
+        # --Start grid
+
+        # The image
+        self.image_panel.grid(row=0, column=0, rowspan=11, columnspan=4)
+
+        # The buttons
+        self.ok_button.grid(row=11, column=1, rowspan=2)
+        self.skip_button.grid(row=11, column=2, rowspan=2)
+
+        # The filename
+        self.filename_label.grid(row=13, column=0)
+        self.filename_field.grid(row=13, column=1, columnspan=3)
+
+        # The description
+        self.description_label.grid(row=14, column=0)
+        self.description_field.grid(row=14, column=1, columnspan=3)
+        self.description_scrollbar.grid(row=14, column=5)
+
+    def get_image(self, photo, width, height):
+        """Take the BytesIO object and build an imageTK thumbnail."""
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            pywikibot.warning('This script requires ImageTk from the'
+                              'Python Imaging Library (PIL).\n'
+                              'See: https://www.mediawiki.org/wiki/'
+                              'Manual:Pywikibot/flickrripper.py')
+            raise
+
+        image = Image.open(photo)
+        image.thumbnail((width, height))
+        imageTk = ImageTk.PhotoImage(image)
+        return imageTk
+
+    def ok_file(self):
+        """The user pressed the OK button."""
+        self.filename = self.filename_field.get()
+        self.photo_description = self.description_field.get(0.0, Tkinter.END)
+        self.root.destroy()
+
+    def skip_file(self):
+        """The user pressed the Skip button."""
+        self.skip = True
+        self.root.destroy()
+
+    def show_dialog(self):
+        """Activate the dialog.
+
+        @return: new description, name, and if the image is skipped
+        @rtype: tuple of (unicode, unicode, bool)
+        """
+        self.root.mainloop()
+        return self.photo_description, self.filename, self.skip

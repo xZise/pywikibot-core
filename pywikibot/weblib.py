@@ -8,10 +8,10 @@
 __version__ = '$Id$'
 
 import sys
-if sys.version_info[0] == 2:
-    from urllib import urlencode
-else:
+if sys.version_info[0] > 2:
     from urllib.parse import urlencode
+else:
+    from urllib import urlencode
 
 from pywikibot.comms import http
 
@@ -19,13 +19,13 @@ from pywikibot.comms import http
 def getInternetArchiveURL(url, timestamp=None):
     """Return archived URL by Internet Archive.
 
-    Parameters:
-        url - url to search an archived version for
-        timestamp - requested archive date. The version closest to that moment
-                    is returned. Format: YYYYMMDDhhmmss or part thereof.
-
     See [[:mw:Archived Pages]] and https://archive.org/help/wayback_api.php
     for more details.
+
+    @param url: url to search an archived version for
+    @param timestamp: requested archive date. The version closest to that
+        moment is returned. Format: YYYYMMDDhhmmss or part thereof.
+
     """
     import json
     uri = u'https://archive.org/wayback/available?'
@@ -36,7 +36,7 @@ def getInternetArchiveURL(url, timestamp=None):
         query['timestamp'] = timestamp
 
     uri = uri + urlencode(query)
-    jsontext = http.request(uri=uri, site=None)
+    jsontext = http.fetch(uri).content
     if "closest" in jsontext:
         data = json.loads(jsontext)
         return data['archived_snapshots']['closest']['url']
@@ -47,13 +47,13 @@ def getInternetArchiveURL(url, timestamp=None):
 def getWebCitationURL(url, timestamp=None):
     """Return archived URL by Web Citation.
 
-    Parameters:
-        url - url to search an archived version for
-        timestamp - requested archive date. The version closest to that moment
-                    is returned. Format: YYYYMMDDhhmmss or part thereof.
-
     See http://www.webcitation.org/doc/WebCiteBestPracticesGuide.pdf
     for more details
+
+    @param url: url to search an archived version for
+    @param timestamp: requested archive date. The version closest to that
+        moment is returned. Format: YYYYMMDDhhmmss or part thereof.
+
     """
     import xml.etree.ElementTree as ET
     uri = u'http://www.webcitation.org/query?'
@@ -65,7 +65,7 @@ def getWebCitationURL(url, timestamp=None):
         query['date'] = timestamp
 
     uri = uri + urlencode(query)
-    xmltext = http.request(uri=uri, site=None)
+    xmltext = http.fetch(uri).content
     if "success" in xmltext:
         data = ET.fromstring(xmltext)
         return data.find('.//webcite_url').text

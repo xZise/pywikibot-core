@@ -1,8 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
-Very simple script to replace a template with another one,
-and to convert the old MediaWiki boilerplate format to the new template format.
+Very simple script to replace a template with another one.
+
+It also converts the old MediaWiki boilerplate format to the new template format.
 
 Syntax: python template.py [-remove] [xml[:filename]] oldTemplate [newTemplate]
 
@@ -12,7 +13,7 @@ them, and replace the template.
 
 Command line options:
 
--remove      Remove every occurence of the template from every article
+-remove      Remove every occurrence of the template from every article
 
 -subst       Resolves the template by putting its text directly into the
              article. This is done by changing {{...}} or {{msg:...}} into
@@ -24,7 +25,7 @@ Command line options:
              the same effect.
 
 -xml         retrieve information from a local dump
-             (https://download.wikimedia.org). If this argument isn\'t given,
+             (https://download.wikimedia.org). If this argument isn't given,
              info will be loaded from the maintenance page of the live wiki.
              argument can also be given as "-xml:filename.xml".
 
@@ -115,8 +116,9 @@ from scripts import replace
 
 def UserEditFilterGenerator(generator, username, timestamp=None, skip=False):
     """
-    Generator which will yield Pages depending of user:username is an Author of
-    that page (only looks at the last 100 editors).
+    Generator which will yield Pages modified by username.
+
+    It only looks at the last 100 editors.
     If timestamp is set in MediaWiki format JJJJMMDDhhmmss, older edits are
     ignored
     If skip is set, pages edited by the given user are ignored otherwise only
@@ -145,13 +147,16 @@ def UserEditFilterGenerator(generator, username, timestamp=None, skip=False):
 class XmlDumpTemplatePageGenerator:
 
     """
-    Generator which will yield Pages to pages that might contain the chosen
-    template. These pages will be retrieved from a local XML dump file
-    (cur table).
+    Generator which yields Pages that transclude a template.
+
+    These pages will be retrieved from a local XML dump file
+    (cur table), and may not still transclude the template.
     """
 
     def __init__(self, templates, xmlfilename):
         """
+        Constructor.
+
         Arguments:
             * templateNames - A list of Page object representing the searched
                               templates
@@ -168,11 +173,10 @@ class XmlDumpTemplatePageGenerator:
         # regular expression to find the original template.
         # {{vfd}} does the same thing as {{Vfd}}, so both will be found.
         # The old syntax, {{msg:vfd}}, will also be found.
-        # TODO: check site.nocapitalize()
         templatePatterns = []
         for template in self.templates:
             templatePattern = template.title(withNamespace=False)
-            if not pywikibot.Site().nocapitalize:
+            if mysite.namespaces[10].case == 'first-letter':
                 templatePattern = '[%s%s]%s' % (templatePattern[0].upper(),
                                                 templatePattern[0].lower(),
                                                 templatePattern[1:])
@@ -189,12 +193,8 @@ class XmlDumpTemplatePageGenerator:
 
 class TemplateRobot(Bot):
 
-    """
-    This bot will load all pages yielded by a page generator and replace or
-    remove all occurences of the old template, or substitute them with the
-    template's text.
+    """This bot will replace, remove or subst all occurrences of a template."""
 
-    """
     def __init__(self, generator, templates, **kwargs):
         """
         Constructor.
@@ -249,7 +249,7 @@ class TemplateRobot(Bot):
         site = pywikibot.Site()
         for old, new in self.templates.items():
             namespaces = list(site.namespace(10, all=True))
-            if not site.nocapitalize:
+            if site.namespaces[10].case == 'first-letter':
                 pattern = '[' + \
                           re.escape(old[0].upper()) + \
                           re.escape(old[0].lower()) + \
@@ -264,11 +264,11 @@ class TemplateRobot(Bot):
 
             if self.getOption('subst') and self.getOption('remove'):
                 replacements.append((templateRegex,
-                                     '{{subst:%s\g<parameters>}}' % new))
+                                     r'{{subst:%s\g<parameters>}}' % new))
                 exceptions['inside-tags'] = ['ref', 'gallery']
             elif self.getOption('subst'):
                 replacements.append((templateRegex,
-                                     '{{subst:%s\g<parameters>}}' % old))
+                                     r'{{subst:%s\g<parameters>}}' % old))
                 exceptions['inside-tags'] = ['ref', 'gallery']
             elif self.getOption('remove'):
                 replacements.append((templateRegex, ''))
@@ -276,13 +276,11 @@ class TemplateRobot(Bot):
                 template = pywikibot.Page(site, new, ns=10)
                 if not template.exists():
                     pywikibot.warning(u'Template "%s" does not exist.' % new)
-                    choice = pywikibot.inputChoice(
-                        u'Do you want to proceed anyway?',
-                        ['Yes', 'No'], ['y', 'N'], 'N')
-                    if choice == 'n':
+                    if not pywikibot.input_yn('Do you want to proceed anyway?',
+                                              default=False, automatic_quit=False):
                         continue
                 replacements.append((templateRegex,
-                                     '{{%s\g<parameters>}}' % new))
+                                     r'{{%s\g<parameters>}}' % new))
 
         replaceBot = replace.ReplaceRobot(self.generator, replacements,
                                           exceptions, acceptall=self.getOption('always'),
@@ -292,6 +290,14 @@ class TemplateRobot(Bot):
 
 
 def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     templateNames = []
     templates = {}
     options = {}
@@ -302,7 +308,7 @@ def main(*args):
     timestamp = None
 
     # read command line parameters
-    local_args = pywikibot.handleArgs(*args)
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
     for arg in local_args:
         if arg == '-remove':

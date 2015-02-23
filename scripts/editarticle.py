@@ -8,6 +8,18 @@ Edit a Wikipedia article with your favourite editor.
        - minor edits
        - watch/unwatch
        - ...
+
+The following parameters are supported:
+
+-r                Edit redirect pages without following them
+--edit_redirect   automatically.
+--edit-redirect
+
+-p P              Choose which page to edit.
+--page P          This argument can be passed positionally.
+
+-w                Add the page to the user's watchlist after editing.
+--watch
 """
 #
 # (C) Gerrit Holl, 2004
@@ -15,12 +27,12 @@ Edit a Wikipedia article with your favourite editor.
 #
 # Distributed under the terms of the MIT license.
 #
-__version__ = "$Id$"
+__version__ = '$Id$'
 #
 
 import os
-import string
-import optparse
+import sys
+import argparse
 import tempfile
 
 import pywikibot
@@ -29,8 +41,12 @@ from pywikibot.editor import TextEditor
 
 
 class ArticleEditor(object):
+
+    """Edit a wiki page."""
+
     # join lines if line starts with this ones
-    joinchars = string.letters + '[]' + string.digits
+    # TODO: No apparent usage
+    # joinchars = string.letters + '[]' + string.digits
 
     def __init__(self, *args):
         self.set_options(*args)
@@ -39,26 +55,25 @@ class ArticleEditor(object):
 
     def set_options(self, *args):
         """Parse commandline and set options attribute."""
-        my_args = []
-        for arg in pywikibot.handleArgs(*args):
-            my_args.append(arg)
-        parser = optparse.OptionParser()
-        parser.add_option("-r", "--edit_redirect", action="store_true",
-                          default=False, help="Ignore/edit redirects")
-        parser.add_option("-p", "--page", help="Page to edit")
-        parser.add_option("-w", "--watch", action="store_true", default=False,
-                          help="Watch article after edit")
-        #parser.add_option("-n", "--new_data", default="",
-        #                  help="Automatically generated content")
-        (self.options, args) = parser.parse_args(args=my_args)
+        my_args = pywikibot.handle_args(args)
 
-        # for convenience, if we have an arg, stuff it into the opt, so we
-        # can act like a normal editor.
-        if (len(args) == 1):
-            self.options.page = args[0]
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("-r", "--edit_redirect", "--edit-redirect",
+                            action="store_true", help="Ignore/edit redirects")
+        parser.add_argument("-p", "--page", help="Page to edit")
+        parser.add_argument("-w", "--watch", action="store_true",
+                            help="Watch article after edit")
+        # convenience positional argument so we can act like a normal editor
+        parser.add_argument("wikipage", nargs="?", help="Page to edit")
+        self.options = parser.parse_args(my_args)
+
+        if self.options.page and self.options.wikipage:
+            pywikibot.error(u"Multiple pages passed. Please specify a single page to edit.")
+            sys.exit(1)
+        self.options.page = self.options.page or self.options.wikipage
 
     def setpage(self):
-        """Sets page and page title."""
+        """Set page and page title."""
         site = pywikibot.Site()
         pageTitle = self.options.page or pywikibot.input(u"Page to edit:")
         self.page = pywikibot.Page(pywikibot.Link(pageTitle, site))
@@ -97,6 +112,14 @@ class ArticleEditor(object):
 
 
 def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     app = ArticleEditor(*args)
     app.run()
 

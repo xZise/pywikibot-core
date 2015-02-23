@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
 """
 Script to remove links that are being or have been spammed.
+
 Usage:
 
 spamremove.py www.spammedsite.com
@@ -33,15 +34,23 @@ __version__ = '$Id$'
 #
 
 import pywikibot
-from pywikibot import pagegenerators, i18n
+from pywikibot import i18n
 from pywikibot.editor import TextEditor
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and perform task.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     always = False
     namespaces = []
     spamSite = ''
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         if arg == "-always":
             always = True
         elif arg.startswith('-namespace:'):
@@ -58,10 +67,7 @@ def main():
         return
 
     mysite = pywikibot.Site()
-    pages = mysite.exturlusage(spamSite)
-    if namespaces:
-        pages = pagegenerators.NamespaceFilterPageGenerator(pages, namespaces)
-    pages = pagegenerators.PreloadingGenerator(pages)
+    pages = mysite.exturlusage(spamSite, namespaces=namespaces, content=True)
 
     summary = i18n.twtranslate(mysite, 'spamremove-remove',
                                {'url': spamSite})
@@ -91,9 +97,10 @@ def main():
         if always:
             answer = "y"
         else:
-            answer = pywikibot.inputChoice(u'\nDelete the red lines?',
-                                           ['yes', 'no', 'edit'],
-                                           ['y', 'N', 'e'], 'n')
+            answer = pywikibot.input_choice(
+                u'\nDelete the red lines?',
+                [('yes', 'y'), ('no', 'n'), ('edit', 'e')],
+                'n', automatic_quit=False)
         if answer == "n":
             continue
         elif answer == "e":

@@ -1,4 +1,5 @@
 # -*- coding: utf-8  -*-
+"""Test i18n module."""
 #
 # (C) Pywikibot team, 2007-2014
 #
@@ -12,6 +13,8 @@ from tests.aspects import unittest, TestCase
 
 
 class TestTranslate(TestCase):
+
+    """Test translate method."""
 
     net = False
 
@@ -75,6 +78,8 @@ class TestTranslate(TestCase):
 
 class TestTWN(TestCase):
 
+    """Base class for TranslateWiki tests."""
+
     net = False
 
     def setUp(self):
@@ -88,6 +93,8 @@ class TestTWN(TestCase):
 
 
 class TestTWTranslate(TestTWN):
+
+    """Test twtranslate method."""
 
     def testLocalized(self):
         self.assertEqual(i18n.twtranslate('en', 'test-localized'),
@@ -217,34 +224,34 @@ class TestTWNTranslate(TestTWN):
             u'Bot: Ändere 11 Zeilen von mehreren Seiten.')
 
     def testMultipleWrongParameterLength(self):
-        """Test wrong parameter lenght."""
-        with self.assertRaisesRegexp(ValueError, "Length of parameter does not match PLURAL occurences"):
+        """Test wrong parameter length."""
+        with self.assertRaisesRegex(ValueError, "Length of parameter does not match PLURAL occurrences"):
             self.assertEqual(
                 i18n.twntranslate('de', 'test-multiple-plurals', (1, 2))
                 % {'action': u'Ändere', 'line': u'drei'},
                 u'Bot: Ändere drei Zeilen von mehreren Seiten.')
 
-        with self.assertRaisesRegexp(ValueError, "Length of parameter does not match PLURAL occurences"):
+        with self.assertRaisesRegex(ValueError, "Length of parameter does not match PLURAL occurrences"):
             self.assertEqual(
                 i18n.twntranslate('de', 'test-multiple-plurals', ["321"])
                 % {'action': u'Ändere', 'line': u'dreihunderteinundzwanzig'},
                 u'Bot: Ändere dreihunderteinundzwanzig Zeilen von mehreren Seiten.')
 
     def testMultipleNonNumbers(self):
-        """Numbers or string numbers are required for tuple or list items."""
-        with self.assertRaisesRegexp(ValueError, "invalid literal for int\(\) with base 10: 'drei'"):
+        """Test error handling for multiple non-numbers."""
+        with self.assertRaisesRegex(ValueError, "invalid literal for int\(\) with base 10: 'drei'"):
             self.assertEqual(
                 i18n.twntranslate('de', 'test-multiple-plurals', ["drei", "1", 1])
                 % {'action': u'Ändere', 'line': u'drei'},
                 u'Bot: Ändere drei Zeilen von einer Seite.')
-        with self.assertRaisesRegexp(ValueError, "invalid literal for int\(\) with base 10: 'elf'"):
+        with self.assertRaisesRegex(ValueError, "invalid literal for int\(\) with base 10: 'elf'"):
             self.assertEqual(
                 i18n.twntranslate('de', 'test-multiple-plurals',
                                   {'action': u'Ändere', 'line': "elf", 'page': 2}),
                 u'Bot: Ändere elf Zeilen von mehreren Seiten.')
 
     def testAllParametersExist(self):
-        with self.assertRaisesRegexp(KeyError, repr(u'line')):
+        with self.assertRaisesRegex(KeyError, repr(u'line')):
             # all parameters must be inside twntranslate
             self.assertEqual(
                 i18n.twntranslate('de', 'test-multiple-plurals',

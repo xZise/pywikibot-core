@@ -112,9 +112,11 @@ class BaseRevertBot(object):
             pywikibot.data.api.Request(action="rollback", title=page.title(), user=self.user,
                                            token=rev[4], markbot=1).submit()
         except pywikibot.data.api.APIError as e:
-            if e == "badtoken: Invalid token":
-                pywikibot.out("There is an issue for rollbacking the edit, Giving up")
-                return False
+            if e.code == 'badtoken':
+                pywikibot.error("There was an API token error rollbacking the edit")
+            else:
+                pywikibot.exception()
+            return False
         return u"The edit(s) made in %s by %s was rollbacked" % (page.title(), self.user)
 
     def log(self, msg):
@@ -123,19 +125,29 @@ class BaseRevertBot(object):
 
 class myRevertBot(BaseRevertBot):
 
+    """Example revert bot."""
+
     def callback(self, item):
         if 'top' in item:
             page = pywikibot.Page(self.site, item['title'])
             text = page.get(get_redirect=True)
-            pattern = re.compile(u'\[\[.+?:.+?\..+?\]\]', re.UNICODE)
+            pattern = re.compile(r'\[\[.+?:.+?\..+?\]\]', re.UNICODE)
             return pattern.search(text) >= 0
         return False
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     user = None
     rollback = False
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         if arg.startswith('-username'):
             if len(arg) == 9:
                 user = pywikibot.input(

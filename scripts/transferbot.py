@@ -2,8 +2,9 @@
 # -*- coding: utf-8  -*-
 
 """
-This script transfers pages from a source wiki to a target wiki. It also
-copies edit history to a subpage.
+This script transfers pages from a source wiki to a target wiki.
+
+It also copies edit history to a subpage.
 
 -tolang:          The target site code.
 
@@ -77,8 +78,16 @@ class TargetPagesMissing(WikiTransferException):
     pass
 
 
-def main():
-    tohandle = pywikibot.handleArgs()
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
+    local_args = pywikibot.handle_args(args)
 
     fromsite = pywikibot.Site()
     tolang = fromsite.code
@@ -89,7 +98,7 @@ def main():
 
     genFactory = pagegenerators.GeneratorFactory()
 
-    for arg in tohandle:
+    for arg in local_args:
         if genFactory.handleArg(arg):
             gen_args.append(arg)
             continue
@@ -125,8 +134,7 @@ def main():
     for page in gen:
         summary = "Moved page from %s" % page.title(asLink=True)
         targetpage = pywikibot.Page(tosite, prefix + page.title())
-        edithistpage = pywikibot.Page(tosite, prefix + page.title()
-                                      + "/edithistory")
+        edithistpage = pywikibot.Page(tosite, prefix + page.title() + '/edithistory')
 
         if targetpage.exists() and not overwrite:
             pywikibot.output(

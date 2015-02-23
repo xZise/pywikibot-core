@@ -4,6 +4,8 @@ Tests for edit failures.
 
 These tests should never write to the wiki,
 unless something has broken badly.
+
+These tests use special code 'write = -1' for edit failures.
 """
 #
 # (C) Pywikibot team, 2014
@@ -20,14 +22,14 @@ from pywikibot import (
     SpamfilterError,
     OtherPageSaveError,
 )
-from tests.utils import SiteTestCase, unittest
+from tests.aspects import unittest, TestCase, WikibaseTestCase
 
 
-class TestSaveFailure(SiteTestCase):
+class TestSaveFailure(TestCase):
 
     """Test cases for edits which should fail to save."""
 
-    write = True
+    write = -1
 
     family = 'wikipedia'
     code = 'test'
@@ -43,19 +45,19 @@ class TestSaveFailure(SiteTestCase):
         """Test that spam in content raise the appropriate exception."""
         page = pywikibot.Page(self.site, 'Wikipedia:Sandbox')
         page.text = 'http://badsite.com'
-        self.assertRaisesRegexp(SpamfilterError, 'badsite.com', page.save)
+        self.assertRaisesRegex(SpamfilterError, 'badsite.com', page.save)
 
     def test_nobots(self):
         """Test that {{nobots}} raise the appropriate exception."""
         page = pywikibot.Page(self.site, 'User:John Vandenberg/nobots')
-        self.assertRaisesRegexp(OtherPageSaveError, 'nobots', page.save)
+        self.assertRaisesRegex(OtherPageSaveError, 'nobots', page.save)
 
 
-class TestActionFailure(SiteTestCase):
+class TestActionFailure(TestCase):
 
     """Test cases for actions which should fail to save."""
 
-    write = True
+    write = -1
 
     family = 'wikipedia'
     code = 'test'
@@ -78,6 +80,22 @@ class TestActionFailure(SiteTestCase):
         if not page_from.exists():
             self.assertRaises(NoPage, mysite.movepage,
                               page_from, 'Main Page', 'test')
+
+
+class TestWikibaseSaveTest(WikibaseTestCase):
+
+    """Test case for WikibasePage.save on Wikidata test site."""
+
+    family = 'wikidata'
+    code = 'test'
+
+    write = -1
+
+    def test_itempage_save(self):
+        """Test ItemPage save method inherited from superclass Page."""
+        repo = self.get_repo()
+        item = pywikibot.ItemPage(repo, 'Q6')
+        self.assertRaises(pywikibot.PageNotSaved, item.save)
 
 
 if __name__ == '__main__':

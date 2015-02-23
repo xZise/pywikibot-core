@@ -1,13 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
-""" Script to enumerate all pages on the wiki and find all titles
-with mixed latin and cyrilic alphabets.
-"""
+"""Bot to find all pages on the wiki with mixed latin and cyrilic alphabets."""
 #
 # (C) Pywikibot team, 2006-2014
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import print_function
 __version__ = '$Id$'
 
 import os
@@ -17,6 +16,9 @@ import codecs
 import pywikibot
 from pywikibot import i18n
 from pywikibot.data import api
+
+if sys.version_info[0] > 2:
+    xrange = range
 
 
 #
@@ -69,16 +71,19 @@ def SetColor(color):
             pass
 
     if color == FOREGROUND_BLUE:
-        print('(b:'),
+        print('(b:', end=' ')
     if color == FOREGROUND_GREEN:
-        print('(g:'),
+        print('(g:', end=' ')
     if color == FOREGROUND_RED:
-        print('(r:'),
+        print('(r:', end=' ')
 
 # end of console code
 
 
 class CaseChecker(object):
+
+    """Case checker."""
+
     # These words are always in one language, even though they could be typed
     # in both
     alwaysInLocal = [u'СССР', u'Как', u'как']
@@ -112,7 +117,7 @@ class CaseChecker(object):
     latClrFnt = u'<font color=brown>'
     suffixClr = u'</font>'
 
-    wordBreaker = re.compile(u'[ _\-/\|#[\]():]')
+    wordBreaker = re.compile(r'[ _\-/\|#[\]():]')
     stripChars = u' \t,'
 
     titles = True
@@ -134,7 +139,7 @@ class CaseChecker(object):
 
     def __init__(self):
 
-        for arg in pywikibot.handleArgs():
+        for arg in pywikibot.handle_args():
             if arg.startswith('-from'):
                 if arg.startswith('-from:'):
                     self.apfrom = arg[6:]
@@ -271,12 +276,6 @@ class CaseChecker(object):
                             for nn in self.FindBadWords(n['title'])]
 
                 self.knownWords = set(allWords)
-##                kw = set()
-##                for w in allWords:
-##                    if len(self.ProcessTitle(w)[1]) > 0:
-##                        kw.add(w)
-##                self.knownWords = kw
-
             else:
                 raise ValueError(u'The number of pageids is not 1')
 
@@ -342,7 +341,6 @@ class CaseChecker(object):
                         batchStart:batchStart + batchSize]
                     for data in self.RunQuery(self.queryParams):
                         self.ProcessDataBlock(data)
-            print("*" * 29 + " Done")
         except:
             pywikibot.output(u'Exception at Title = %s, Next = %s'
                              % (self.currentTitle, self.apfrom))
@@ -376,10 +374,6 @@ class CaseChecker(object):
                     if self.replace:
                         if len(err[1]) == 1:
                             newTitle = err[1][0]
-##                            choice = pywikibot.inputChoice(u'Move %s to %s?'
-##                                                           % (title, newTitle),
-##                                                           ['Yes', 'No'],
-##                                                           ['y', 'n'])
                             editSummary = i18n.twtranslate(
                                 self.site, "casechecker-rename")
                             dst = self.Page(newTitle)
@@ -676,12 +670,10 @@ class CaseChecker(object):
                     msg = u'page exists'
                 self.ColorCodeWord(u'  %d: %s (%s)\n' % (count, t, msg), True)
                 count += 1
-            answers = [str(i) for i in xrange(0, count)]
-            choice = int(pywikibot.inputChoice(
-                u'Which link to choose? (0 to skip)',
-                answers, [a[0] for a in answers]))
-            if choice > 0:
-                return candidates[choice - 1]
+            answers = [('skip', 's')] + [(str(i), i) for i in range(1, count)]
+            choice = pywikibot.input_choice(u'Which link to choose?', answers)
+            if choice != 's':
+                return candidates[int(choice) - 1]
 
     def ColorCodeWord(self, word, toScreen=False):
         if not toScreen:

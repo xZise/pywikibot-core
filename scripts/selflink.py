@@ -2,8 +2,7 @@
 # -*- coding: utf-8  -*-
 
 """
-This bot goes over multiple pages of the site, searches for selflinks, and
-allows removing them.
+This bot searches for selflinks and allows removing them.
 
 These command line parameters can be used to specify which pages to work on:
 
@@ -34,6 +33,8 @@ docuReplacements = {
 
 class SelflinkBot(Bot):
 
+    """Self-link removal bot."""
+
     def __init__(self, generator, **kwargs):
         super(SelflinkBot, self).__init__(**kwargs)
         self.generator = generator
@@ -52,9 +53,8 @@ class SelflinkBot(Bot):
         self.linkR = re.compile(
             r'\[\[(?P<title>[^\]\|#]*)'
             r'(?P<section>#[^\]\|]*)?'
-            '(\|(?P<label>[^\]]*))?\]\]'
+            r'(\|(?P<label>[^\]]*))?\]\]'
             r'(?P<linktrail>' + linktrail + ')')
-        self.done = False
 
     def handleNextLink(self, page, match, context=100):
         """Process the next link on a page, offering the user choices.
@@ -96,11 +96,10 @@ class SelflinkBot(Bot):
             matchText = match.group(0)
             pywikibot.output(
                 pre + '\03{lightred}' + matchText + '\03{default}' + post)
-            choice = pywikibot.inputChoice(
+            choice = pywikibot.input_choice(
                 u'\nWhat shall be done with this selflink?\n',
-                ['unlink', 'make bold', 'skip', 'edit', 'more context',
-                 'unlink all', 'quit'],
-                ['U', 'b', 's', 'e', 'm', 'a', 'q'], 'u')
+                [('unlink', 'u'), ('make bold', 'b'), ('skip', 's'),
+                 ('edit', 'e'), ('more context', 'm'), ('unlink all')], 'u')
             pywikibot.output(u'')
 
             if choice == 's':
@@ -120,9 +119,6 @@ class SelflinkBot(Bot):
                 return self.handleNextLink(page, match, context=context + 100)
             elif choice == 'a':
                 self.always = True
-            elif choice == 'q':
-                self.done = True
-                return False
 
         # choice was 'U', 'b', or 'a'
         new = match.group('label') or match.group('title')
@@ -150,7 +146,7 @@ class SelflinkBot(Bot):
                     % page.title(asLink=True))
                 return
             curpos = 0
-            while curpos < len(page.text) or self.done:
+            while curpos < len(page.text):
                 match = self.linkR.search(page.text, pos=curpos)
                 if not match:
                     break
@@ -176,18 +172,20 @@ class SelflinkBot(Bot):
         except pywikibot.LockedPage:
             pywikibot.output(u"Page %s is locked." % page.title(asLink=True))
 
-    def run(self):
-        for page in self.generator:
-            if self.done:
-                break
-            self.treat(page)
 
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
 
-def main():
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     # Page generator
     gen = None
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = GeneratorFactory()
     botArgs = {}
 
@@ -207,7 +205,4 @@ def main():
     bot.run()
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        pywikibot.stopme()
+    main()

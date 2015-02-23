@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Program to add uncat template to images without categories at commons.
+
 See imagerecat.py (still working on that one) to add these images to categories.
 
 """
@@ -19,7 +20,7 @@ from datetime import timedelta
 import pywikibot
 from pywikibot import pagegenerators
 
-#Probably unneeded because these are hidden categories. Have to figure it out.
+# Probably unneeded because these are hidden categories. Have to figure it out.
 ignoreCategories = [u'[[Category:CC-BY-SA-3.0]]',
                     u'[[Category:GFDL]]',
                     u'[[Category:Media for cleanup]]',
@@ -28,7 +29,7 @@ ignoreCategories = [u'[[Category:CC-BY-SA-3.0]]',
                     u'[[Category:Media lacking a description]]',
                     u'[[Category:Self-published work]]']
 
-#Dont bother to put the template on a image with one of these templates
+# Dont bother to put the template on a image with one of these templates
 skipTemplates = [u'Delete',
                  u'Nocat',
                  u'No license',
@@ -38,7 +39,7 @@ skipTemplates = [u'Delete',
                  u'Uncategorized',
                  u'Uncat']
 
-#Ignore the templates in this really long list when looking for relevant categories
+# Ignore templates in this long list when looking for relevant categories
 ignoreTemplates = [u'1000Bit',
                    u'1922 cyc',
                    u'2MASS',
@@ -1235,12 +1236,11 @@ putcomment = u'Please add categories to this image'
 
 
 def uploadedYesterday(site):
-    '''
+    """
     Return a pagegenerator containing all the pictures uploaded yesterday.
+
     Should probably copied to somewhere else
-
-    '''
-
+    """
     today = pywikibot.Timestamp.utcnow()
     yesterday = today + timedelta(days=-1)
 
@@ -1249,11 +1249,12 @@ def uploadedYesterday(site):
 
 
 def recentChanges(site=None, delay=0, block=70):
-    '''
+    """
     Return a pagegenerator containing all the images edited in a certain timespan.
+
     The delay is the amount of minutes to wait and the block is the timespan to return images in.
     Should probably be copied to somewhere else
-    '''
+    """
     rcstart = site.getcurrenttime() + timedelta(minutes=-(delay + block))
     rcend = site.getcurrenttime() + timedelta(minutes=-delay)
 
@@ -1267,13 +1268,13 @@ def recentChanges(site=None, delay=0, block=70):
 
 
 def isUncat(page):
-    '''
-    Do we want to skip this page?
+    """
+    Do we want to skip this page.
 
     If we found a category which is not in the ignore list it means
     that the page is categorized so skip the page.
     If we found a template which is in the ignore list, skip the page.
-    '''
+    """
     pywikibot.output(u'Working on ' + page.title())
 
     for category in page.categories():
@@ -1282,7 +1283,7 @@ def isUncat(page):
             return False
 
     for templateWithTrail in page.templates():
-        #Strip of trailing garbage
+        # Strip of trailing garbage
         template = templateWithTrail.title().rstrip('\n').rstrip()
         if template in skipTemplates:
             # Already tagged with a template, skip it
@@ -1298,9 +1299,12 @@ def isUncat(page):
 
 
 def addUncat(page):
-    '''
-    Add the uncat template to the page
-    '''
+    """
+    Add the uncat template to the page.
+
+    @param page: Page to be modified
+    @rtype: Page
+    """
     newtext = page.get() + puttext
     pywikibot.showDiff(page.get(), newtext)
     try:
@@ -1315,12 +1319,17 @@ def addUncat(page):
 
 
 def main(*args):
-    '''
-    Grab a bunch of images and tag them if they are not categorized.
-    '''
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     generator = None
 
-    local_args = pywikibot.handleArgs(*args)
+    local_args = pywikibot.handle_args(args)
 
     # use the default imagerepository normally commons
     site = pywikibot.Site().image_repository()
@@ -1334,8 +1343,8 @@ def main(*args):
             generator = recentChanges(site=site, delay=120)
         else:
             genFactory.handleArg(arg)
-    if not generator:
-        generator = genFactory.getCombinedGenerator()
+
+    generator = genFactory.getCombinedGenerator(gen=generator)
     if not generator:
         pywikibot.output(
             u'You have to specify the generator you want to use for the program!')

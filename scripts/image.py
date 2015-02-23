@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-This script can be used to change one image to another or remove an image
-entirely.
+This script can be used to change one image to another or remove an image.
 
 Syntax: python image.py image_name [new_image_name]
 
@@ -15,7 +14,7 @@ Command line options:
            surround it with single quotes, such as:
            -summary:'My edit summary'
 -always    Don't prompt to make changes, just do them.
--loose     Do loose replacements.  This will replace all occurences of the name
+-loose     Do loose replacements.  This will replace all occurrences of the name
            of the image (and not just explicit image syntax).  This should work
            to catch all instances of the image, including where it is used as a
            template parameter or in image galleries.  However, it can also make
@@ -49,10 +48,7 @@ import re
 
 class ImageRobot(Bot):
 
-    """
-    This bot will load all pages yielded by a file links image page generator and
-    replace or remove all occurences of the old image.
-    """
+    """This bot will replace or remove all occurrences of an old image."""
 
     # Summary messages for replacing images
     msg_replace = {
@@ -141,7 +137,7 @@ class ImageRobot(Bot):
 
         replacements = []
 
-        if not self.site.nocapitalize:
+        if self.site.namespaces[6].case == 'first-letter':
             case = re.escape(self.old_image[0].upper() +
                              self.old_image[0].lower())
             escaped = '[' + case + ']' + re.escape(self.old_image[1:])
@@ -151,13 +147,18 @@ class ImageRobot(Bot):
         # Be careful, spaces and _ have been converted to '\ ' and '\_'
         escaped = re.sub('\\\\[_ ]', '[_ ]', escaped)
         if not self.getOption('loose') or not self.new_image:
-            image_regex = re.compile(r'\[\[ *(?:' + '|'.join(self.site.namespace(6, all=True)) + ')\s*:\s*' + escaped + ' *(?P<parameters>\|[^\n]+|) *\]\]')
+            image_regex = re.compile(
+                r'\[\[ *(?:%s)\s*:\s*%s *(?P<parameters>\|[^\n]+|) *\]\]'
+                % ('|'.join(self.site.namespace(6, all=True)), escaped))
         else:
             image_regex = re.compile(r'' + escaped)
 
         if self.new_image:
             if not self.getOption('loose'):
-                replacements.append((image_regex, '[[' + self.site.image_namespace() + ':' + self.new_image + '\g<parameters>]]'))
+                replacements.append((image_regex,
+                                     u'[[%s:%s\\g<parameters>]]'
+                                     % (self.site.image_namespace(),
+                                        self.new_image)))
             else:
                 replacements.append((image_regex, self.new_image))
         else:
@@ -169,12 +170,20 @@ class ImageRobot(Bot):
         replaceBot.run()
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     old_image = None
     new_image = None
     options = {}
 
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         if arg == '-always':
             options['always'] = True
         elif arg == '-loose':

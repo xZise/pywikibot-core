@@ -1,8 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
-
 """
-Bot to create capitalized redirects where the first character of the first
+Bot to create capitalized redirects.
+
+It creates redirects where the first character of the first
 word is uppercase and the remaining characters and words are lowercase.
 
 Command-line arguments:
@@ -19,7 +20,7 @@ Example: "python capitalize_redirects.py -start:B -always"
 """
 #
 # (C) Yrithinnd, 2006
-# (C) Pywikibot team, 2007-2014
+# (C) Pywikibot team, 2007-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -32,33 +33,41 @@ __version__ = '$Id$'
 #
 
 import pywikibot
-from pywikibot import i18n, pagegenerators, Bot
+from pywikibot import i18n, pagegenerators
+from pywikibot.bot import FollowRedirectPageBot, ExistingPageBot
 
 docuReplacements = {
     '&params;': pagegenerators.parameterHelp
 }
 
 
-class CapitalizeBot(Bot):
+class CapitalizeBot(FollowRedirectPageBot, ExistingPageBot):
+
+    """Capitalization Bot."""
+
     def __init__(self, generator, **kwargs):
+        """Constructor.
+
+        Parameters:
+            @param generator: The page generator that determines on which pages
+                              to work.
+            @kwarg titlecase: create a titlecased redirect page instead a
+                              capitalized one.
+        """
         self.availableOptions.update({
             'titlecase': False,
         })
 
-        super(CapitalizeBot, self).__init__(**kwargs)
-        self.generator = generator
+        super(CapitalizeBot, self).__init__(generator=generator, **kwargs)
 
-    def treat(self, page):
-        if not page.exists():
-            return
-        if page.isRedirectPage():
-            page = page.getRedirectTarget()
-        page_t = page.title()
-        self.current_page = page
+    def treat_page(self):
+        """Capitalize redirects of the current page."""
+        page_t = self.current_page.title()
+        site = self.current_page.site
         if self.getOption('titlecase'):
-            page_cap = pywikibot.Page(page.site, page_t.title())
+            page_cap = pywikibot.Page(site, page_t.title())
         else:
-            page_cap = pywikibot.Page(page.site, page_t.capitalize())
+            page_cap = pywikibot.Page(site, page_t.capitalize())
         if page_cap.exists():
             pywikibot.output(u'%s already exists, skipping...\n'
                              % page_cap.title(asLink=True))
@@ -66,31 +75,32 @@ class CapitalizeBot(Bot):
             pywikibot.output(u'%s doesn\'t exist'
                              % page_cap.title(asLink=True))
             if not self.getOption('always'):
-                choice = pywikibot.inputChoice(
+                choice = pywikibot.input_choice(
                     u'Do you want to create a redirect?',
-                    ['Yes', 'No', 'All', 'Quit'], ['y', 'N', 'a', 'q'], 'N')
+                    [('Yes', 'y'), ('No', 'n'), ('All', 'a')], 'n')
                 if choice == 'a':
                     self.options['always'] = True
-                elif choice == 'q':
-                    self.quit()
             if self.getOption('always') or choice == 'y':
                 comment = i18n.twtranslate(
-                    page.site,
+                    site,
                     'capitalize_redirects-create-redirect',
                     {'to': page_t})
-                page_cap.text = u"#%s %s" % (page.site.redirect(),
-                                             page.title(asLink=True,
-                                                        textlink=True))
-                try:
-                    page_cap.save(comment)
-                except:
-                    pywikibot.output(u"An error occurred, skipping...")
+                page_cap.set_redirect_target(self.current_page, create=True,
+                                             summary=comment)
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     options = {}
 
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     for arg in local_args:

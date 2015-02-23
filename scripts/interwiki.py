@@ -1,8 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
-Script to check language links for general pages. This works by downloading the
-page, and using existing translations plus hints from the command line to
+Script to check language links for general pages.
+
+Uses existing translations of a page, plus hints from the command line, to
 download the equivalent pages from other languages. All of such pages are
 downloaded as well and checked for interwiki links recursively until there are
 no more links that are encountered. A rationalization process then selects the
@@ -337,7 +338,7 @@ that you have to break it off, use "-continue" next time.
 # (C) Daniel Herding, 2004
 # (C) Yuri Astrakhan, 2005-2006
 # (C) xqt, 2009-2014
-# (C) Pywikibot team, 2007-2014
+# (C) Pywikibot team, 2007-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -352,9 +353,11 @@ import datetime
 import codecs
 import pickle
 import socket
-import webbrowser
 import pywikibot
 from pywikibot import config, i18n, pagegenerators, textlib, interwiki_graph, titletranslate
+
+if sys.version_info[0] > 2:
+    unicode = str
 
 docuReplacements = {
     '&pagegenerators_help;': pagegenerators.parameterHelp
@@ -366,7 +369,7 @@ class SaveError(pywikibot.Error):
     """An attempt to save a page with changed interwiki has failed."""
 
 
-class LinkMustBeRemoved(SaveError):
+class LinkMustBeRemoved(SaveError):  # noqa
 
     """
     An interwiki link has to be removed, but this can't be done because of user
@@ -377,6 +380,8 @@ class LinkMustBeRemoved(SaveError):
 class GiveUpOnPage(pywikibot.Error):
 
     """The user chose not to work on this page and its linked pages any more."""
+
+    pass
 
 
 # Subpage templates. Must be in lower case,
@@ -453,6 +458,7 @@ class Global(object):
 
     """
     Container class for global settings.
+
     Use of globals outside of this is to be avoided.
     """
 
@@ -621,9 +627,10 @@ class Global(object):
 class StoredPage(pywikibot.Page):
 
     """
-    Store the Page contents on disk to avoid sucking too much
-    memory when a big number of Page objects will be loaded
-    at the same time.
+    Store the Page contents on disk.
+
+    This is to avoid sucking too much memory when a big number of Page objects
+    will be loaded at the same time.
     """
 
     # Please prefix the class members names by SP
@@ -692,6 +699,7 @@ class PageTree(object):
 
     """
     Structure to manipulate a set of pages.
+
     Allows filtering efficiently by Site.
     """
 
@@ -720,7 +728,7 @@ class PageTree(object):
         self.size = 0
 
     def filter(self, site):
-        """Iterates over pages that are in Site site."""
+        """Iterate over pages that are in Site site."""
         try:
             for page in self.tree[site]:
                 yield page
@@ -745,7 +753,7 @@ class PageTree(object):
             pass
 
     def removeSite(self, site):
-        """Removes all pages from Site site."""
+        """Remove all pages from Site site."""
         try:
             self.size -= len(self.tree[site])
             del self.tree[site]
@@ -753,7 +761,7 @@ class PageTree(object):
             pass
 
     def siteCounts(self):
-        """Yields (Site, number of pages in site) pairs"""
+        """Yield (Site, number of pages in site) pairs."""
         for site, d in self.tree.items():
             yield site, len(d)
 
@@ -765,10 +773,10 @@ class PageTree(object):
 
 class Subject(object):
 
-    """
-    Class to follow the progress of a single 'subject' (i.e. a page with
-    all its translations)
+    u"""
+    Class to follow the progress of a single 'subject'.
 
+    (i.e. a page with all its translations)
 
     Subject is a transitive closure of the binary relation on Page:
     "has_a_langlink_pointing_to".
@@ -823,9 +831,12 @@ class Subject(object):
     """
 
     def __init__(self, originPage=None, hints=None):
-        """Constructor. Takes as arguments the Page on the home wiki
-           plus optionally a list of hints for translation
-           """
+        """
+        Constructor.
+
+        Takes as arguments the Page on the home wiki
+        plus optionally a list of hints for translation
+        """
         if globalvar.contentsondisk:
             if originPage:
                 originPage = StoredPage(originPage)
@@ -866,6 +877,8 @@ class Subject(object):
 
     def getFoundDisambig(self, site):
         """
+        Return the first disambiguation found.
+
         If we found a disambiguation on the given site while working on the
         subject, this method returns it. If several ones have been found, the
         first one will be returned.
@@ -878,6 +891,8 @@ class Subject(object):
 
     def getFoundNonDisambig(self, site):
         """
+        Return the first non-disambiguation found.
+
         If we found a non-disambiguation on the given site while working on the
         subject, this method returns it. If several ones have been found, the
         first one will be returned.
@@ -891,6 +906,8 @@ class Subject(object):
 
     def getFoundInCorrectNamespace(self, site):
         """
+        Return the first page in the extended namespace.
+
         If we found a page that has the expected namespace on the given site
         while working on the subject, this method returns it. If several ones
         have been found, the first one will be returned.
@@ -939,7 +956,9 @@ class Subject(object):
 
     def openSites(self):
         """
-        Iterator. Yields (site, count) pairs:
+        Iterator.
+
+        Yields (site, count) pairs:
         * site is a site where we still have work to do on
         * count is the number of items in that Site that need work on
         """
@@ -947,6 +966,8 @@ class Subject(object):
 
     def whatsNextPageBatch(self, site):
         """
+        Return the next page batch.
+
         By calling this method, you 'promise' this instance that you will
         preload all the 'site' Pages that are in the todo list.
 
@@ -969,7 +990,7 @@ class Subject(object):
         return result
 
     def makeForcedStop(self, counter):
-        """Ends work on the page before the normal end."""
+        """End work on the page before the normal end."""
         for site, count in self.todo.siteCounts():
             counter.minus(site, count)
         self.todo = PageTree()
@@ -977,8 +998,9 @@ class Subject(object):
 
     def addIfNew(self, page, counter, linkingPage):
         """
-        Adds the pagelink given to the todo list, but only if we didn't know
-        it before. If it is added, update the counter accordingly.
+        Add the pagelink given to the todo list, if it hasnt been seen yet.
+
+        If it is added, update the counter accordingly.
 
         Also remembers where we found the page, regardless of whether it had
         already been found before or not.
@@ -1017,8 +1039,7 @@ class Subject(object):
 
     def namespaceMismatch(self, linkingPage, linkedPage, counter):
         """
-        Checks whether or not the given page has another namespace
-        than the origin page.
+        Check whether or not the given page has a different namespace.
 
         Returns True if the namespaces are different and the user
         has selected not to follow the linked page.
@@ -1055,12 +1076,13 @@ u"because page %s in the correct namespace has already been found."
                            linkedPage.namespace(), preferredPage))
                     return True
                 else:
-                    choice = pywikibot.inputChoice(
+                    choice = pywikibot.input_choice(
 u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                         % (self.originPage, self.originPage.namespace(),
                            linkedPage, linkedPage.namespace()),
-                        ['Yes', 'No', 'Add an alternative', 'give up'],
-                        ['y', 'n', 'a', 'g'])
+                        [('Yes', 'y'), ('No', 'n'),
+                         ('Add an alternative', 'a'), ('give up', 'g')],
+                        automatic_quit=False)
                     if choice != 'y':
                         # Fill up foundIn, so that we will not ask again
                         self.foundIn[linkedPage] = [linkingPage]
@@ -1106,8 +1128,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
 
     def disambigMismatch(self, page, counter):
         """
-        Checks whether or not the given page has the another disambiguation
-        status than the origin page.
+        Check whether the given page has a different disambiguation status.
 
         Returns a tuple (skip, alternativePage).
 
@@ -1143,12 +1164,13 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                         % (page, self.originPage, disambig))
                     return (True, None)
                 else:
-                    choice = pywikibot.inputChoice(
+                    choice = pywikibot.input_choice(
                         u"WARNING: %s is a disambiguation page, but %s doesn't "
                         u"seem to be one. Follow it anyway?"
                         % (self.originPage, page),
-                        ['Yes', 'No', 'Add an alternative', 'Give up'],
-                        ['y', 'n', 'a', 'g'])
+                        [('Yes', 'y'), ('No', 'n'),
+                         ('Add an alternative', 'a'), ('give up', 'g')],
+                        automatic_quit=False)
             elif not self.originPage.isDisambig() and page.isDisambig():
                 nondisambig = self.getFoundNonDisambig(page.site)
                 if nondisambig:
@@ -1158,12 +1180,13 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                         % (page, self.originPage, nondisambig))
                     return (True, None)
                 else:
-                    choice = pywikibot.inputChoice(
+                    choice = pywikibot.input_choice(
                         u'WARNING: %s doesn\'t seem to be a disambiguation '
                         u'page, but %s is one. Follow it anyway?'
                         % (self.originPage, page),
-                        ['Yes', 'No', 'Add an alternative', 'Give up'],
-                        ['y', 'n', 'a', 'g'])
+                        [('Yes', 'y'), ('No', 'n'),
+                         ('Add an alternative', 'a'), ('give up', 'g')],
+                        automatic_quit=False)
             if choice == 'n':
                 return (True, None)
             elif choice == 'a':
@@ -1241,6 +1264,8 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
 
     def batchLoaded(self, counter):
         """
+        Notify that the promised batch of pages was loaded.
+
         This is called by a worker to tell us that the promised batch of
         pages was loaded.
         In other words, all the pages in self.pending have already
@@ -1367,7 +1392,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                 self.originPage = page
             try:
                 iw = page.langlinks()
-            except pywikibot.NoSuchSite:
+            except pywikibot.UnknownSite:
                 if not globalvar.quiet:
                     pywikibot.output(u"NOTE: site %s does not exist."
                                      % page.site)
@@ -1578,7 +1603,11 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                         answer = 'a'
                     else:
                         # TODO: allow answer to repeat previous or go back after a mistake
-                        answer = pywikibot.inputChoice(u'What should be done?', ['accept', 'reject', 'give up', 'accept all'], ['a', 'r', 'g', 'l'], 'a')
+                        answer = pywikibot.input_choice(
+                            u'What should be done?',
+                            [('accept', 'a'), ('reject', 'r'),
+                             ('give up', 'g'), ('accept all', 'l')], 'a',
+                            automatic_quit=False)
                     if answer == 'l':  # accept all
                         acceptall = True
                         answer = 'a'
@@ -1593,11 +1622,12 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
         return result
 
     def finish(self):
-        """Round up the subject, making any necessary changes. This method
-           should be called exactly once after the todo list has gone empty.
+        """
+        Round up the subject, making any necessary changes.
+
+        This should be called exactly once after the todo list has gone empty.
 
         """
-
         if not self.isDone():
             raise Exception("Bugcheck: finish called before done")
         if not self.workonme:
@@ -1696,8 +1726,8 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
             for (site, page) in new.items():
                 # edit restriction for some templates on zh-wiki where
                 # interlanguage keys are included by /doc subpage
-                smallWikiAllowed = not (page.site.sitename() == 'wikipedia:zh'
-                                        and page.namespace() == 10 and
+                smallWikiAllowed = not (page.site.sitename() == 'wikipedia:zh' and
+                                        page.namespace() == 10 and
                                         u'Country data' in page.title(withNamespace=False))
                 # edit restriction on is-wiki
                 # https://is.wikipedia.org/wiki/Wikipediaspjall:V%C3%A9lmenni
@@ -1795,7 +1825,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                     del page._contents
 
     def replaceLinks(self, page, newPages):
-        """Returns True if saving was successful."""
+        """Return True if saving was successful."""
         if globalvar.localonly:
             # In this case only continue on the Page we started with
             if page != self.originPage:
@@ -1812,7 +1842,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
             raise SaveError(u'Page doesn\'t exist')
         if page.isEmpty() and not page.isCategory():
             pywikibot.output(u"Not editing %s: page is empty" % page)
-            raise SaveError
+            raise SaveError(u'Page is empty.')
 
         # clone original newPages dictionary, so that we can modify it to the
         # local page's needs
@@ -1820,7 +1850,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
         interwikis = [pywikibot.Page(l) for l in page.iterlanglinks()]
 
         # remove interwiki links to ignore
-        for iw in re.finditer('<!-- *\[\[(.*?:.*?)\]\] *-->', pagetext):
+        for iw in re.finditer(r'<!-- *\[\[(.*?:.*?)\]\] *-->', pagetext):
             try:
                 ignorepage = pywikibot.Page(page.site, iw.groups()[0])
                 if (new[ignorepage.site] == ignorepage) and \
@@ -1838,7 +1868,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                                'from': page})
             except KeyError:
                 pass
-            except pywikibot.NoSuchSite:
+            except pywikibot.SiteDefinitionError:
                 pass
             except pywikibot.InvalidTitle:
                 pass
@@ -1949,16 +1979,14 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                 # If we cannot ask, deny permission
                 answer = 'n'
             else:
-                answer = pywikibot.inputChoice(u'Submit?',
-                                               ['Yes', 'No', 'open in Browser',
-                                                'Give up', 'Always'],
-                                               ['y', 'n', 'b', 'g', 'a'])
+                answer = pywikibot.input_choice(u'Submit?',
+                                                [('Yes', 'y'), ('No', 'n'),
+                                                 ('open in Browser', 'b'),
+                                                 ('Give up', 'g'),
+                                                 ('Always', 'a')],
+                                                automatic_quit=False)
                 if answer == 'b':
-                    webbrowser.open("http://%s%s" % (
-                        page.site.hostname(),
-                        page.site.nice_get_address(page.title(asUrl=True))
-                    ))
-                    pywikibot.input(u"Press Enter when finished in browser.")
+                    pywikibot.bot.open_webbrowser(page)
                     return True
                 elif answer == 'a':
                     # don't ask for the rest of this subject
@@ -2075,11 +2103,15 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
 
 
 class InterwikiBot(object):
-    """A class keeping track of a list of subjects, controlling which pages
-       are queried from which languages when."""
+
+    """
+    A class keeping track of a list of subjects.
+
+    It controls which pages are queried from which languages when.
+    """
 
     def __init__(self):
-        """Constructor. We always start with empty lists."""
+        """Constructor."""
         self.subjects = []
         # We count how many pages still need to be loaded per site.
         # This allows us to find out from which site to retrieve pages next
@@ -2099,9 +2131,12 @@ class InterwikiBot(object):
             self.plus(site, count)
 
     def setPageGenerator(self, pageGenerator, number=None, until=None):
-        """Add a generator of subjects. Once the list of subjects gets
-           too small, this generator is called to produce more Pages
-           """
+        """
+        Add a generator of subjects.
+
+        Once the list of subjects gets too small,
+        this generator is called to produce more Pages.
+        """
         self.pageGenerator = pageGenerator
         self.generateNumber = number
         self.generateUntil = until
@@ -2117,18 +2152,19 @@ class InterwikiBot(object):
             mode = 'appended'
         else:
             mode = 'written'
-        f = open(dumpfn, mode[0])
         titles = [s.originPage.title() for s in self.subjects]
-        pickle.dump(titles, f)
-        f.close()
+        with open(dumpfn, mode[0] + 'b') as f:
+            pickle.dump(titles, f, protocol=config.pickle_protocol)
         pywikibot.output(u'Dump %s (%s) %s.' % (site.lang, site.family.name, mode))
         return dumpfn
 
     def generateMore(self, number):
-        """Generate more subjects. This is called internally when the
-           list of subjects becomes too small, but only if there is a
-           PageGenerator
-           """
+        """Generate more subjects.
+
+        This is called internally when the
+        list of subjects becomes too small, but only if there is a
+        PageGenerator
+        """
         fs = self.firstSubject()
         if fs and (not globalvar.quiet):
             pywikibot.output(u"NOTE: The first unfinished subject is %s"
@@ -2195,11 +2231,12 @@ class InterwikiBot(object):
             return self.subjects[0]
 
     def maxOpenSite(self):
-        """Return the site that has the most
-           open queries plus the number. If there is nothing left, return
-           None. Only languages that are TODO for the first Subject
-           are returned.
-           """
+        """
+        Return the site that has the most open queries plus the number.
+
+        If there is nothing left, return None.
+        Only languages that are TODO for the first Subject are returned.
+        """
         max = 0
         maxlang = None
         if not self.firstSubject():
@@ -2307,14 +2344,14 @@ class InterwikiBot(object):
         return len(self) == 0 and self.pageGenerator is None
 
     def plus(self, site, count=1):
-        """This is a routine that the Subject class expects in a counter."""
+        """Helper routine that the Subject class expects in a counter."""
         try:
             self.counts[site] += count
         except KeyError:
             self.counts[site] = count
 
     def minus(self, site, count=1):
-        """This is a routine that the Subject class expects in a counter."""
+        """Helper routine that the Subject class expects in a counter."""
         self.counts[site] -= count
 
     def run(self):
@@ -2415,7 +2452,15 @@ def readWarnfile(filename, bot):
         bot.add(page, hints=hintStrings)
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     singlePageTitle = ''
     opthintsonly = False
     # Which namespaces should be processed?
@@ -2434,7 +2479,7 @@ def main():
     newPages = None
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     for arg in local_args:
@@ -2526,9 +2571,8 @@ def main():
             u'%s-%s.pickle' % (site.family.name, site.lang)
         )
         try:
-            f = open(dumpFileName, 'r')
-            dumpedTitles = pickle.load(f)
-            f.close()
+            with open(dumpFileName, 'rb') as f:
+                dumpedTitles = pickle.load(f)
         except (EOFError, IOError):
             dumpedTitles = []
         pages = [pywikibot.Page(site, title) for title in dumpedTitles]
@@ -2543,7 +2587,10 @@ def main():
                 pywikibot.output(u"Dump file is empty?! Starting at the beginning.")
                 nextPage = "!"
                 namespace = 0
-            hintlessPageGen = pagegenerators.CombinedPageGenerator([hintlessPageGen, pagegenerators.AllpagesPageGenerator(nextPage, namespace, includeredirects=False)])
+            gen2 = pagegenerators.AllpagesPageGenerator(
+                nextPage, namespace, includeredirects=False)
+            hintlessPageGen = pagegenerators.CombinedPageGenerator(
+                [hintlessPageGen, gen2])
 
     site.login()
     bot = InterwikiBot()
@@ -2552,7 +2599,8 @@ def main():
         hintlessPageGen = genFactory.getCombinedGenerator()
     if hintlessPageGen:
         if len(namespaces) > 0:
-            hintlessPageGen = pagegenerators.NamespaceFilterPageGenerator(hintlessPageGen, namespaces)
+            hintlessPageGen = pagegenerators.NamespaceFilterPageGenerator(
+                hintlessPageGen, namespaces, site)
         # we'll use iter() to create make a next() function available.
         bot.setPageGenerator(iter(hintlessPageGen), number=number, until=until)
     elif warnfile:

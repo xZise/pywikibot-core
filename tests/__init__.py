@@ -1,4 +1,5 @@
 # -*- coding: utf-8  -*-
+"""Package tests."""
 #
 # (C) Pywikibot team, 2007-2014
 #
@@ -8,33 +9,21 @@ __version__ = '$Id$'
 
 import os
 import sys
+import warnings
 
-__all__ = ('httplib2', 'OrderedDict', '_cache_dir', 'TestRequest',
+__all__ = ('httplib2', '_cache_dir', 'TestRequest',
            'patch_request', 'unpatch_request')
 
 # Verify that the unit tests have a base working environment:
 # - httplib2 is mandatory
-# - ordereddict is only needed as a fallback for python 2.6
+# - future is needed as a fallback for python 2.6,
+#   however if unavailable this will fail on use; see pywikibot/tools.py
 # - mwparserfromhell is optional, so is only imported in textlib_tests
 try:
-    import httplib2
+    import httplib2  # noqa
 except ImportError as e:
     print("ImportError: %s" % e)
     sys.exit(1)
-
-try:
-    from collections import OrderedDict
-except ImportError:
-    try:
-        from ordereddict import OrderedDict
-    except ImportError as e:
-        print("ImportError: %s" % e)
-        if sys.version_info[0] == 2 and sys.version_info[1] == 6:
-            print(
-                "pywikibot depends on module ordereddict in Python 2.6.\n"
-                "Run 'pip install ordereddict' to run these tests under "
-                "Python 2.6")
-        sys.exit(1)
 
 if sys.version_info < (2, 7):
     # Unittest2 is a backport of python 2.7s unittest module to python 2.6
@@ -42,15 +31,26 @@ if sys.version_info < (2, 7):
 else:
     import unittest
 
+from pywikibot import config
 import pywikibot.data.api
 from pywikibot.data.api import Request as _original_Request
 from pywikibot.data.api import CachedRequest
 
 _tests_dir = os.path.split(__file__)[0]
 _cache_dir = os.path.join(_tests_dir, 'apicache')
+_data_dir = os.path.join(_tests_dir, 'data')
+_images_dir = os.path.join(_data_dir, 'images')
+
+# Find the root directory of the checkout
+_root_dir = os.path.split(_tests_dir)[0]
+_pwb_py = os.path.join(_root_dir, 'pwb.py')
 
 library_test_modules = [
+    'deprecation',
+    'ui',
+    'tests',
     'date',
+    'mediawikiversion',
     'ipregex',
     'xmlreader',
     'textlib',
@@ -59,9 +59,14 @@ library_test_modules = [
     'dry_api',
     'dry_site',
     'api',
+    'family',
     'site',
+    'link',
+    'interwiki_link',
     'page',
+    'category',
     'file',
+    'edit_failure',
     'timestripper',
     'pagegenerators',
     'wikidataquery',
@@ -69,20 +74,22 @@ library_test_modules = [
     'i18n',
     'ui',
     'wikibase',
+    'wikibase_edit',
+    'upload',
 ]
 
 script_test_modules = [
     'pwb',
     'script',
     'archivebot',
+    'data_ingestion',
+    'deletionbot',
+    'cache',
 ]
 
 disabled_test_modules = [
-    'ui',
+    'tests',  # tests of the tests package
 ]
-
-if os.environ.get('TRAVIS', 'false') == 'true':
-    disabled_test_modules.append('weblib')
 
 disabled_tests = {
     'textlib': [
@@ -95,13 +102,13 @@ def _unknown_test_modules():
     """List tests which are to be executed."""
     dir_list = os.listdir(_tests_dir)
     all_test_list = [name[0:-9] for name in dir_list  # strip '_tests.py'
-                     if name.endswith('_tests.py')
-                     and not name.startswith('_')]   # skip __init__.py and _*
+                     if name.endswith('_tests.py') and
+                     not name.startswith('_')]   # skip __init__.py and _*
 
     unknown_test_modules = [name
                             for name in all_test_list
-                            if name not in library_test_modules
-                            and name not in script_test_modules]
+                            if name not in library_test_modules and
+                            name not in script_test_modules]
 
     return unknown_test_modules
 
@@ -168,12 +175,24 @@ def load_tests(loader=unittest.loader.defaultTestLoader,
     return collector(loader)
 
 
-CachedRequest._get_cache_dir = staticmethod(
-    lambda *args: CachedRequest._make_dir(_cache_dir))
+CachedRequest._get_cache_dir = classmethod(
+    lambda cls, *args: cls._make_dir(_cache_dir))
 
+
+# Travis-CI builds are set to retry twice, which aims to reduce the number
+# of 'red' builds caused by intermittant server problems, while also avoiding
+# the builds taking a long time due to retries.
+# The following allows builds to retry twice, but higher default values are
+# overridden here to restrict retries to only 1, so developer builds fail more
+# frequently in code paths resulting from mishandled server problems.
+if config.max_retries > 2:
+    print('max_retries reduced from %d to 1 for tests' % config.max_retries)
+    config.max_retries = 1
 
 cache_misses = 0
 cache_hits = 0
+
+warnings.filterwarnings("always")
 
 
 class TestRequest(CachedRequest):
@@ -181,6 +200,7 @@ class TestRequest(CachedRequest):
     """Add caching to every Request except logins."""
 
     def __init__(self, *args, **kwargs):
+        """Constructor."""
         super(TestRequest, self).__init__(0, *args, **kwargs)
 
     def _expired(self, dt):
@@ -194,6 +214,13 @@ class TestRequest(CachedRequest):
             cache_misses += 1
             return False
 
+        # tokens need careful management in the cache
+        # and cant be aggressively cached.
+        # FIXME: remove once 'badtoken' is reliably handled in api.py
+        if 'intoken' in self._uniquedescriptionstr():
+            self._data = None
+            return False
+
         if 'lgpassword' in self._uniquedescriptionstr():
             self._data = None
             return False
@@ -205,6 +232,9 @@ class TestRequest(CachedRequest):
 
     def _write_cache(self, data):
         """Write data except login details."""
+        if 'intoken' in self._uniquedescriptionstr():
+            return
+
         if 'lgpassword' in self._uniquedescriptionstr():
             return
 
@@ -215,6 +245,7 @@ original_expired = None
 
 
 def patch_request():
+    """Patch Request classes with TestRequest."""
     global original_expired
     pywikibot.data.api.Request = TestRequest
     original_expired = pywikibot.data.api.CachedRequest._expired
@@ -222,5 +253,6 @@ def patch_request():
 
 
 def unpatch_request():
+    """Un-patch Request classes with TestRequest."""
     pywikibot.data.api.Request = _original_Request
     pywikibot.data.api.CachedRequest._expired = original_expired

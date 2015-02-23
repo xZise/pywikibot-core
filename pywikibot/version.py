@@ -1,9 +1,9 @@
 # -*- coding: utf-8  -*-
-""" Module to determine the pywikibot version (tag, revision and date). """
+"""Module to determine the pywikibot version (tag, revision and date)."""
 #
 # (C) Merlijn 'valhallasw' van Deen, 2007-2014
 # (C) xqt, 2010-2014
-# (C) Pywikibot team, 2007-2013
+# (C) Pywikibot team, 2007-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -14,7 +14,7 @@ import os
 import time
 import datetime
 import subprocess
-import sys
+import codecs
 
 import pywikibot.config2 as config
 
@@ -36,7 +36,7 @@ def getversion(online=True):
 
     @param online: (optional) Include information obtained online
     """
-    data = dict(getversiondict())  # copy dict to prevent changes in 'chache'
+    data = dict(getversiondict())  # copy dict to prevent changes in 'cache'
     data['cmp_ver'] = 'n/a'
 
     if online:
@@ -83,7 +83,7 @@ def getversiondict():
             except:
                 # nothing worked; version unknown (but suppress exceptions)
                 # the value is most likely '$Id' + '$', it means that
-                # wikipedia.py got imported without using svn at all
+                # pywikibot was imported without using version control at all.
                 return dict(tag='', rev='-1 (unknown)', date='0 (unknown)',
                             hsh='(unknown)')
 
@@ -143,10 +143,7 @@ def github_svn_rev2hash(tag, rev):
     @return: the git hash
     @rtype: str
     """
-    if sys.version_info[0] > 2:
-        from io import StringIO
-    else:
-        from StringIO import StringIO
+    from io import StringIO
     import xml.dom.minidom
     from pywikibot.comms import http
 
@@ -204,19 +201,21 @@ def getversion_git(path=None):
         tag = tag[(s + 6):e]
         t = tag.strip().split('/')
         tag = '[%s] %s' % (t[0][:-1], '-'.join(t[3:]))
-    info = subprocess.Popen([cmd, '--no-pager',
-                             'log', '-1',
-                             '--pretty=format:"%ad|%an|%h|%H|%d"'
-                             '--abbrev-commit',
-                             '--date=iso'],
-                            cwd=_program_dir,
-                            stdout=subprocess.PIPE).stdout.read()
+    with subprocess.Popen([cmd, '--no-pager',
+                           'log', '-1',
+                           '--pretty=format:"%ad|%an|%h|%H|%d"'
+                           '--abbrev-commit',
+                           '--date=iso'],
+                          cwd=_program_dir,
+                          stdout=subprocess.PIPE).stdout as stdout:
+        info = stdout.read()
     info = info.decode(config.console_encoding).split('|')
     date = info[0][:-6]
     date = time.strptime(date.strip('"'), '%Y-%m-%d %H:%M:%S')
-    rev = subprocess.Popen([cmd, 'rev-list', 'HEAD'],
-                           cwd=_program_dir,
-                           stdout=subprocess.PIPE).stdout.read()
+    with subprocess.Popen([cmd, 'rev-list', 'HEAD'],
+                          cwd=_program_dir,
+                          stdout=subprocess.PIPE).stdout as stdout:
+        rev = stdout.read()
     rev = 'g%s' % len(rev.splitlines())
     hsh = info[3]  # also stored in '.git/refs/heads/master'
     if (not date or not tag or not rev) and not path:
@@ -272,7 +271,7 @@ def getfileversion(filename):
     mtime = None
     fn = os.path.join(_program_dir, filename)
     if os.path.exists(fn):
-        with open(fn, 'r') as f:
+        with codecs.open(fn, 'r', "utf-8") as f:
             for line in f.readlines():
                 if line.find('__version__') == 0:
                     exec(line)
@@ -286,7 +285,7 @@ def getfileversion(filename):
 
 
 def package_versions(modules=None, builtins=False, standard_lib=None):
-    """ Retrieve package version information.
+    """Retrieve package version information.
 
     When builtins or standard_lib are None, they will be included only
     if a version was found in the package.
@@ -348,6 +347,9 @@ def package_versions(modules=None, builtins=False, standard_lib=None):
             if '__init__.py' in path:
                 path = path[0:path.index('__init__.py')]
 
+            if sys.version_info[0] == 2:
+                path = path.decode(sys.getfilesystemencoding())
+
             info['path'] = path
             assert(path not in paths)
             paths[path] = name
@@ -369,15 +371,17 @@ def package_versions(modules=None, builtins=False, standard_lib=None):
                 (standard_lib is None and name in std_lib_packages):
             if 'ver' in info:
                 data[name] = info
+            else:
+                # Remove the entry from paths, so it isnt processed below
+                del paths[info['path']]
         else:
             data[name] = info
 
-    # Remove any sub-packages which were loaded with a different name.
+    # Remove any pywikibot sub-modules which were loaded as a package.
     # e.g. 'wikipedia_family.py' is loaded as 'wikipedia'
+    _program_dir = _get_program_dir()
     for path, name in paths.items():
-        for other_path in set(paths) - set([path]):
-            if path.startswith(other_path) and not other_path.startswith(path):
-                del paths[path]
-                del data[name]
+        if _program_dir in path:
+            del data[name]
 
     return data

@@ -1,6 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
+Manage featured/good article/list status template.
+
 This script understands various command-line arguments:
 
  Task commands:
@@ -64,10 +66,14 @@ __version__ = '$Id$'
 
 import pickle
 import re
+import sys
 import pywikibot
-from pywikibot import i18n, textlib
+from pywikibot import i18n, textlib, config
 from pywikibot.pagegenerators import PreloadingGenerator
 from pywikibot.config2 import LS  # line separator
+
+if sys.version_info[0] > 2:
+    unichr = chr
 
 
 def CAT(site, name, hide):
@@ -80,7 +86,7 @@ def CAT(site, name, hide):
             yield article
 
 
-def BACK(site, name, hide):
+def BACK(site, name, hide):  # pylint: disable=unused-argument
     p = pywikibot.Page(site, name, ns=10)
     return [page for page in p.getReferences(follow_redirects=False,
                                              onlyTemplateInclusion=True)]
@@ -90,7 +96,7 @@ def DATA(site, name, hide):
     dp = pywikibot.ItemPage(site.data_repository(), name)
     try:
         title = dp.getSitelink(site)
-    except pywikibot.PageNotFound:
+    except pywikibot.NoPage:
         return
     cat = pywikibot.Category(site, title)
     if isinstance(hide, dict):
@@ -103,7 +109,7 @@ def DATA(site, name, hide):
 
 
 # not implemented yet
-def TMPL(site, name, hide):
+def TMPL(site, name, hide):  # pylint: disable=unused-argument
     return
 
 
@@ -154,7 +160,7 @@ template_good = {
     'nn': ['Link AA'],
     'no': ['Link AA'],
     'pt': ['Bom interwiki'],
-##    'tr': ['Link GA', 'Link KM'],
+    # 'tr': ['Link GA', 'Link KM'],
     'vi': [u'Liên kết bài chất lượng tốt'],
     'wo': ['Lien BA'],
 }
@@ -201,6 +207,9 @@ former_name = {
 
 
 class FeaturedBot(pywikibot.Bot):
+
+    """Featured article bot."""
+
     # Bot configuration.
     # Only the keys of the dict can be passed as init options
     # The values are the default values
@@ -224,7 +233,6 @@ class FeaturedBot(pywikibot.Bot):
         })
 
         super(FeaturedBot, self).__init__(**kwargs)
-        self.editcounter = 0
         self.cache = dict()
         self.filename = None
         self.site = pywikibot.Site()
@@ -243,7 +251,7 @@ class FeaturedBot(pywikibot.Bot):
             self.tasks = ['featured']
 
     def itersites(self, task):
-        """generator for site codes to be processed."""
+        """Generator for site codes to be processed."""
         def _generator():
             if task == 'good':
                 item_no = good_name['wikidata'][1]
@@ -256,7 +264,7 @@ class FeaturedBot(pywikibot.Bot):
             for key in sorted(dp.sitelinks.keys()):
                 try:
                     site = self.site.fromDBName(key)
-                except pywikibot.NoSuchSite:
+                except pywikibot.SiteDefinitionError:
                     pywikibot.output('"%s" is not a valid site. Skipping...'
                                      % key)
                 else:
@@ -316,19 +324,18 @@ class FeaturedBot(pywikibot.Bot):
         if not self.getOption('nocache') is True:
             pywikibot.output(u'Writing %d items to cache file %s.'
                              % (len(self.cache), self.filename))
-            f = open(self.filename, "wb")
-            pickle.dump(self.cache, f)
-            f.close()
+            with open(self.filename, "wb") as f:
+                pickle.dump(self.cache, f, protocol=config.pickle_protocol)
         self.cache = dict()
 
     def run(self):
         for task in self.tasks:
             self.run_task(task)
-        pywikibot.output(u'%d pages written.' % self.editcounter)
+        pywikibot.output(u'%d pages written.' % self._save_counter)
 
     def run_task(self, task):
         if not self.hastemplate(task):
-            pywikibot.output(u'\nNOTE: %s arcticles are not implemented at %s.'
+            pywikibot.output(u'\nNOTE: %s articles are not implemented at %s.'
                              % (task, self.site))
             return
 
@@ -491,13 +498,12 @@ class FeaturedBot(pywikibot.Bot):
         return add_templates, remove_templates
 
     def featuredWithInterwiki(self, fromsite, task):
-        """ Read featured articles and find the corresponding pages.
+        """Read featured articles and find the corresponding pages.
 
         Find corresponding pages on other sites, place the template and
         remember the page in the cache dict.
 
         """
-
         tosite = self.site
         if fromsite.code not in self.cache:
             self.cache[fromsite.code] = {}
@@ -529,7 +535,6 @@ class FeaturedBot(pywikibot.Bot):
 
     def add_template(self, source, dest, task, fromsite):
         """Place or remove the Link_GA/FA template on/from a page."""
-
         def compile_link(site, templates):
             """compile one link template list."""
             findtemplate = '(%s)' % '|'.join(templates)
@@ -553,9 +558,10 @@ class FeaturedBot(pywikibot.Bot):
             else:
                 # insert just before interwiki
                 if (not interactive or
-                    pywikibot.input(
-                        u'Connecting %s -> %s. Proceed? [Y/N]'
-                        % (source.title(), dest.title())) in ['Y', 'y']):
+                    pywikibot.input_yn(
+                        u'Connecting %s -> %s. Proceed?'
+                        % (source.title(), dest.title()),
+                        default=False, automatic_quit=False)):
                     if self.getOption('side'):
                         # Placing {{Link FA|xx}} right next to
                         # corresponding interwiki
@@ -575,18 +581,20 @@ class FeaturedBot(pywikibot.Bot):
             if m2:
                 if (changed or  # Don't force the user to say "Y" twice
                     not interactive or
-                    pywikibot.input(
-                        u'Connecting %s -> %s. Proceed? [Y/N]'
-                        % (source.title(), dest.title())) in ['Y', 'y']):
+                    pywikibot.input_yn(
+                        u'Connecting %s -> %s. Proceed?'
+                        % (source.title(), dest.title()),
+                        default=False, automatic_quit=False)):
                     text = re.sub(re_Link_remove, '', text)
                     changed = True
             elif task == 'former':
                 pywikibot.output(u"(already removed)")
         if changed:
             comment = i18n.twtranslate(tosite, 'featured-' + task,
-                                       {'page': unicode(source)})
+                                       {'page': source})
             try:
                 dest.put(text, comment)
+                self._save_counter += 1
             except pywikibot.LockedPage:
                 pywikibot.output(u'Page %s is locked!'
                                  % dest.title())
@@ -595,8 +603,16 @@ class FeaturedBot(pywikibot.Bot):
 
 
 def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     options = {}
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         if arg.startswith('-fromlang:'):
             options[arg[1:9]] = arg[10:].split(",")
         elif arg.startswith('-after:'):
@@ -614,7 +630,4 @@ def main(*args):
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        pywikibot.stopme()
+    main()

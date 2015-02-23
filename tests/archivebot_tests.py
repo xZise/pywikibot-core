@@ -8,15 +8,19 @@
 __version__ = '$Id$'
 
 from datetime import datetime
+import sys
 import pywikibot
 import pywikibot.page
 from pywikibot.textlib import TimeStripper
 from scripts import archivebot
 from tests.aspects import unittest, TestCase
 
+if sys.version_info[0] > 2:
+    basestring = (str,)
+
 THREADS = {
     'als': 4, 'ar': 1, 'bar': 0, 'bg': 0, 'bjn': 1, 'bs': 0, 'ca': 5, 'ckb': 2,
-    'cs': 0, 'de': 7, 'en': 25, 'eo': 1, 'es': 13, 'fa': 2, 'fr': 25, 'frr': 2,
+    'cs': 0, 'de': 1, 'en': 25, 'eo': 1, 'es': 13, 'fa': 2, 'fr': 25, 'frr': 2,
     'hi': 0, 'hr': 2, 'hu': 5, 'id': 3, 'it': 25, 'ja': 4, 'la': 0, 'lt': 1,
     'nl': 9, 'nn': 0, 'no': 0, 'pdc': 25, 'pfl': 3, 'pl': 8, 'pt': 0, 'ro': 1,
     'ru': 20, 'scn': 2, 'simple': 1, 'sr': 0, 'sv': 5, 'th': 1, 'tr': 7,
@@ -37,36 +41,38 @@ class TestArchiveBot(TestCase):
     def test_archivebot(self, code=None):
         """Test archivebot for one site."""
         site = self.get_site(code)
-        page = pywikibot.Page(site, 'user talk:xqt')
+        if code != 'de':  # bug 67663
+            page = pywikibot.Page(site, 'user talk:xqt')
+        else:
+            page = pywikibot.Page(site, 'user talk:ladsgroup')
         talk = archivebot.DiscussionPage(page, None)
-        self.assertTrue(isinstance(talk.archives, dict))
-        self.assertTrue(isinstance(talk.archived_threads, int))
+        self.assertIsInstance(talk.archives, dict)
+        self.assertIsInstance(talk.archived_threads, int)
         self.assertTrue(talk.archiver is None)
-        self.assertTrue(isinstance(talk.header, basestring))
-        self.assertTrue(isinstance(talk.timestripper, TimeStripper))
+        self.assertIsInstance(talk.header, basestring)
+        self.assertIsInstance(talk.timestripper, TimeStripper)
 
-        self.assertTrue(isinstance(talk.threads, list))
+        self.assertIsInstance(talk.threads, list)
         self.assertGreaterEqual(
             len(talk.threads), THREADS[code],
             u'%d Threads found on %s,\n%d or more expected'
             % (len(talk.threads), talk, THREADS[code]))
 
         for thread in talk.threads:
-            self.assertTrue(isinstance(thread,
-                                       archivebot.DiscussionThread))
-            self.assertTrue(isinstance(thread.title, basestring))
-            self.assertTrue(isinstance(thread.now, datetime))
-            self.assertTrue(thread.now == talk.now)
-            self.assertTrue(isinstance(thread.ts, TimeStripper))
-            self.assertTrue(thread.ts == talk.timestripper)
-            self.assertTrue(isinstance(thread.code, basestring))
+            self.assertIsInstance(thread, archivebot.DiscussionThread)
+            self.assertIsInstance(thread.title, basestring)
+            self.assertIsInstance(thread.now, datetime)
+            self.assertEqual(thread.now, talk.now)
+            self.assertIsInstance(thread.ts, TimeStripper)
+            self.assertEqual(thread.ts, talk.timestripper)
+            self.assertIsInstance(thread.code, basestring)
             self.assertEqual(thread.code, talk.timestripper.site.code)
-            self.assertTrue(isinstance(thread.content, basestring))
-            self.assertTrue(isinstance(thread.timestamp, datetime))
+            self.assertIsInstance(thread.content, basestring)
+            self.assertIsInstance(thread.timestamp, datetime)
 
-    expected_failures = ['ar', 'ckb', 'fa', 'pdc', 'th']
+    expected_failures = ['ar', 'pdc', 'th']
     # expected failures - should be fixed
-    # 'ar', 'ckb', 'fa': no digits in date, regex does not match
+    # 'ar': Uses Arabic acronym for TZ
     # 'pdc': changed month name setting in wiki over time (?)
     #   in old posts in talk page, February is "Feb.", site message gives
     #   <message name="feb" xml:space="preserve">Han.</message>.

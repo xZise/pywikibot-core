@@ -1,8 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
-This script has the intention to correct all redirect
-links in featured pages or only one page of each wiki.
+Correct all redirect links in featured pages or only one page of each wiki.
 
 Can be using with:
 &params;
@@ -67,7 +66,8 @@ def treat(text, linkedPage, targetPage):
     linktrail = mysite.linktrail()
 
     # make a backup of the original text so we can show the changes later
-    linkR = re.compile(r'\[\[(?P<title>[^\]\|#]*)(?P<section>#[^\]\|]*)?(\|(?P<label>[^\]]*))?\]\](?P<linktrail>' + linktrail + ')')
+    linkR = re.compile(r'\[\[(?P<title>[^\]\|#]*)(?P<section>#[^\]\|]*)?'
+                       r'(\|(?P<label>[^\]]*))?\]\](?P<linktrail>' + linktrail + ')')
     curpos = 0
     # This loop will run until we have finished the current page
     while True:
@@ -187,12 +187,20 @@ def workon(page):
             pywikibot.error('unable to put %s' % page)
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     featured = False
     gen = None
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     for arg in local_args:
@@ -210,8 +218,7 @@ def main():
     if featured:
         featuredList = i18n.translate(mysite, featured_articles)
         ref = pywikibot.Page(pywikibot.Site(), featuredList)
-        gen = pagegenerators.ReferringPageGenerator(ref)
-        gen = pagegenerators.NamespaceFilterPageGenerator(gen, [0])
+        gen = ref.getReferences(namespaces=[0])
     if not gen:
         gen = genFactory.getCombinedGenerator()
     if gen:

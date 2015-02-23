@@ -132,33 +132,6 @@ class Family(family.WikimediaFamily):
                        u'分類跳轉',),
         }
 
-        self.disambiguationTemplates = {
-            # If no templates are given, retrieve names from  the live wiki
-            # ([[MediaWiki:Disambiguationspage]])
-            # first char must be in uppercase
-            '_default': [u'Disambig'],  # for default MediaWiki message only
-            'haw': [u'Huaʻōlelo puana like'],
-            'no':  [u'Peker', u'Etternavn', u'Disambig',
-                    u'Tobokstavsforkortelse', u'Trebokstavsforkortelse',
-                    u'Flertydig', u'Pekerside'],
-            'nov': [u'Desambig'],
-            'qu':  [u"Sut'ichana qillqa", u'Disambig', u'SJM'],
-            'rmy': [u'Dudalipen'],
-            'sk':  [u'Disambig', u'Rozlišovacia stránka', u'Disambiguation'],
-            'tg':  [u'Ибҳомзудоӣ', u'Disambig', u'Рафъи ибҳом',
-                    u'Disambiguation'],
-            'tr':  [u'Anlam ayrım', u'Disambig', u'Anlam ayrımı',
-                    u'Kişi adları (anlam ayrımı)',
-                    u'Yerleşim yerleri (anlam ayrımı)',
-                    u'kısaltmalar (anlam ayrımı)', u'Coğrafya (anlam ayrımı)',
-                    u'Yerleşim yerleri (anlam ayrımı)', u'Sayılar (anlam ayrımı)',
-                    u"ABD'deki iller (anlam ayrımı)"],
-            'wo':  [u'Bokktekki'],
-            'yi':  [u'באדייטען'],
-            'zea': [u'Dp', u'Deurverwiespagina'],
-            'zh-classical':  [u'釋義', u'消歧義', u'Disambig'],
-        }
-
         self.disambcatname = {
             'af':  u'dubbelsinnig',
             'als': u'Begriffsklärung',
@@ -557,6 +530,34 @@ class Family(family.WikimediaFamily):
         if code in self.latin1old:
             return 'utf-8', 'iso-8859-1'
         return self.code2encoding(code),
+
+        # Subpages for documentation.
+        # TODO: List is incomplete, to be completed for missing languages.
+        # TODO: Remove comments for appropriate pages
+        self.doc_subpages = {
+            '_default': ((u'/doc', ),
+                         ['ar', 'bn', 'cs', 'da', 'en', 'es', 'fa',
+                          'hu', 'id', 'ilo', 'ja', 'ms',
+                          'ms', 'pt', 'ro', 'ru', 'simple', 'vi', 'zh']
+                         ),
+            'ca': (u'/ús', ),
+            'de': (u'Doku', u'/Meta'),
+            'dsb': (u'/Dokumentacija', ),
+            'eu': (u'txantiloi dokumentazioa', u'/dok'),
+            # fi: no idea how to handle this type of subpage at :Metasivu:
+            'fi': ((), ),
+            'fr': (u'/documentation', ),
+            'hsb': (u'/Dokumentacija', ),
+            'it': (u'/Man', ),
+            'ka': (u'/ინფო', ),
+            'ko': (u'/설명문서', ),
+            'no': (u'/dok', ),
+            'nn': (u'/dok', ),
+            'pl': (u'/opis', ),
+            'sk': (u'/Dokumentácia', ),
+            'sv': (u'/dok', ),
+            'uk': (u'/Документація', ),
+        }
 
     def shared_data_repository(self, code, transcluded=False):
         """Return the shared data repository for this site."""

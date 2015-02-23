@@ -81,6 +81,9 @@ class TestNamespaceObject(TestCase):
         self.assertTrue(all(Namespace.lookup_name(b, ns).id == self.all_builtin_ids[b]
                             for b in self.all_builtin_ids))
 
+        # Use a namespace object as a dict key
+        self.assertEqual(ns[ns[6]], ns[6])
+
     def testNamespaceConstructor(self):
         kwargs = {u'case': u'first-letter'}
         y = Namespace(id=6, custom_name=u'dummy', canonical_name=u'File',
@@ -129,18 +132,18 @@ class TestNamespaceObject(TestCase):
         y = Namespace(id=6, custom_name=u'ملف', canonical_name=u'File',
                       aliases=[u'Image', u'Immagine'], **kwargs)
 
-        if sys.version_info[0] == 2:
-            self.assertEqual(str(y), ':File:')
+        self.assertEqual(str(y), ':File:')
+        if sys.version_info[0] <= 2:
             self.assertEqual(unicode(y), u':ملف:')
-        else:
-            self.assertEqual(str(y), u':ملف:')
+        self.assertEqual(y.canonical_prefix(), ':File:')
+        self.assertEqual(y.custom_prefix(), u':ملف:')
 
     def testNamespaceCompare(self):
         a = Namespace(id=0, canonical_name=u'')
 
         self.assertEqual(a, 0)
         self.assertEqual(a, '')
-        self.assertEqual(a, None)
+        self.assertNotEqual(a, None)
 
         x = Namespace(id=6, custom_name=u'dummy', canonical_name=u'File',
                       aliases=[u'Image', u'Immagine'])
@@ -167,15 +170,15 @@ class TestNamespaceObject(TestCase):
 
         self.assertEqual(y, u'ملف')
 
-        # FIXME: Namespace is missing operators required for py3
-        if sys.version_info[0] > 2:
-            return
-
         self.assertLess(a, x)
         self.assertGreater(x, a)
         self.assertGreater(z, x)
 
+        self.assertIn(6, [x, y, z])
+        self.assertNotIn(8, [x, y, z])
+
     def testNamespaceNormalizeName(self):
+        """Test Namespace.normalize_name."""
         self.assertEqual(Namespace.normalize_name(u'File'), u'File')
         self.assertEqual(Namespace.normalize_name(u':File'), u'File')
         self.assertEqual(Namespace.normalize_name(u'File:'), u'File')
@@ -191,25 +194,20 @@ class TestNamespaceObject(TestCase):
         self.assertEqual(Namespace.normalize_name(u'::File::'), False)
 
     def test_repr(self):
+        """Test Namespace.__repr__."""
         a = Namespace(id=0, canonical_name=u'Foo')
         s = repr(a)
         r = "Namespace(id=0, custom_name=%r, canonical_name=%r, aliases=[])" \
             % (unicode('Foo'), unicode('Foo'))
         self.assertEqual(s, r)
 
-        a.info['defaultcontentmodel'] = 'bar'
-        r = {'defaultcontentmodel': 'bar'}
-        self.assertEqual(a.info, r)
-
+        a.defaultcontentmodel = 'bar'
         s = repr(a)
         r = "Namespace(id=0, custom_name=%r, canonical_name=%r, aliases=[], defaultcontentmodel='bar')" \
             % (unicode('Foo'), unicode('Foo'))
         self.assertEqual(s, r)
 
-        a.info['case'] = 'upper'
-        r = {'defaultcontentmodel': 'bar', 'case': 'upper'}
-        self.assertEqual(a.info, r)
-
+        a.case = 'upper'
         s = repr(a)
         r = "Namespace(id=0, custom_name=%r, canonical_name=%r, aliases=[], case='upper', defaultcontentmodel='bar')" \
             % (unicode('Foo'), unicode('Foo'))
@@ -217,7 +215,96 @@ class TestNamespaceObject(TestCase):
 
         b = eval(repr(a))
         self.assertEqual(a, b)
-        self.assertEqual(a.info, b.info)
+
+    def test_resolve(self):
+        """Test Namespace.resolve."""
+        namespaces = Namespace.builtin_namespaces(use_image_name=False)
+        main_ns = namespaces[0]
+        file_ns = namespaces[6]
+        special_ns = namespaces[-1]
+
+        self.assertEqual(Namespace.resolve([6]), [file_ns])
+        self.assertEqual(Namespace.resolve(['File']), [file_ns])
+        self.assertEqual(Namespace.resolve(['6']), [file_ns])
+        self.assertEqual(Namespace.resolve([file_ns]), [file_ns])
+
+        self.assertEqual(Namespace.resolve([file_ns, special_ns]),
+                                           [file_ns, special_ns])
+        self.assertEqual(Namespace.resolve([file_ns, file_ns]),
+                                           [file_ns, file_ns])
+
+        self.assertEqual(Namespace.resolve(6), [file_ns])
+        self.assertEqual(Namespace.resolve('File'), [file_ns])
+        self.assertEqual(Namespace.resolve('6'), [file_ns])
+        self.assertEqual(Namespace.resolve(file_ns), [file_ns])
+
+        self.assertEqual(Namespace.resolve(0), [main_ns])
+        self.assertEqual(Namespace.resolve('0'), [main_ns])
+
+        self.assertEqual(Namespace.resolve(-1), [special_ns])
+        self.assertEqual(Namespace.resolve('-1'), [special_ns])
+
+        self.assertEqual(Namespace.resolve('File:'), [file_ns])
+        self.assertEqual(Namespace.resolve(':File'), [file_ns])
+        self.assertEqual(Namespace.resolve(':File:'), [file_ns])
+
+        self.assertEqual(Namespace.resolve('Image:'), [file_ns])
+        self.assertEqual(Namespace.resolve(':Image'), [file_ns])
+        self.assertEqual(Namespace.resolve(':Image:'), [file_ns])
+
+        self.assertRaises(TypeError, Namespace.resolve, [True])
+        self.assertRaises(TypeError, Namespace.resolve, [False])
+        self.assertRaises(TypeError, Namespace.resolve, [None])
+        self.assertRaises(TypeError, Namespace.resolve, True)
+        self.assertRaises(TypeError, Namespace.resolve, False)
+        self.assertRaises(TypeError, Namespace.resolve, None)
+
+        self.assertRaises(KeyError, Namespace.resolve, -10)
+        self.assertRaises(KeyError, Namespace.resolve, '-10')
+        self.assertRaises(KeyError, Namespace.resolve, 'foo')
+        self.assertRaises(KeyError, Namespace.resolve, ['foo'])
+
+        self.assertRaisesRegex(KeyError,
+                               r'Namespace identifier\(s\) not recognised: -10',
+                               Namespace.resolve, [-10, 0])
+        self.assertRaisesRegex(KeyError,
+                               r'Namespace identifier\(s\) not recognised: foo',
+                               Namespace.resolve, [0, 'foo'])
+        self.assertRaisesRegex(KeyError,
+                               r'Namespace identifier\(s\) not recognised: -10,-11',
+                               Namespace.resolve, [-10, 0, -11])
+
+
+class TestNamespaceCollections(TestCase):
+
+    """Test how Namespace interact when in collections."""
+
+    net = False
+
+    def test_set(self):
+        """Test converting sequence of Namespace to a set."""
+        namespaces = Namespace.builtin_namespaces(use_image_name=False)
+
+        self.assertTrue(all(isinstance(x, int) for x in namespaces))
+        self.assertTrue(all(isinstance(x, int) for x in namespaces.keys()))
+        self.assertTrue(all(isinstance(x, Namespace)
+                            for x in namespaces.values()))
+
+        namespaces_set = set(namespaces)
+
+        self.assertEqual(len(namespaces), len(namespaces_set))
+        self.assertTrue(all(isinstance(x, int) for x in namespaces_set))
+
+    def test_set_minus(self):
+        """Test performing set minus operation on set of Namespace objects."""
+        namespaces = Namespace.builtin_namespaces(use_image_name=False)
+
+        excluded_namespaces = set([-1, -2])
+
+        positive_namespaces = set(namespaces) - excluded_namespaces
+
+        self.assertEqual(len(namespaces), len(positive_namespaces) +
+                                          len(excluded_namespaces))
 
 
 if __name__ == '__main__':

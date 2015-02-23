@@ -1,8 +1,10 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
-"""
-This is a Bot written by Filnik to add a text at the end of the page but above
-categories, interwiki and template for the stars of the interwiki (default).
+r"""
+This is a Bot to add a text at the end of the content of the page.
+
+By default it adds the text above categories, interwiki and template
+for the stars of the interwiki.
 
 Alternatively it may also add a text at the top of the page.
 These command line parameters can be used to specify which pages to work on:
@@ -10,8 +12,6 @@ These command line parameters can be used to specify which pages to work on:
 &params;
 
 Furthermore, the following command line parameters are supported:
-
--page             Use a page as generator
 
 -talkpage         Put the text onto the talk page instead the generated on
 -talk
@@ -64,7 +64,7 @@ or you need some help regarding this script, you can find us here:
 
 #
 # (C) Filnik, 2007-2010
-# (C) Pywikibot team, 2007-2014
+# (C) Pywikibot team, 2007-2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -72,7 +72,6 @@ __version__ = '$Id$'
 #
 
 import re
-import webbrowser
 import codecs
 import time
 
@@ -222,20 +221,16 @@ Match was: %s''' % result)
         # text in the page
         if putText:
             if not always:
-                choice = pywikibot.inputChoice(
+                choice = pywikibot.input_choice(
                     u'Do you want to accept these changes?',
-                    ['Yes', 'No', 'All', 'open in Browser'],
-                    ['y', 'n', 'a', 'b'], 'n')
+                    [('Yes', 'y'), ('No', 'n'), ('All', 'a'),
+                     ('open in Browser', 'b')], 'n', automatic_quit=False)
                 if choice == 'a':
                     always = True
                 elif choice == 'n':
                     return (False, False, always)
                 elif choice == 'b':
-                    webbrowser.open("http://%s%s" % (
-                        site.hostname(),
-                        site.nice_get_address(page.title(asUrl=True))
-                    ))
-                    pywikibot.input("Press Enter when finished in browser.")
+                    pywikibot.bot.open_webbrowser(page)
             if always or choice == 'y':
                 try:
                     if always:
@@ -275,24 +270,30 @@ Match was: %s''' % result)
             return (text, newtext, always)
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     # If none, the var is setted only for check purpose.
     summary = None
     addText = None
     regexSkip = None
     regexSkipUrl = None
-    generator = None
     always = False
     textfile = None
     talkPage = False
     reorderEnabled = True
-    namespaces = []
 
     # Put the text above or below the text?
     up = False
 
     # Process global args and prepare generator args parser
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
     # Loading the arguments
@@ -313,13 +314,6 @@ def main():
                 summary = pywikibot.input(u'What summary do you want to use?')
             else:
                 summary = arg[9:]
-        elif arg.startswith('-page'):
-            if len(arg) == 5:
-                generator = [pywikibot.Page(
-                    pywikibot.Site(),
-                    pywikibot.input(u'What page do you want to use?'))]
-            else:
-                generator = [pywikibot.Page(pywikibot.Site(), arg[6:])]
         elif arg.startswith('-excepturl'):
             if len(arg) == 10:
                 regexSkipUrl = pywikibot.input(u'What text should I skip?')
@@ -343,8 +337,7 @@ def main():
     if textfile and not addText:
         with codecs.open(textfile, 'r', config.textfile_encoding) as f:
             addText = f.read()
-    if not generator:
-        generator = genFactory.getCombinedGenerator()
+    generator = genFactory.getCombinedGenerator()
     if not generator:
         pywikibot.showHelp()
         return
@@ -352,14 +345,7 @@ def main():
         pywikibot.error("The text to add wasn't given.")
         return
     if talkPage:
-        generator = pagegenerators.PageWithTalkPageGenerator(generator)
-        site = pywikibot.Site()
-        for namespace in site.namespaces():
-            index = site.getNamespaceIndex(namespace)
-            if index % 2 == 1 and index > 0:
-                namespaces += [index]
-        generator = pagegenerators.NamespaceFilterPageGenerator(
-            generator, namespaces)
+        generator = pagegenerators.PageWithTalkPageGenerator(generator, True)
     for page in generator:
         (text, newtext, always) = add_text(page, addText, summary, regexSkip,
                                            regexSkipUrl, always, up, True,

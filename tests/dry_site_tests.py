@@ -1,4 +1,5 @@
 # -*- coding: utf-8  -*-
+"""Tests against a fake Site object."""
 #
 # (C) Pywikibot team, 2012-2014
 #
@@ -8,31 +9,27 @@ __version__ = '$Id$'
 #
 
 import pywikibot
+from pywikibot.tools import deprecated
 from pywikibot.site import must_be, need_version
 from pywikibot.comms.http import user_agent
+from pywikibot.exceptions import UnknownSite
 
-from tests.utils import DummySiteinfo
-from tests.aspects import unittest, TestCase
-
-
-class DrySite(pywikibot.site.APISite):
-    _loginstatus = pywikibot.site.LoginStatus.NOT_ATTEMPTED
-
-    @property
-    def userinfo(self):
-        return self._userinfo
-
-    @property
-    def siteinfo(self):
-        return DummySiteinfo({})
+from tests.aspects import (
+    unittest,
+    DefaultDrySiteTestCase,
+    DebugOnlyTestCase,
+    DeprecationTestCase,
+)
 
 
-class TestDrySite(TestCase):
+class TestDrySite(DefaultDrySiteTestCase):
 
-    net = False
+    """Tests against a fake Site object."""
+
+    dry = True
 
     def test_logged_in(self):
-        x = DrySite('en', 'wikipedia')
+        x = self.get_site()
 
         x._userinfo = {'name': None, 'groups': []}
         x._username = ['normal_user', 'sysop_user']
@@ -50,7 +47,7 @@ class TestDrySite(TestCase):
         self.assertFalse(x.logged_in(False))
 
     def test_user_agent(self):
-        x = DrySite('en', 'wikipedia')
+        x = self.get_site()
 
         x._userinfo = {'name': 'foo'}
         x._username = ('foo', None)
@@ -96,11 +93,11 @@ class TestDrySite(TestCase):
         x._username = (None, None)
 
         self.assertEqual('Foo', user_agent(x, format_string='Foo {username}'))
-        self.assertEqual('Foo (wikipedia:en)',
+        self.assertEqual('Foo (' + x.family.name + ':' + x.code + ')',
                          user_agent(x, format_string='Foo ({script_comments})'))
 
 
-class TestMustBe(TestCase):
+class TestMustBe(DebugOnlyTestCase):
 
     """Test cases for the must_be decorator."""
 
@@ -164,10 +161,10 @@ class TestMustBe(TestCase):
         self.obsolete = True
         args = (1, 2, 'a', 'b')
         kwargs = {'i': 'j', 'k': 'l'}
-        self.assertRaises(pywikibot.NoSuchSite, self.call_this_user_req_function, args, kwargs)
+        self.assertRaises(UnknownSite, self.call_this_user_req_function, args, kwargs)
 
 
-class TestNeedVersion(TestCase):
+class TestNeedVersion(DeprecationTestCase):
 
     """Test cases for the need_version decorator."""
 
@@ -191,10 +188,65 @@ class TestNeedVersion(TestCase):
     def older(self):
         return True
 
-    def testNeedVersion(self):
+    @need_version("1.14")
+    @deprecated
+    def deprecated_unavailable_method(self):
+        return True
+
+    @deprecated
+    @need_version("1.14")
+    def deprecated_unavailable_method2(self):
+        return True
+
+    @need_version("1.12")
+    @deprecated
+    def deprecated_available_method(self):
+        return True
+
+    @deprecated
+    @need_version("1.12")
+    def deprecated_available_method2(self):
+        return True
+
+    def test_need_version(self):
         self.assertRaises(NotImplementedError, self.too_new)
         self.assertTrue(self.old_enough())
         self.assertTrue(self.older())
+
+    def test_need_version_fail_with_deprecated(self):
+        """Test order of combined version check and deprecation warning."""
+        # As assertRaisesRegex calls the method, unittest is the module
+        # invoking the method instead of this test module.
+        self._do_test_warning_filename = False
+
+        # FIXME: The deprecation message should be:
+        #   __name__ + '.TestNeedVersion.deprecated_unavailable_method
+        # The outermost decorator is the version check, so no deprecation message.
+        self.assertRaisesRegex(
+            NotImplementedError,
+            'deprecated_unavailable_method',
+            self.deprecated_unavailable_method)
+        self.assertNoDeprecation()
+
+        # The deprecator is first, but the version check still raises exception.
+        self.assertRaisesRegex(
+            NotImplementedError,
+            'deprecated_unavailable_method2',
+            self.deprecated_unavailable_method2)
+        self.assertDeprecation(
+            __name__ + '.TestNeedVersion.deprecated_unavailable_method2 is deprecated.')
+
+    def test_need_version_success_with_deprecated(self):
+        """Test order of combined version check and deprecation warning."""
+        self.deprecated_available_method()
+        self.assertDeprecation(
+            __name__ + '.TestNeedVersion.deprecated_available_method is deprecated.')
+
+        self._reset_messages()
+
+        self.deprecated_available_method2()
+        self.assertDeprecation(
+            __name__ + '.TestNeedVersion.deprecated_available_method2 is deprecated.')
 
 
 if __name__ == '__main__':

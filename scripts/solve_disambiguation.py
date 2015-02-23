@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-"""
+u"""
 Script to help a human solve disambiguations by presenting a set of options.
 
 Specify the disambiguation page on the command line.
@@ -83,12 +83,14 @@ import codecs
 
 import pywikibot
 from pywikibot import editor as editarticle
+from pywikibot.tools import concat_options
 from pywikibot import pagegenerators, config, i18n
 from pywikibot.bot import Bot, QuitKeyboardInterrupt
 
 # Disambiguation Needed template
 dn_template = {
     'en': u'{{dn}}',
+    'fr': u'{{Lien vers un homonyme}}',
 }
 
 # disambiguation page name format for "primary topic" disambiguations
@@ -200,7 +202,7 @@ ignore_title = {
         'en': [
             u'Wikipedia:Links to disambiguating pages',
             u'Wikipedia:Disambiguation pages with links',
-            u'Wikipedia:Multiple-place names \([A-Z]\)',
+            u'Wikipedia:Multiple-place names \\([A-Z]\\)',
             u'Wikipedia:Non-unique personal name',
             u"User:Jerzy/Disambiguation Pages i've Editted",
             u'User:Gareth Owen/inprogress',
@@ -247,10 +249,10 @@ ignore_title = {
             u'Wikipedy:Fangnet',
         ],
         'hu': [
-            #hu:Wikipédia:Kocsmafal (egyéb)#Hol nem kell egyértelműsíteni?
-            #2012-02-08
+            # hu:Wikipédia:Kocsmafal (egyéb)#Hol nem kell egyértelműsíteni?
+            # 2012-02-08
             u'Wikipédia:(?!Sportműhely/Eddigi cikkeink).*',
-            u'.*\(egyértelműsítő lap\)$',
+            u'.*\\(egyértelműsítő lap\\)$',
             u'.*[Vv]ita:.*',
             u'Szerkesztő:[^/]+$',
         ],
@@ -291,7 +293,7 @@ ignore_title = {
             u'Overleg Wikipedia:Logboek.*',
             u'Wikipedia:Logboek.*',
             u'Overleg gebruiker:Sybren/test.*',
-            u'Overleg gebruiker:[0-9][0-9]?[0-9]?\.[0-9][0-9]?[0-9]?\.[0-9][0-9]?[0-9]?\.[0-9][0-9]?[0-9]?',
+            u'Overleg gebruiker:([0-9][0-9]?[0-9]?\\.){3}[0-9][0-9]?[0-9]?',
             u'Overleg:Lage Landen (staatkunde)',
             u'Wikipedia:.*[aA]rchief.*',
             u'Wikipedia:Doorverwijspagina',
@@ -353,6 +355,9 @@ def correctcap(link, text):
 
 
 class ReferringPageGeneratorWithIgnore:
+
+    """Referring Page generator, with an ignore manager."""
+
     def __init__(self, disambPage, primary=False, minimum=0):
         self.disambPage = disambPage
         # if run with the -primary argument, enable the ignore manager
@@ -390,11 +395,14 @@ class ReferringPageGeneratorWithIgnore:
 class PrimaryIgnoreManager(object):
 
     """
+    Primary ignore manager.
+
     If run with the -primary argument, reads from a file which pages should
     not be worked on; these are the ones where the user pressed n last time.
     If run without the -primary argument, doesn't ignore any pages.
 
     """
+
     def __init__(self, disambPage, enabled=False):
         self.disambPage = disambPage
         self.enabled = enabled
@@ -411,7 +419,7 @@ class PrimaryIgnoreManager(object):
                 # remove trailing newlines and carriage returns
                 while line[-1] in ['\n', '\r']:
                     line = line[:-1]
-                #skip empty lines
+                # skip empty lines
                 if line != '':
                     self.ignorelist.append(line)
             f.close()
@@ -423,7 +431,7 @@ class PrimaryIgnoreManager(object):
 
     def ignore(self, refPage):
         if self.enabled:
-            # Skip this occurence next time.
+            # Skip this occurrence next time.
             filename = config.datafilepath(
                 'disambiguations',
                 self.disambPage.title(asUrl=True) + '.txt')
@@ -437,6 +445,8 @@ class PrimaryIgnoreManager(object):
 
 
 class DisambiguationRobot(Bot):
+
+    """Disambiguation bot."""
 
     ignore_contents = {
         'de': (u'{{[Ii]nuse}}',
@@ -462,6 +472,7 @@ class DisambiguationRobot(Bot):
 
     def __init__(self, always, alternatives, getAlternatives, dnSkip, generator,
                  primary, main_only, minimum=0):
+        super(DisambiguationRobot, self).__init__()
         self.always = always
         self.alternatives = alternatives
         self.getAlternatives = getAlternatives
@@ -475,16 +486,20 @@ class DisambiguationRobot(Bot):
         self.mylang = self.mysite.language()
         self.comment = None
 
+        self.dn_template_str = i18n.translate(self.mysite, dn_template)
+
         self.setupRegexes()
 
     def checkContents(self, text):
-        '''
+        """
+        Check if the text matches any of the ignore regexes.
+
         For a given text, returns False if none of the regular
         expressions given in the dictionary at the top of this class
         matches a substring of the text.
         Otherwise returns the substring which is matched by one of
         the regular expressions.
-        '''
+        """
         for ig in self.ignore_contents_regexes:
             match = ig.search(text)
             if match:
@@ -531,6 +546,8 @@ class DisambiguationRobot(Bot):
 
     def treat(self, refPage, disambPage):
         """
+        Treat a page.
+
         Parameters:
             disambPage - The disambiguation page or redirect we don't want
                 anything to link to
@@ -541,12 +558,11 @@ class DisambiguationRobot(Bot):
         """
         # TODO: break this function up into subroutines!
 
-        dn_template_str = i18n.translate(self.mysite, dn_template)
         include = False
-        unlink = False
+        unlink_counter = 0
         new_targets = []
         try:
-            text = refPage.get(throttle=False)
+            text = refPage.get()
             ignoreReason = self.checkContents(text)
             if ignoreReason:
                 pywikibot.output('\n\nSkipping %s because it contains %s.\n\n'
@@ -558,21 +574,21 @@ class DisambiguationRobot(Bot):
                              % (refPage.title(), disambPage.title()))
             if disambPage.isRedirectPage():
                 target = self.alternatives[0]
-                choice = pywikibot.inputChoice(
-                    u'Do you want to make redirect %s point to %s?'
-                    % (refPage.title(), target), ['yes', 'no'], ['y', 'N'], 'N')
-                if choice == 'y':
+                if pywikibot.input_yn(u'Do you want to make redirect %s point '
+                                      'to %s?' % (refPage.title(), target),
+                                      default=False, automatic_quit=False):
                     redir_text = '#%s [[%s]]' \
-                                 % (self.mysite.redirect(default=True), target)
+                                 % (self.mysite.redirect(), target)
                     try:
                         refPage.put_async(redir_text, comment=self.comment)
                     except pywikibot.PageNotSaved as error:
                         pywikibot.output(u'Page not saved: %s' % error.args)
             else:
-                choice = pywikibot.inputChoice(
+                choice = pywikibot.input_choice(
                     u'Do you want to work on pages linking to %s?'
-                    % refPage.title(), ['yes', 'no', 'change redirect'],
-                                       ['y', 'N', 'c'], 'N')
+                    % refPage.title(),
+                    [('yes', 'y'), ('no', 'n'), ('change redirect', 'c')], 'n',
+                    automatic_quit=False)
                 if choice == 'y':
                     gen = ReferringPageGeneratorWithIgnore(refPage,
                                                            self.primary)
@@ -582,7 +598,7 @@ class DisambiguationRobot(Bot):
                         if not self.treat(refPage2, refPage):
                             break
                 elif choice == 'c':
-                    text = refPage.get(throttle=False, get_redirect=True)
+                    text = refPage.get(get_redirect=True)
                     include = "redirect"
         except pywikibot.NoPage:
             pywikibot.output(
@@ -612,6 +628,7 @@ class DisambiguationRobot(Bot):
                 try:
                     foundlink = pywikibot.Link(m.group('title'),
                                                disambPage.site)
+                    foundlink.parse()
                 except pywikibot.Error:
                     continue
                 # ignore interwiki links
@@ -629,9 +646,10 @@ class DisambiguationRobot(Bot):
                 n += 1
                 # how many bytes should be displayed around the current link
                 context = 60
-                #there's a {{dn}} here already
-                already_dn = text[m.end():m.end() + 8].find(dn_template_str[:4]) > -1
-                if already_dn and self.dnSkip:
+                # check if there's a dn-template here already
+                if (self.dnSkip and self.dn_template_str and
+                        self.dn_template_str[:-2] in text[m.end():m.end() +
+                                                          len(self.dn_template_str) + 8]):
                     continue
 
                 # This loop will run while the user doesn't choose an option
@@ -642,22 +660,22 @@ class DisambiguationRobot(Bot):
                     if not self.always:
                         # at the beginning of the link, start red color.
                         # at the end of the link, reset the color to default
-                        pywikibot.output(text[max(0, m.start() - context):
-                                              m.start()]
-                                         + '\03{lightred}'
-                                         + text[m.start():m.end()]
-                                         + '\03{default}'
-                                         + text[m.end():m.end() + context])
+                        pywikibot.output(
+                            text[max(0, m.start() - context):m.start()] +
+                            '\03{lightred}' + text[m.start():m.end()] +
+                            '\03{default}' + text[m.end():m.end() + context])
+                        options = ['#', 'r#', '[s]kip link', '[e]dit page',
+                                   '[n]ext page', '[u]nlink', '[q]uit']
+                        if self.dn_template_str:
+                            options.append(u'[t]ag template %s' % self.dn_template_str)
+                        options.append('[m]ore context')
+                        if not edited:
+                            options.append('show [d]isambiguation page')
+                        options += ['[l]ist', '[a]dd new']
                         if edited:
-                            choice = pywikibot.input(
-u"Option (#, r#, [s]kip link, [e]dit page, [n]ext page, [u]nlink, [q]uit,\n"
-u"        [t]ag template " + dn_template_str + ",\n"
-u"        [m]ore context, [l]ist, [a]dd new, x=save in this form):")
-                        else:
-                            choice = pywikibot.input(
-u"Option (#, r#, [s]kip link, [e]dit page, [n]ext page, [u]nlink, [q]uit,\n"
-u"        [t]ag template " + dn_template_str + ",\n"
-u"        [m]ore context, show [d]isambiguation page, [l]ist, [a]dd new):")
+                            options += ['save in this form [x]']
+                        options = concat_options('Option', 72, options)
+                        choice = pywikibot.input(options)
                     else:
                         choice = self.always
                     if choice in ['a', 'A']:
@@ -702,7 +720,7 @@ u"        [m]ore context, show [d]isambiguation page, [l]ist, [a]dd new):")
                     # skip this page
                     if self.primary:
                         # If run with the -primary argument, skip this
-                        # occurence next time.
+                        # occurrence next time.
                         self.primaryIgnoreManager.ignore(refPage)
                     return True
                 elif choice in ['q', 'Q']:
@@ -732,31 +750,31 @@ u"        [m]ore context, show [d]isambiguation page, [l]ist, [a]dd new):")
                 if trailing_chars:
                     link_text += trailing_chars
                 # '?', '/' for old choice
-                if choice in ['t', 'T', '?', '/']:
+                if choice in ['t', 'T', '?', '/'] and self.dn_template_str:
                     # small chunk of text to search
                     search_text = text[m.end():m.end() + context]
                     # figure out where the link (and sentance) ends, put note
                     # there
-                    end_of_word_match = re.search("\s", search_text)
+                    end_of_word_match = re.search(r'\s', search_text)
                     if end_of_word_match:
                         position_split = end_of_word_match.start(0)
                     else:
                         position_split = 0
-                    #insert dab needed template
+                    # insert dab needed template
                     text = (text[:m.end() + position_split] +
-                            dn_template_str +
+                            self.dn_template_str +
                             text[m.end() + position_split:])
                     dn = True
                     continue
                 elif choice in ['u', 'U']:
                     # unlink - we remove the section if there's any
                     text = text[:m.start()] + link_text + text[m.end():]
-                    unlink = True
+                    unlink_counter += 1
                     continue
                 else:
                     if len(choice) > 0 and choice[0] == 'r':
                         # we want to throw away the original link text
-                        replaceit = True
+                        replaceit = link_text == page_title
                         choice = choice[1:]
                     elif include == "redirect":
                         replaceit = True
@@ -784,8 +802,8 @@ u"        [m]ore context, show [d]isambiguation page, [l]ist, [a]dd new):")
                     new_page_title = self.alternatives[choice]
                     repPl = pywikibot.Page(pywikibot.Link(new_page_title,
                                                           disambPage.site))
-                    if (new_page_title[0].isupper()
-                            or link_text[0].isupper()):
+                    if (new_page_title[0].isupper() or
+                            link_text[0].isupper()):
                         new_page_title = repPl.title()
                     else:
                         new_page_title = repPl.title()
@@ -797,8 +815,8 @@ u"        [m]ore context, show [d]isambiguation page, [l]ist, [a]dd new):")
                         newlink = "[[%s%s]]%s" % (new_page_title,
                                                   section,
                                                   trailing_chars)
-                    elif replaceit or (new_page_title == link_text
-                                       and not section):
+                    elif replaceit or (new_page_title == link_text and
+                                       not section):
                         newlink = "[[%s]]" % new_page_title
                     # check if we can create a link with trailing characters
                     # instead of a pipelink
@@ -825,7 +843,8 @@ u"        [m]ore context, show [d]isambiguation page, [l]ist, [a]dd new):")
                 pywikibot.showDiff(original_text, text)
                 pywikibot.output(u'')
                 # save the page
-                self.setSummaryMessage(disambPage, new_targets, unlink, dn)
+                self.setSummaryMessage(disambPage, new_targets, unlink_counter,
+                                       dn)
                 try:
                     refPage.put_async(text, comment=self.comment)
                 except pywikibot.LockedPage:
@@ -836,8 +855,8 @@ u"        [m]ore context, show [d]isambiguation page, [l]ist, [a]dd new):")
 
     def findAlternatives(self, disambPage):
         if disambPage.isRedirectPage() and not self.primary:
-            if (disambPage.site.lang in self.primary_redir_template
-                and self.primary_redir_template[disambPage.site.lang]
+            if (disambPage.site.lang in self.primary_redir_template and
+                    self.primary_redir_template[disambPage.site.lang]
                     in disambPage.templates(get_redirect=True)):
                 baseTerm = disambPage.title()
                 for template in disambPage.templatesWithParams(
@@ -909,17 +928,16 @@ u"Page does not exist, using the first link in page %s."
             self.alternatives += links
         return True
 
-    def setSummaryMessage(self, disambPage, new_targets=[], unlink=False,
+    def setSummaryMessage(self, disambPage, new_targets=[], unlink_counter=0,
                           dn=False):
         # make list of new targets
-        targets = ''
-        for page_title in new_targets:
-            targets += u'[[%s]], ' % page_title
-        # remove last comma
-        targets = targets[:-2]
+        comma = self.mysite.mediawiki_message(u"comma-separator")
+        targets = comma.join(u'[[%s]]' % page_title
+                             for page_title in new_targets)
 
         if not targets:
-            targets = i18n.twtranslate(self.mysite, 'solve_disambiguation-unknown-page')
+            targets = i18n.twtranslate(self.mysite,
+                                       'solve_disambiguation-unknown-page')
 
         # first check whether user has customized the edit comment
         if (self.mysite.family.name in config.disambiguation_comment and
@@ -939,27 +957,39 @@ u"Page does not exist, using the first link in page %s."
                     fallback=True) % disambPage.title()
         elif disambPage.isRedirectPage():
             # when working on redirects, there's another summary message
-            if unlink and not new_targets:
+            if unlink_counter and not new_targets:
                 self.comment = i18n.twtranslate(
                     self.mysite,
                     'solve_disambiguation-redirect-removed',
-                    {'from': disambPage.title()}
-                )
+                    {'from': disambPage.title(),
+                     'count': unlink_counter})
             elif dn and not new_targets:
                 self.comment = i18n.twtranslate(
                     self.mysite,
                     'solve_disambiguation-redirect-adding-dn-template',
-                    {'from': disambPage.title()}
-                )
+                    {'from': disambPage.title()})
             else:
-                self.comment = i18n.twtranslate(self.mysite, 'solve_disambiguation-redirect-resolved', {'from': disambPage.title(), 'to': targets})
+                self.comment = i18n.twtranslate(
+                    self.mysite, 'solve_disambiguation-redirect-resolved',
+                    {'from': disambPage.title(),
+                     'to': targets,
+                     'count': len(new_targets)})
         else:
-            if unlink and not new_targets:
-                self.comment = i18n.twtranslate(self.mysite, 'solve_disambiguation-links-removed', {'from': disambPage.title()})
+            if unlink_counter and not new_targets:
+                self.comment = i18n.twtranslate(
+                    self.mysite, 'solve_disambiguation-links-removed',
+                    {'from': disambPage.title(),
+                     'count': unlink_counter})
             elif dn and not new_targets:
-                self.comment = i18n.twtranslate(self.mysite, 'solve_disambiguation-adding-dn-template', {'from': disambPage.title()})
+                self.comment = i18n.twtranslate(
+                    self.mysite, 'solve_disambiguation-adding-dn-template',
+                    {'from': disambPage.title()})
             else:
-                self.comment = i18n.twtranslate(self.mysite, 'solve_disambiguation-links-resolved', {'from': disambPage.title(), 'to': targets})
+                self.comment = i18n.twtranslate(
+                    self.mysite, 'solve_disambiguation-links-resolved',
+                    {'from': disambPage.title(),
+                     'to': targets,
+                     'count': len(new_targets)})
 
     def run(self):
         if self.main_only:
@@ -971,7 +1001,7 @@ u"Page does not exist, using the first link in page %s."
             ignore_title[self.mysite.family.name][self.mylang] += [
                 u'%s:' % ns
                 for namespace in self.mysite.namespaces()
-                for ns in self.mysite.namespaces()[namespace]
+                for ns in self.mysite.namespaces[namespace]
             ]
 
         for disambPage in self.generator:
@@ -984,7 +1014,7 @@ u"Page does not exist, using the first link in page %s."
             self.makeAlternativesUnique()
             # sort possible choices
             if config.sort_ignore_case:
-                self.alternatives.sort(lambda x, y: cmp(x.lower(), y.lower()))
+                self.alternatives.sort(key=lambda x: x.lower())
             else:
                 self.alternatives.sort()
             self.listAlternatives()
@@ -1006,6 +1036,14 @@ u"Page does not exist, using the first link in page %s."
 
 
 def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     # the option that's always selected when the bot wonders what to do with
     # a link. If it's None, the user is prompted (default behaviour).
     always = None
@@ -1020,7 +1058,7 @@ def main(*args):
     # For sorting the linked pages, case can be ignored
     minimum = 0
 
-    local_args = pywikibot.handleArgs(*args)
+    local_args = pywikibot.handle_args(args)
 
     for arg in local_args:
         if arg.startswith('-primary:'):
@@ -1045,10 +1083,10 @@ def main(*args):
                 if page.exists():
                     alternatives.append(page.title())
                 else:
-                    answer = pywikibot.inputChoice(
-                        u'Possibility %s does not actually exist. Use it anyway?'
-                        % page.title(), ['yes', 'no'], ['y', 'N'], 'N')
-                    if answer == 'y':
+                    if pywikibot.input_yn(
+                            u'Possibility %s does not actually exist. Use it '
+                            'anyway?' % page.title(),
+                            default=False, automatic_quit=False):
                         alternatives.append(page.title())
             else:
                 alternatives.append(arg[5:])
@@ -1062,15 +1100,9 @@ def main(*args):
             minimum = int(arg[5:])
         elif arg.startswith('-start'):
             try:
-                if len(arg) <= len('-start:'):
-                    generator = pagegenerators.CategorizedPageGenerator(
-                        pywikibot.Site().disambcategory())
-                else:
-                    generator = pagegenerators.CategorizedPageGenerator(
-                        pywikibot.Site().disambcategory(),
-                        start=arg[7:])
-                generator = pagegenerators.NamespaceFilterPageGenerator(
-                    generator, [0])
+                generator = pagegenerators.CategorizedPageGenerator(
+                    pywikibot.Site().disambcategory(),
+                    start=arg[7:], namespaces=[0])
             except pywikibot.NoPage:
                 pywikibot.output("Disambiguation category for your wiki is not known.")
                 raise

@@ -1,9 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
-This is a script written to add the template "orphan" to the pages that aren't
-linked by other pages. It can give some strange Errors sometime, I hope that
-all of them are fixed in this version.
+This is a script written to add the template "orphan" to pages.
 
 These command line parameters can be used to specify which pages to work on:
 
@@ -76,6 +74,9 @@ exception_regex = {
 
 
 class LonelyPagesBot(Bot):
+
+    """Orphan page tagging bot."""
+
     def __init__(self, generator, **kwargs):
         self.availableOptions.update({
             'enablePage': None,    # Check if someone set an enablePage or not
@@ -189,10 +190,18 @@ class LonelyPagesBot(Bot):
                 self.userPut(page, oldtxt, newtxt, comment=self.comment)
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     options = {}
 
-    local_args = pywikibot.handleArgs()
+    local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
     site = pywikibot.Site()
 

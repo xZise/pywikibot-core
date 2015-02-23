@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
+"""Base for terminal user interfaces."""
 #
-# (C) Pywikibot team, 2003-2014
+# (C) Pywikibot team, 2003-2015
 #
 # Distributed under the terms of the MIT license.
 #
 __version__ = '$Id$'
 
-from . import transliteration
+import getpass
+import logging
 import re
 import sys
-import logging
+
+from . import transliteration
 import pywikibot
 from pywikibot import config
 from pywikibot.bot import VERBOSE, INFO, STDOUT, INPUT, WARNING
+from pywikibot.tools import deprecated
 
 transliterator = transliteration.transliterator(config.console_encoding)
 
@@ -40,7 +44,16 @@ colorTagR = re.compile('\03{(?P<name>%s)}' % '|'.join(colors))
 
 
 class UI:
+
+    """Base for terminal user interfaces."""
+
     def __init__(self):
+        """
+        Initialize the UI.
+
+        This caches the std-streams locally so any attempts to monkey-patch the
+        streams later will not work.
+        """
         self.stdin = sys.stdin
         self.stdout = sys.stdout
         self.stderr = sys.stderr
@@ -60,7 +73,6 @@ class UI:
         others write theirs to sys.stderr.
 
         """
-
         if default_stream == 'stdout':
             default_stream = self.stdout
         elif default_stream == 'stderr':
@@ -93,8 +105,15 @@ class UI:
             TerminalFormatter(fmt="%(levelname)s: %(message)s%(newline)s"))
         root_logger.addHandler(warning_handler)
 
+        warnings_logger = logging.getLogger("py.warnings")
+        warnings_logger.addHandler(warning_handler)
+
     def printNonColorized(self, text, targetStream):
-        # We add *** after the text as a whole if anything needed to be colorized.
+        """
+        Write the text non colorized to the target stream.
+
+        To each line which contains a color tag a ' ***' is added at the end.
+        """
         lines = text.split('\n')
         for i, line in enumerate(lines):
             if i > 0:
@@ -102,7 +121,9 @@ class UI:
             line, count = colorTagR.subn('', line)
             if count > 0:
                 line += ' ***'
-            targetStream.write(line.encode(self.encoding, 'replace'))
+            if sys.version_info[0] == 2:
+                line = line.encode(self.encoding, 'replace')
+            targetStream.write(line)
 
     printColorized = printNonColorized
 
@@ -170,10 +191,10 @@ class UI:
         self._print(text, targetStream)
 
     def _raw_input(self):
-        if sys.version_info[0] >= 3:
+        if sys.version_info[0] > 2:
             return input()
         else:
-            return raw_input()
+            return raw_input()  # noqa
 
     def input(self, question, password=False):
         """
@@ -184,7 +205,6 @@ class UI:
         Unlike raw_input, this function automatically adds a space after the
         question.
         """
-
         # sound the terminal bell to notify the user
         if config.ring_bell:
             sys.stdout.write('\07')
@@ -192,57 +212,133 @@ class UI:
         self.output(question + ' ')
         try:
             if password:
-                import getpass
+                # Python 3 requires that stderr gets flushed, otherwise is the
+                # message only visible after the query.
+                self.stderr.flush()
                 text = getpass.getpass('')
             else:
                 text = self._raw_input()
         except KeyboardInterrupt:
             raise pywikibot.QuitKeyboardInterrupt()
-        text = unicode(text, self.encoding)
+        if sys.version_info[0] == 2:
+            text = text.decode(self.encoding)
         return text
 
+    def input_choice(self, question, options, default=None, return_shortcut=True,
+                     automatic_quit=True):
+        """
+        Ask the user and returns a value from the options.
+
+        @param question: The question, without trailing whitespace.
+        @type question: basestring
+        @param options: All available options. Each entry contains the full
+            length answer and a shortcut of only one character. The shortcut
+            must not appear in the answer.
+        @type options: iterable containing iterables of length 2
+        @param default: The default answer if no was entered. None to require
+            an answer.
+        @type default: basestring
+        @param return_shortcut: Whether the shortcut or the index in the option
+            should be returned.
+        @type return_shortcut: bool
+        @param automatic_quit: Adds the option 'Quit' ('q') and throw a
+            L{QuitKeyboardInterrupt} if selected. If it's an integer it
+            doesn't add the option but throw the exception when the option was
+            selected.
+        @type automatic_quit: bool or int
+        @return: If return_shortcut the shortcut of options or the value of
+            default (if it's not None). Otherwise the index of the answer in
+            options. If default is not a shortcut, it'll return -1.
+        @rtype: int (if not return_shortcut), lowercased basestring (otherwise)
+        """
+        options = list(options)
+        if len(options) == 0:
+            raise ValueError(u'No options are given.')
+        if automatic_quit is True:
+            options += [('Quit', 'q')]
+            quit_index = len(options) - 1
+        elif automatic_quit is not False:
+            quit_index = automatic_quit
+        else:
+            quit_index = None
+        if default:
+            default = default.lower()
+        valid = {}
+        default_index = -1
+        formatted_options = []
+        for i, option in enumerate(options):
+            if len(option) != 2:
+                raise ValueError(u'Option #{0} does not consist of an option '
+                                 u'and shortcut.'.format(i))
+            option, shortcut = option
+            if option.lower() in valid:
+                raise ValueError(
+                    u'Multiple identical options ({0}).'.format(option))
+            shortcut = shortcut.lower()
+            if shortcut in valid:
+                raise ValueError(
+                    u'Multiple identical shortcuts ({0}).'.format(shortcut))
+            valid[option.lower()] = i
+            valid[shortcut] = i
+            index = option.lower().find(shortcut)
+            if shortcut == default:
+                default_index = i
+                shortcut = shortcut.upper()
+            if index >= 0:
+                option = u'{0}[{1}]{2}'.format(option[:index], shortcut,
+                                               option[index + len(shortcut):])
+            else:
+                option = u'{0} [{1}]'.format(option, shortcut)
+            formatted_options += [option]
+        question = u'{0} ({1})'.format(question, ', '.join(formatted_options))
+        answer = None
+        while answer is None:
+            answer = self.input(question)
+            if default and not answer:  # nothing entered
+                answer = default_index
+            else:
+                answer = valid.get(answer.lower(), None)
+        if quit_index == answer:
+            raise pywikibot.QuitKeyboardInterrupt()
+        elif not return_shortcut:
+            return answer
+        elif answer < 0:
+            return default
+        else:
+            return options[answer][1].lower()
+
+    @deprecated('input_choice')
     def inputChoice(self, question, options, hotkeys, default=None):
         """
         Ask the user a question with a predefined list of acceptable answers.
+
+        DEPRECATED: Use L{input_choice} instead!
+
+        Directly calls L{input_choice} with the options and hotkeys zipped
+        into a tuple list. It always returns the hotkeys and throws no
+        L{QuitKeyboardInterrupt} if quit was selected.
         """
-        options = options[:]  # we don't want to edit the passed parameter
-        for i in range(len(options)):
-            option = options[i]
-            hotkey = hotkeys[i]
-            # try to mark a part of the option name as the hotkey
-            m = re.search('[%s%s]' % (hotkey.lower(), hotkey.upper()), option)
-            if hotkey == default:
-                caseHotkey = hotkey.upper()
-            else:
-                caseHotkey = hotkey
-            if m:
-                pos = m.start()
-                options[i] = '%s[%s]%s' % (option[:pos], caseHotkey,
-                                           option[pos + 1:])
-            else:
-                options[i] = '%s [%s]' % (option, caseHotkey)
-        # loop until the user entered a valid choice
-        while True:
-            prompt = '%s (%s)' % (question, ', '.join(options))
-            answer = self.input(prompt)
-            if default and answer == '':  # empty string entered
-                return default
-            elif answer.lower() in hotkeys or answer.upper() in hotkeys:
-                return answer
+        return self.input_choice(question=question, options=zip(options, hotkeys),
+                                 default=default, return_shortcut=True,
+                                 automatic_quit=False)
 
     def editText(self, text, jumpIndex=None, highlight=None):
         """Return the text as edited by the user.
 
         Uses a Tkinter edit box because we don't have a console editor
 
-        Parameters:
-            * text      - a Unicode string
-            * jumpIndex - an integer: position at which to put the caret
-            * highlight - a substring; each occurrence will be highlighted
-
+        @param text: the text to be edited
+        @type text: unicode
+        @param jumpIndex: position at which to put the caret
+        @type jumpIndex: int
+        @param highlight: each occurrence of this substring will be highlighted
+        @type highlight: unicode
+        @return: the modified text, or None if the user didn't save the text
+            file in his text editor
+        @rtype: unicode or None
         """
         try:
-            import gui
+            from pywikibot.userinterfaces import gui
         except ImportError as e:
             print('Could not load GUI modules: %s' % e)
             return text
@@ -270,6 +366,7 @@ class UI:
                 u'What is the solution of the CAPTCHA at this url ?')
 
     def argvu(self):
+        """Return the decoded arguments from argv."""
         try:
             return [s.decode(self.encoding) for s in self.argv]
         except AttributeError:  # in python 3, self.argv is unicode and thus cannot be decoded
@@ -277,6 +374,7 @@ class UI:
 
 
 class TerminalHandler(logging.Handler):
+
     """A handler class that writes logging records to a terminal.
 
     This class does not close the stream,
@@ -309,29 +407,55 @@ class TerminalHandler(logging.Handler):
         self.UI = UI
 
     def flush(self):
-        """Flush the stream. """
+        """Flush the stream."""
         self.stream.flush()
 
     def emit(self, record):
+        """Emit the record formatted to the output and return it."""
+        if record.name == 'py.warnings':
+            # Each warning appears twice
+            # the second time it has a 'message'
+            if 'message' in record.__dict__:
+                return
+
+            # Remove the last line, if it appears to be the warn() call
+            msg = record.args[0]
+            is_useless_source_output = any(
+                s in msg for s in
+                ('warn(', 'exceptions.', 'Warning)', 'Warning,'))
+
+            if is_useless_source_output:
+                record.args = ('\n'.join(record.args[0].splitlines()[0:-1]),)
+
+            if 'newline' not in record.__dict__:
+                record.__dict__['newline'] = '\n'
+
         text = self.format(record)
         return self.UI.output(text, targetStream=self.stream)
 
 
 class TerminalFormatter(logging.Formatter):
+
+    """Terminal logging formatter."""
+
     pass
 
 
 class MaxLevelFilter(logging.Filter):
+
     """Filter that only passes records at or below a specific level.
 
     (setting handler level only passes records at or *above* a specified level,
     so this provides the opposite functionality)
 
     """
+
     def __init__(self, level=None):
+        """Constructor."""
         self.level = level
 
     def filter(self, record):
+        """Return true if the level is below or equal to the set level."""
         if self.level:
             return record.levelno <= self.level
         else:

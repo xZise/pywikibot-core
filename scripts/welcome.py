@@ -1,11 +1,10 @@
 # -*- coding: utf-8  -*-
-"""
-Script to welcome new users. This script works out of the box for Wikis that
+u"""
+Script to welcome new users.
+
+This script works out of the box for Wikis that
 have been defined in the script. It is currently used on the Dutch, Norwegian,
 Albanian, Italian Wikipedia, Wikimedia Commons and English Wikiquote.
-
-Note: You can download the latest version available
-from here: https://www.mediawiki.org/wiki/Manual:Pywikibot/welcome.py
 
 Ensure you have community support before running this bot!
 
@@ -191,6 +190,9 @@ import pywikibot
 from pywikibot import i18n
 from pywikibot import config
 
+if sys.version_info[0] > 2:
+    unicode = str
+
 locale.setlocale(locale.LC_ALL, '')
 
 # Script uses the method i18n.translate() to find the right
@@ -240,7 +242,7 @@ netext = {
         'fr': u'{{subst:Discussion Projet:Aide/Bienvenue}} %s',
         'ga': u'{{subst:fáilte}} %s',
         'he': u'{{ס:ברוך הבא}} %s',
-        'id': u'{{sdbot|%s}}',
+        'id': u'{{subst:sdbot2}}\n%s',
         'it': u'<!-- inizio template di benvenuto -->\n{{subst:Benvebot}}\n%s',
         'ja': u'{{subst:Welcome/intro}}\n{{subst:welcome|%s}}',
         'ka': u'{{ახალი მომხმარებელი}}--%s',
@@ -389,9 +391,15 @@ final_new_text_additions = {
 #
 #
 logpage_header = {
-    '_default': u'{|border="2" cellpadding="4" cellspacing="0" style="margin: 0.5em 0.5em 0.5em 1em; padding: 0.5em; background: #bfcda5; border: 1px #b6fd2c solid; border-collapse: collapse; font-size: 95%;"',
+    '_default': u'{|border="2" cellpadding="4" cellspacing="0" style="margin: '
+                u'0.5em 0.5em 0.5em 1em; padding: 0.5em; background: #bfcda5; '
+                u'border: 1px #b6fd2c solid; border-collapse: collapse; '
+                u'font-size: 95%;"',
     'no': u'[[Kategori:Velkomstlogg|{{PAGENAME}}]]\n{| class="wikitable"',
-    'it': u'[[Categoria:Benvenuto log|{{subst:PAGENAME}}]]\n{|border="2" cellpadding="4" cellspacing="0" style="margin: 0.5em 0.5em 0.5em 1em; padding: 0.5em; background: #bfcda5; border: 1px #b6fd2c solid; border-collapse: collapse; font-size: 95%;"'
+    'it': u'[[Categoria:Benvenuto log|{{subst:PAGENAME}}]]\n{|border="2" '
+          u'cellpadding="4" cellspacing="0" style="margin: 0.5em 0.5em 0.5em '
+          u'1em; padding: 0.5em; background: #bfcda5; border: 1px #b6fd2c '
+          u'solid; border-collapse: collapse; font-size: 95%;"'
 }
 
 # Ok, that's all. What is below, is the rest of code, now the code is fixed
@@ -402,14 +410,13 @@ logpage_header = {
 
 
 class FilenameNotSet(pywikibot.Error):
+
     """An exception indicating that a signature filename was not specifed."""
 
 
 class Global(object):
 
-    """Container class for global settings.
-       Use of globals outside of this is to be avoided.
-       """
+    """Container class for global settings."""
 
     attachEditCount = 1     # number of edits that an user required to be welcomed
     dumpToLog = 15          # number of users that are required to add the log :)
@@ -428,7 +435,6 @@ class Global(object):
     queryLimit = 50         # number of users that the bot load to check
     quiet = False           # Prevents users without contributions are displayed
     quick = False           # Provide quick check by API bulk-retrieve user datas
-##    fileOption = False     # check if the user wants to use a file or the wikipage
 
 
 class WelcomeBot(object):
@@ -437,7 +443,6 @@ class WelcomeBot(object):
 
     def __init__(self):
         """Constructor."""
-
         self.site = pywikibot.Site()
         self.check_managed_sites()
         self.bname = dict()
@@ -471,7 +476,7 @@ class WelcomeBot(object):
         if not globalvar.filtBadName:
             return False
 
-        #initialize blacklist
+        # initialize blacklist
         if not hasattr(self, '_blacklist') or force:
             elenco = [
                 ' ano', ' anus', 'anal ', 'babies', 'baldracca', 'balle', 'bastardo',
@@ -563,13 +568,14 @@ class WelcomeBot(object):
         return False
 
     def reportBadAccount(self, name=None, final=False):
-        #Queue process
+        # Queue process
         if name:
             if globalvar.confirm:
-                answer = pywikibot.inputChoice(
+                answer = pywikibot.input_choice(
                     u'%s may have an unwanted username, do you want to report '
                     u'this user?' % name,
-                    ['Yes', 'No', 'All'], ['y', 'N', 'a'], 'N')
+                    [('Yes', 'y'), ('No', 'n'), ('All', 'a')], 'n',
+                    automatic_quit=False)
                 if answer in ['a', 'all']:
                     answer = 'y'
                     globalvar.confirm = False
@@ -645,7 +651,7 @@ class WelcomeBot(object):
         if logPage.exists():
             text = logPage.get()
         else:
-            #make new log page
+            # make new log page
             showStatus()
             pywikibot.output(
                 'Log page is not exist, getting information for page creation')
@@ -659,7 +665,7 @@ class WelcomeBot(object):
             luser = pywikibot.url2link(result.name(), self.site, self.site)
             text += u'\n{{WLE|user=%s|contribs=%d}}' % (
                 luser, result.editCount())
-        #update log page.
+        # update log page.
         while True:
             try:
                 logPage.put(text, i18n.twtranslate(self.site,
@@ -671,7 +677,7 @@ class WelcomeBot(object):
                 time.sleep(10)
 
     def parseNewUserLog(self):
-        return self.site.logevents('newusers')
+        return self.site.logevents('newusers', total=globalvar.queryLimit)
 
     def defineSign(self, force=False):
         if hasattr(self, '_randomSignature') and not force:
@@ -720,11 +726,7 @@ class WelcomeBot(object):
             if globalvar.quick and self.site.has_api():
                 us = [x for x in self.parseNewUserLog()]
                 showStatus()
-                try:
-                    pywikibot.User.getall(self.site, us)
-                except NotImplementedError:
-                    globalvar.quick = False
-                    us = self._parseNewUserLogOld()
+                pywikibot.User.getall(self.site, us)
             else:
                 us = (pywikibot.User(self.site, users.user()) for users in self.parseNewUserLog())
             for users in us:
@@ -741,8 +743,6 @@ class WelcomeBot(object):
                     pywikibot.output(u'%s might be a global bot!'
                                      % users.name())
                     continue
-                #if globalvar.offset != 0 and time.strptime(users.registrationTime(), "%Y-%m-%dT%H:%M:%SZ") >= globalvar.offset:
-                #
                 if users.editCount() >= globalvar.attachEditCount:
                     showStatus(2)
                     pywikibot.output(u'%s has enough edits to be welcomed.'
@@ -777,7 +777,7 @@ class WelcomeBot(object):
                         welcome_comment = i18n.twtranslate(self.site,
                                                            'welcome-welcome')
                         try:
-                            #append welcomed, welcome_count++
+                            # append welcomed, welcome_count++
                             ustp.put(welcome_text, welcome_comment,
                                      minorEdit=False)
                             welcomed_count += 1
@@ -844,8 +844,8 @@ class WelcomeBot(object):
                                           time.gmtime()),
                             locale.getlocale()[1])
                     else:
-                        strfstr = unicode(time.strftime(
-                            u"%d %b %Y %H:%M:%S (UTC)", time.gmtime()))
+                        strfstr = time.strftime(
+                            u"%d %b %Y %H:%M:%S (UTC)", time.gmtime())
                     pywikibot.output(u'Sleeping %d seconds before rerun. %s'
                                      % (globalvar.timeRecur, strfstr))
                     time.sleep(globalvar.timeRecur)
@@ -856,6 +856,7 @@ class WelcomeBot(object):
 
 
 def showStatus(n=0):
+    """Output colorized status."""
     staColor = {
         0: 'lightpurple',
         1: 'lightaqua',
@@ -877,7 +878,7 @@ def showStatus(n=0):
 
 
 def load_word_function(raw):
-    """ This is a function used to load the badword and the whitelist."""
+    """Load the badword list and the whitelist."""
     page = re.compile(r"(?:\"|\')(.*?)(?:\"|\')(?:, |\))", re.UNICODE)
     list_loaded = page.findall(raw)
     if len(list_loaded) == 0:
@@ -887,8 +888,16 @@ def load_word_function(raw):
 globalvar = Global()
 
 
-def main():
-    for arg in pywikibot.handleArgs():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
+    for arg in pywikibot.handle_args(args):
         if arg.startswith('-edit'):
             if len(arg) == 5:
                 globalvar.attachEditCount = int(pywikibot.input(
@@ -916,7 +925,10 @@ def main():
             if len(str(globalvar.offset)) != 14:
                 # upon request, we might want to check for software version here
                 raise ValueError(
-                    "Mediawiki has changed, -offset:# is not supported anymore, but -offset:TIMESTAMP is, assuming TIMESTAMP is yyyymmddhhmmss. -timeoffset is now also supported. Please read this script source header for documentation.")
+                    "Mediawiki has changed, -offset:# is not supported "
+                    "anymore, but -offset:TIMESTAMP is, assuming TIMESTAMP "
+                    "is yyyymmddhhmmss. -timeoffset is now also supported. "
+                    "Please read this script source header for documentation.")
         elif arg.startswith('-file:'):
             globalvar.randomSign = True
             if len(arg) == 6:
@@ -939,8 +951,8 @@ def main():
             globalvar.confirm = True
         elif arg == '-filter':
             globalvar.filtBadName = True
-        #elif arg == '-savedata':
-        #    globalvar.saveSignIndex = True
+        elif arg == '-savedata':
+            globalvar.saveSignIndex = True
         elif arg == '-random':
             globalvar.randomSign = True
         elif arg == '-sul':
@@ -996,8 +1008,8 @@ def main():
                 import pickle as cPickle
             else:
                 import cPickle
-            with open(filename, 'w') as f:
-                cPickle.dump(bot.welcomed_users, f)
+            with open(filename, 'wb') as f:
+                cPickle.dump(bot.welcomed_users, f, protocol=config.pickle_protocol)
 
 if __name__ == "__main__":
     main()

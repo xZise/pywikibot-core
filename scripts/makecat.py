@@ -44,10 +44,11 @@ import sys
 import codecs
 import pywikibot
 from pywikibot import date, pagegenerators, i18n, textlib
+from pywikibot.tools import DequeGenerator
 
 
 def isdate(s):
-    """returns true if s is a date or year."""
+    """Return true if s is a date or year."""
     dict, val = date.getAutoFormat(pywikibot.Site().language(), s)
     return dict is not None
 
@@ -104,11 +105,6 @@ def include(pl, checklinks=True, realinclude=True, linkterm=None):
                     checked[refPage] = refPage
 
 
-def exclude(pl, real_exclude=True):
-    if real_exclude:
-        excludefile.write('%s\n' % pl.title())
-
-
 def asktoadd(pl):
     if pl.site != mysite:
         return
@@ -141,10 +137,9 @@ def asktoadd(pl):
             include(pl)
             break
         elif answer == 'n':
-            exclude(pl)
+            excludefile.write('%s\n' % pl.title())
             break
         elif answer == 'i':
-            exclude(pl, real_exclude=False)
             break
         elif answer == 'o':
             pywikibot.output(u"t: Give the beginning of the text of the page")
@@ -170,7 +165,6 @@ def asktoadd(pl):
                     include(pl, checklinks=False)
             else:
                 pywikibot.output(u"Page does not exist; not added.")
-                exclude(pl, real_exclude=False)
             break
         elif answer == 'l':
             pywikibot.output(u"Number of pages still to check: %s"
@@ -197,7 +191,7 @@ try:
     removeparent = True
     main = True
     workingcatname = ''
-    tocheck = []
+    tocheck = DequeGenerator()
     for arg in pywikibot.handleArgs():
         if arg.startswith('-nodate'):
             skipdates = True
@@ -234,7 +228,6 @@ try:
                     line = line[:-1]
             except IndexError:
                 pass
-            exclude(line, real_exclude=False)
             pl = pywikibot.Page(mysite, line)
             checked[pl] = pl
         f.close()
@@ -242,10 +235,13 @@ try:
     except IOError:
         # File does not exist
         excludefile = codecs.open(filename, 'w', encoding=mysite.encoding())
+
+    # Get parent categories in order to `removeparent`
     try:
         parentcats = workingcat.categories()
     except pywikibot.Error:
         parentcats = []
+
     # Do not include articles already in subcats; only checking direct subcats
     subcatlist = list(workingcat.subcategories())
     if subcatlist:
@@ -253,16 +249,13 @@ try:
         for cat in subcatlist:
             artlist = list(cat.articles())
             for page in artlist:
-                exclude(page.title(), real_exclude=False)
                 checked[page] = page
-    list = [x for x in workingcat.articles()]
-    if list:
-        for pl in list:
-            checked[pl] = pl
-        list = pagegenerators.PreloadingGenerator(list)
-        for pl in list:
-            include(pl)
-    else:
+
+    # Fetch articles in category, and mark as already checked (seen)
+    # If category is empty, ask user if they want to look for pages
+    # in a diferent category.
+    articles = list(workingcat.articles(content=True))
+    if not articles:
         pywikibot.output(
             u"Category %s does not exist or is empty. Which page to start with?"
             % workingcatname)
@@ -271,26 +264,17 @@ try:
             answer = workingcatname
         pywikibot.output(u'' + answer)
         pl = pywikibot.Page(mysite, answer)
-        tocheck = []
+        articles = [pl]
+
+    for pl in articles:
         checked[pl] = pl
         include(pl)
-    loaded = 0
-    while tocheck:
-        if loaded == 0:
-            if len(tocheck) < 50:
-                loaded = len(tocheck)
-            else:
-                loaded = 50
-            tocheck = [x for x in pagegenerators.PreloadingGenerator(tocheck[:loaded])]
-        if not checkbroken:
-            if not tocheck[0].exists():
-                pass
-            else:
-                asktoadd(tocheck[0])
-        else:
-            asktoadd(tocheck[0])
-        tocheck = tocheck[1:]
-        loaded -= 1
+
+    gen = pagegenerators.DequePreloadingGenerator(tocheck)
+
+    for page in gen:
+        if checkbroken or page.exists():
+            asktoadd(page)
 
 finally:
     try:

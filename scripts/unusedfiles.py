@@ -1,8 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
-This bot appends some text to all unused images and other text to the
-respective uploaders.
+This bot appends some text to all unused images and notifies uploaders.
 
 Parameters:
 
@@ -14,7 +13,7 @@ Parameters:
 # (C) Leonardo Gregianin, 2007
 # (C) Filnik, 2008
 # (c) xqt, 2011-2014
-# (C) Pywikibot team, 2014
+# (C) Pywikibot team, 2015
 #
 # Distributed under the terms of the MIT license.
 #
@@ -51,11 +50,15 @@ except_text = {
 
 class UnusedFilesBot(Bot):
 
+    """Unused files bot."""
+
     def __init__(self, site, **kwargs):
+        """Constructor."""
         super(UnusedFilesBot, self).__init__(**kwargs)
         self.site = site
 
     def run(self):
+        """Start the bot."""
         template_image = i18n.translate(self.site,
                                         template_to_the_image)
         template_user = i18n.translate(self.site,
@@ -88,6 +91,7 @@ class UnusedFilesBot(Bot):
                 self.append_text(usertalkpage, msg2uploader)
 
     def append_text(self, page, apptext):
+        """Append apptext to the page."""
         if page.isRedirectPage():
             page = page.getRedirectTarget()
         if page.exists():
@@ -96,17 +100,25 @@ class UnusedFilesBot(Bot):
             if page.isTalkPage():
                 text = u''
             else:
-                raise pywikibot.NoPage(u"Page '%s' does not exist" % page.title())
+                raise pywikibot.NoPage(page)
 
         oldtext = text
         text += apptext
         self.userPut(page, oldtext, text, comment=self.summary)
 
 
-def main():
+def main(*args):
+    """
+    Process command line arguments and invoke bot.
+
+    If args is an empty list, sys.argv is used.
+
+    @param args: command line arguments
+    @type args: list of unicode
+    """
     options = {}
 
-    for arg in pywikibot.handleArgs():
+    for arg in pywikibot.handle_args(args):
         if arg == '-always':
             options['always'] = True
 

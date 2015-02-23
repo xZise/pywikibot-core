@@ -7,29 +7,33 @@
 
 import json
 import sys
-if sys.version_info[0] == 2:
-    from urllib2 import quote
-else:
+if sys.version_info[0] > 2:
     from urllib.parse import quote
-from pywikibot.comms import http
+else:
+    from urllib2 import quote
 import pickle
 import os
 import hashlib
 import time
 import tempfile
 
-from pywikibot.page import ItemPage, PropertyPage, Claim
 import pywikibot
+from pywikibot.comms import http
+from pywikibot.page import ItemPage, PropertyPage, Claim
+from pywikibot import config
 
 
 def listify(x):
     """
     If given a non-list, encapsulate in a single-element list.
+
+    @rtype: list
     """
     return x if isinstance(x, list) else [x]
 
 
 class QuerySet():
+
     """
     A QuerySet represents a set of queries or other query sets.
 
@@ -42,6 +46,8 @@ class QuerySet():
     def __init__(self, q):
         """
         Initialise a query set from a Query or another QuerySet.
+
+        @type q: Query or QuerySet
         """
         self.qs = [q]
 
@@ -50,13 +56,12 @@ class QuerySet():
         Add to this QuerySet using the given joiner.
 
         If the given joiner is not the same as we used before in
-        this QuerySet, nest the current one in parens before joining
-        - this makes the implicit grouping of the API explicit.
+        this QuerySet, nest the current one in parens before joining.
+        This makes the implicit grouping of the API explicit.
 
-        @return a new query set representing the joining of this one and
+        @return: a new query set representing the joining of this one and
             the arguments
         """
-
         if len(self.qs) > 1 and joiner != self.joiner:
             left = QuerySet(self)
         else:
@@ -72,12 +77,16 @@ class QuerySet():
     def AND(self, args):
         """
         Add the given args (Queries or QuerySets) to the Query set as a logical conjuction (AND).
+
+        @type args: Query or QuerySet
         """
         return self.addJoiner(args, "AND")
 
     def OR(self, args):
         """
         Add the given args (Queries or QuerySets) to the Query set as a logical disjunction (OR).
+
+        @type args: Query or QuerySet
         """
         return self.addJoiner(args, "OR")
 
@@ -87,7 +96,6 @@ class QuerySet():
 
         @rtype: str
         """
-
         def bracketIfQuerySet(q):
             if isinstance(q, QuerySet) and q.joiner != self.joiner:
                 return "(%s)" % q
@@ -120,12 +128,16 @@ class Query():
     def AND(self, ands):
         """
         Produce a query set ANDing this query and all the given query/sets.
+
+        @type ands: Query or list of Query
         """
         return QuerySet(self).addJoiner(ands, "AND")
 
     def OR(self, ors):
         """
         Produce a query set ORing this query and all the given query/sets.
+
+        @type ors: Query or list of Query
         """
         return QuerySet(self).addJoiner(ors, "OR")
 
@@ -140,6 +152,8 @@ class Query():
     def formatList(self, l):
         """
         Format and comma-join a list.
+
+        @type l: list
         """
         return ",".join([self.formatItem(x) for x in l])
 
@@ -147,6 +161,8 @@ class Query():
     def isOrContainsOnlyTypes(items, types):
         """
         Either this item is one of the given types, or it is a list of only those types.
+
+        @rtype: bool
         """
         if isinstance(items, list):
             for x in items:
@@ -192,10 +208,10 @@ class Query():
 
         The resulting IDs may be used in query strings.
 
-        @param item A single item. One of ItemPages, PropertyPages, int
-        or anything that can be fed to int()
+        @param item: A single item. One of ItemPages, PropertyPages, int
+            or anything that can be fed to int()
 
-        @return the int ID of the item
+        @return: the int ID of the item
         """
         if isinstance(item, ItemPage) or isinstance(item, PropertyPage):
             return item.getID(numeric=True)
@@ -220,6 +236,7 @@ class Query():
 
 
 class HasClaim(Query):
+
     """
     This is a Query of the form "claim[prop:val]".
 
@@ -260,19 +277,20 @@ class HasClaim(Query):
 
 
 class NoClaim(HasClaim):
+
+    """Query of the form noclaim[PROPERTY]."""
+
     queryType = "noclaim"
 
 
 class StringClaim(HasClaim):
-    """
-    Query of the form string[PROPERTY:"STRING",...].
-    """
+
+    """Query of the form string[PROPERTY:"STRING",...]."""
+
     queryType = "string"
 
     def formatItem(self, x):
-        """
-        Strings need quote-wrapping.
-        """
+        """Add quotes around string."""
         return '"%s"' % x
 
     def validate(self):
@@ -280,27 +298,26 @@ class StringClaim(HasClaim):
 
 
 class Tree(Query):
-    """
-    Query of the form tree[ITEM,...][PROPERTY,...]<PROPERTY,...>.
-    """
+
+    """Query of the form tree[ITEM,...][PROPERTY,...]<PROPERTY,...>."""
+
     queryType = "tree"
 
     def __init__(self, item, forward=[], reverse=[]):
         """
         Constructor.
 
-        @param item The root item
-        @param forward List of forward properties, can be empty
-        @param reverse List of reverse properties, can be empty
+        @param item: The root item
+        @param forward: List of forward properties, can be empty
+        @param reverse: List of reverse properties, can be empty
         """
-
         # check sensible things coming in, as we lose info once we do
         # type conversion
         if not self.isOrContainsOnlyTypes(item, [int, ItemPage]):
             raise TypeError("The item paramter must contain or be integer IDs "
                             "or page.ItemPages")
-        elif (not self.isOrContainsOnlyTypes(forward, [int, PropertyPage])
-                or not self.isOrContainsOnlyTypes(reverse, [int, PropertyPage])):
+        elif (not self.isOrContainsOnlyTypes(forward, [int, PropertyPage]) or
+                not self.isOrContainsOnlyTypes(reverse, [int, PropertyPage])):
             raise TypeError("The forward and reverse parameters must contain "
                             "or be integer IDs or page.PropertyPages")
 
@@ -322,9 +339,9 @@ class Tree(Query):
 
 
 class Around(Query):
-    """
-    A query in the form around[PROPERTY,LATITUDE,LONGITUDE,RADIUS].
-    """
+
+    """A query in the form around[PROPERTY,LATITUDE,LONGITUDE,RADIUS]."""
+
     queryType = "around"
 
     def __init__(self, prop, coord, rad):
@@ -343,16 +360,18 @@ class Around(Query):
 
 
 class Between(Query):
+
     """
     A query in the form between[PROP, BEGIN, END].
 
     You have to give prop and one of begin or end. Note that times have
     to be in UTC, timezones are not supported by the API
 
-    @param prop the property
-    @param begin WbTime object representign the beginning of the period
-    @param end WbTime object representing the end of the period
+    @param prop: the property
+    @param begin: WbTime object representign the beginning of the period
+    @param end: WbTime object representing the end of the period
     """
+
     queryType = "between"
 
     def __init__(self, prop, begin=None, end=None):
@@ -374,6 +393,7 @@ class Between(Query):
 
 
 class Link(Query):
+
     """
     A query in the form link[LINK,...], which also includes nolink.
 
@@ -395,14 +415,19 @@ class Link(Query):
 
 
 class NoLink(Link):
+
+    """A query in the form nolink[..]."""
+
     queryType = "nolink"
 
 
 def fromClaim(claim):
     """
     Construct from a pywikibot.page Claim object.
-    """
 
+    @type claim: L{pywikibot.page.Claim}
+    @rtype: L{Query}
+    """
     if not isinstance(claim, Claim):
         raise TypeError("claim must be a page.Claim")
 
@@ -416,6 +441,7 @@ def fromClaim(claim):
 
 
 class WikidataQuery():
+
     """
     An interface to the WikidataQuery API.
 
@@ -448,7 +474,7 @@ class WikidataQuery():
         """
         Get the query string for a given query or queryset.
 
-        @return query string including labels and props
+        @return: string including labels and props
         """
         qStr = "q=%s" % quote(str(q))
 
@@ -463,17 +489,18 @@ class WikidataQuery():
     def getCacheFilename(self, queryStr):
         """
         Encode a query into a unique and universally safe format.
+
+        @rtype: unicode
         """
-        encQuery = hashlib.sha1(queryStr).hexdigest() + ".wdq_cache"
+        encQuery = hashlib.sha1(queryStr.encode('utf8')).hexdigest() + ".wdq_cache"
         return os.path.join(self.cacheDir, encQuery)
 
     def readFromCache(self, queryStr):
         """
         Load the query result from the cache, if possible.
 
-        Returns None if the data is not there or if it is too old.
+        @return: None if the data is not there or if it is too old.
         """
-
         if self.cacheMaxAge <= 0:
             return None
 
@@ -484,13 +511,13 @@ class WikidataQuery():
             now = time.time()
 
             if ((now - mtime) / 60) < self.cacheMaxAge:
-
-                try:
-                    data = pickle.load(open(cacheFile, 'r'))
-                except pickle.UnpicklingError:
-                    pywikibot.warning(u"Couldn't read cached data from %s"
-                                        % cacheFile)
-                    data = None
+                with open(cacheFile, 'rb') as f:
+                    try:
+                        data = pickle.load(f)
+                    except pickle.UnpicklingError:
+                        pywikibot.warning(u"Couldn't read cached data from %s"
+                                            % cacheFile)
+                        data = None
 
                 return data
 
@@ -500,9 +527,8 @@ class WikidataQuery():
         """
         Save data from a query to a cache file, if enabled.
 
-        No return value.
+        @rtype: None
         """
-
         if self.cacheMaxAge <= 0:
             return
 
@@ -517,14 +543,17 @@ class WikidataQuery():
         if not os.path.exists(self.cacheDir):
             os.makedirs(self.cacheDir)
 
-        try:
-            pickle.dump(data, open(cacheFile, 'w'))
-        except IOError:
-            pywikibot.warning(u"Failed to write cache file %s" % cacheFile)
+        with open(cacheFile, 'wb') as f:
+            try:
+                pickle.dump(data, f, protocol=config.pickle_protocol)
+            except IOError:
+                pywikibot.warning(u"Failed to write cache file %s" % cacheFile)
 
     def getDataFromHost(self, queryStr):
         """
         Go and fetch a query from the host's API.
+
+        @rtype: dict
         """
         url = self.getUrl(queryStr)
 
@@ -538,7 +567,7 @@ class WikidataQuery():
             data = json.loads(resp)
         except ValueError:
             pywikibot.warning(u"Data received from host but no JSON could be decoded")
-            raise pywikibot.ServerError
+            raise pywikibot.ServerError("Data received from host but no JSON could be decoded")
 
         return data
 
@@ -546,9 +575,8 @@ class WikidataQuery():
         """
         Actually run a query over the API.
 
-        @return Python dict of the interpreted JSON or None on failure
+        @return: dict of the interpreted JSON or None on failure
         """
-
         fullQueryString = self.getQueryString(q, labels, props)
 
         # try to get cached data first
