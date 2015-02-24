@@ -12,6 +12,7 @@ import sys
 import os
 from collections import Iterable
 from datetime import datetime
+import itertools
 import re
 
 import pywikibot
@@ -1512,7 +1513,7 @@ class TestSiteAPILimits(TestCase):
         self.assertEqual(len(templates), 5)
 
         mysite.loadrevisions(mypage, step=5, total=12)
-        self.assertEqual(len(mypage._revisions), 12)
+        self.assertEqual(len(mypage._revision_cache._cache[0]), 12)
 
 
 class TestSiteInfo(WikimediaDefaultSiteTestCase):
@@ -1582,9 +1583,8 @@ class TestSiteLoadRevisions(TestCase):
         """Test the site.loadrevisions() method."""
         self.mysite.loadrevisions(self.mainpage, total=15)
         self.assertTrue(hasattr(self.mainpage, "_revid"))
-        self.assertTrue(hasattr(self.mainpage, "_revisions"))
-        self.assertIn(self.mainpage._revid, self.mainpage._revisions)
-        self.assertEqual(len(self.mainpage._revisions), 15)
+        self.assertIn(self.mainpage._revid, self.mainpage._revision_cache)
+        self.assertGreaterEqual(len(self.mainpage._revision_cache._cache[0]), 15)
         self.assertEqual(self.mainpage._text, None)
 
     def testLoadRevisions_getText(self):
@@ -1596,16 +1596,16 @@ class TestSiteLoadRevisions(TestCase):
         """Test the site.loadrevisions() method, listing based on revid."""
         # revids as list of int
         self.mysite.loadrevisions(self.mainpage, revids=[139992, 139993])
-        self.assertTrue(all(rev in self.mainpage._revisions for rev in [139992, 139993]))
+        self.assertTrue(all(rev in self.mainpage._revision_cache for rev in [139992, 139993]))
         # revids as list of str
         self.mysite.loadrevisions(self.mainpage, revids=['139994', '139995'])
-        self.assertTrue(all(rev in self.mainpage._revisions for rev in [139994, 139995]))
+        self.assertTrue(all(rev in self.mainpage._revision_cache for rev in [139994, 139995]))
         # revids as int
         self.mysite.loadrevisions(self.mainpage, revids=140000)
-        self.assertIn(140000, self.mainpage._revisions)
+        self.assertIn(140000, self.mainpage._revision_cache)
         # revids as str
         self.mysite.loadrevisions(self.mainpage, revids='140001')
-        self.assertIn(140001, self.mainpage._revisions)
+        self.assertIn(140001, self.mainpage._revision_cache)
         # revids belonging to a different page raises Exception
         self.assertRaises(pywikibot.Error, self.mysite.loadrevisions,
                           self.mainpage, revids=130000)
@@ -1613,19 +1613,19 @@ class TestSiteLoadRevisions(TestCase):
     def testLoadRevisions_querycontinue(self):
         """Test the site.loadrevisions() method with query-continue."""
         self.mysite.loadrevisions(self.mainpage, step=5, total=12)
-        self.assertEqual(len(self.mainpage._revisions), 12)
+        self.assertGreaterEqual(len(self.mainpage._revision_cache._cache[0]), 12)
 
     def testLoadRevisions_revdir(self):
         """Test the site.loadrevisions() method with rvdir=True."""
         self.mysite.loadrevisions(self.mainpage, rvdir=True, total=15)
-        self.assertEqual(len(self.mainpage._revisions), 15)
+        self.assertGreaterEqual(len(self.mainpage._revision_cache._cache[-1]), 15)
 
     def testLoadRevisions_timestamp(self):
         """Test the site.loadrevisions() method, listing based on timestamp."""
         self.mysite.loadrevisions(self.mainpage, rvdir=True, total=15)
-        self.assertEqual(len(self.mainpage._revisions), 15)
-        revs = self.mainpage._revisions
-        timestamps = [str(revs[rev].timestamp) for rev in revs]
+        self.assertGreaterEqual(len(self.mainpage._revision_cache._cache[-1]), 15)
+        revs = self.mainpage._revision_cache._cache[-1][-15:]
+        timestamps = [str(rev.timestamp) for rev in revs]
         self.assertTrue(all(ts < "2002-01-31T00:00:00Z" for ts in timestamps))
 
         # Retrieve oldest revisions; listing based on timestamp.
@@ -1638,14 +1638,14 @@ class TestSiteLoadRevisions(TestCase):
         # Raises "loadrevisions: endtime > starttime with rvdir=False"
         self.assertRaises(ValueError, self.mysite.loadrevisions,
                           self.mainpage, rvdir=False,
-                          starttime="2002-01-01T00:00:00Z", endtime="2002-02-01T000:00:00Z")
+                          starttime="2002-01-01T00:00:00Z", endtime="2002-02-01T00:00:00Z")
 
     def testLoadRevisions_rev_id(self):
         """Test the site.loadrevisions() method, listing based on rev_id."""
         self.mysite.loadrevisions(self.mainpage, rvdir=True, total=15)
-        self.assertEqual(len(self.mainpage._revisions), 15)
-        revs = self.mainpage._revisions
-        self.assertTrue(all(139900 <= rev <= 140100 for rev in revs))
+        self.assertGreaterEqual(len(self.mainpage._revision_cache._cache[-1]), 15)
+        revs = self.mainpage._revision_cache._cache[-1][-15:]
+        self.assertTrue(all(139900 <= rev.revid <= 140100 for rev in revs))
 
         # Retrieve oldest revisions; listing based on revid.
         # Raises "loadrevisions: startid > endid with rvdir=True"
@@ -1662,20 +1662,21 @@ class TestSiteLoadRevisions(TestCase):
     def testLoadRevisions_user(self):
         """Test the site.loadrevisions() method, filtering by user."""
         # Only list revisions made by this user.
-        self.mainpage._revisions = {}
+        self.mainpage._revision_cache._cache = []
         self.mysite.loadrevisions(self.mainpage, rvdir=True,
                                   user="Magnus Manske")
-        revs = self.mainpage._revisions
-        self.assertTrue(all(revs[rev].user == "Magnus Manske" for rev in revs))
+        revs = self.mainpage._revision_cache._cache[0][1:]
+        # Because it also loads the newest revision skip it
+        self.assertTrue(all(rev.user == "Magnus Manske" for rev in revs))
 
     def testLoadRevisions_excludeuser(self):
         """Test the site.loadrevisions() method, excluding user."""
         # Do not list revisions made by this user.
-        self.mainpage._revisions = {}
+        self.mainpage._revision_cache._cache = []
         self.mysite.loadrevisions(self.mainpage, rvdir=True,
                                   excludeuser="Magnus Manske")
-        revs = self.mainpage._revisions
-        self.assertFalse(any(revs[rev].user == "Magnus Manske" for rev in revs))
+        revs = self.mainpage._revision_cache._cache[0]
+        self.assertFalse(any(rev.user == "Magnus Manske" for rev in revs))
 
         # TODO test other optional arguments
 
@@ -1690,10 +1691,9 @@ class TestSiteLoadRevisionsSysop(DefaultSiteTestCase):
         """Test the site.loadrevisions() method with rollback."""
         mainpage = self.get_mainpage()
         self.site.loadrevisions(mainpage, total=12, rollback=True, sysop=True)
-        self.assertGreater(len(mainpage._revisions), 0)
-        self.assertLessEqual(len(mainpage._revisions), 12)
-        self.assertTrue(all(rev.rollbacktoken is not None
-                            for rev in mainpage._revisions.values()))
+        self.assertGreater(len(mainpage._revision_cache._cache[0]), 0)
+        self.assertTrue(all(rev._token is not None
+                            for rev in itertools.chain(*mainpage._revision_cache._cache)))
 
 
 class TestCommonsSite(TestCase):
@@ -1805,7 +1805,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
             count += 1
             if count >= 5:
@@ -1828,7 +1827,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
             count += 1
             if count >= 5:
@@ -1845,7 +1843,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
             count += 1
             if count >= 6:
@@ -1871,7 +1868,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
             count += 1
         self.assertEqual(count, link_count)
@@ -1896,7 +1892,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
             count += 1
         self.assertEqual(count, link_count)
@@ -1924,7 +1919,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
             count += 1
             if count > 5:
@@ -1953,7 +1947,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
             count += 1
             if count > 5:
@@ -1970,6 +1963,7 @@ class TestPagePreloading(DefaultSiteTestCase):
 
         for page in links:
             page._link._text += ' foobar'
+            page._link.parse()  # force reparse
             del page._pageid
 
         gen = mysite.preloadpages(links, groupsize=5)
@@ -1994,7 +1988,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
                 self.assertTrue(hasattr(page, '_langlinks'))
             count += 1
@@ -2016,7 +2009,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
             count += 1
 
@@ -2036,7 +2028,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
                 self.assertTrue(hasattr(page, '_langlinks'))
             count += 1
@@ -2056,7 +2047,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
                 self.assertTrue(hasattr(page, '_templates'))
             count += 1
@@ -2076,7 +2066,6 @@ class TestPagePreloading(DefaultSiteTestCase):
             self.assertIsInstance(page.exists(), bool)
             if page.exists():
                 self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
                 self.assertFalse(hasattr(page, '_pageprops'))
                 self.assertTrue(hasattr(page, '_templates'))
                 self.assertTrue(hasattr(page, '_langlinks'))
