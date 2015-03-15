@@ -514,11 +514,11 @@ class TestPageObject(DefaultSiteTestCase):
 
     def test_redirect(self):
         """Test that the redirect option is set correctly."""
-        mysite = self.get_site()
-        for page in mysite.allpages(filterredir=True, total=1):
+        site = self.get_site()
+        for page in site.allpages(filterredir=True, total=1):
             break
         else:
-            raise unittest.SkipTest('No redirect pages on site {0!r}'.format(mysite))
+            raise unittest.SkipTest('No redirect pages on site {0!r}'.format(site))
         # This page is already initialised
         self.assertTrue(hasattr(page, '_isredir'))
         # call api.update_page without prop=info
@@ -526,10 +526,108 @@ class TestPageObject(DefaultSiteTestCase):
         page.isDisambig()
         self.assertTrue(page.isRedirectPage())
 
-        page_copy = pywikibot.Page(mysite, page.title())
+        page_copy = pywikibot.Page(site, page.title())
         self.assertFalse(hasattr(page_copy, '_isredir'))
         page_copy.isDisambig()
         self.assertTrue(page_copy.isRedirectPage())
+
+
+class TestPageBotMayEdit(TestCase):
+
+    """Test Page.botMayEdit() method."""
+
+    family = 'wikipedia'
+    code = 'en'
+
+    cached = True
+    user = True
+
+    def test_bot_may_edit_general(self):
+        """Test that bot is allowed to edit."""
+        site = self.get_site()
+        user = site.user()
+
+        page = pywikibot.Page(site, 'not_existent_page_for_pywikibot_tests')
+        if page.exists():
+            raise unittest.SkipTest(
+                "Page %s exists! Change page name in tests/page_tests.py"
+                % page.title())
+
+        # Ban all compliant bots (shortcut).
+        page.text = '{{nobots}}'
+        page._templates = [pywikibot.Page(site, 'Template:Nobots')]
+        self.assertFalse(page.botMayEdit())
+
+        # Ban all compliant bots not in the list, syntax for de wp.
+        page.text = '{{nobots|HagermanBot,Werdnabot}}'
+        self.assertTrue(page.botMayEdit(),
+                         u'%s: %s but user=%s'
+                         % (page.text, page.botMayEdit(), user))
+
+        # Ban all compliant bots not in the list, syntax for de wp.
+        page.text = '{{nobots|%s, HagermanBot,Werdnabot}}' % user
+        self.assertFalse(page.botMayEdit(),
+                         u'%s: %s but user=%s'
+                         % (page.text, page.botMayEdit(), user))
+
+        # Ban all bots, syntax for de wp.
+        page.text = '{{nobots|all}}'
+        self.assertFalse(page.botMayEdit(),
+                         u'%s: %s but user=%s'
+                         % (page.text, page.botMayEdit(), user))
+
+        # Allow all bots (shortcut).
+        page.text = '{{bots}}'
+        page._templates = [pywikibot.Page(site, 'Template:Bots')]
+        self.assertTrue(page.botMayEdit())
+
+        # Ban all compliant bots not in the list.
+        page.text = '{{bots|allow=HagermanBot,Werdnabot}}'
+        self.assertFalse(page.botMayEdit(),
+                         u'%s: %s but user=%s'
+                         % (page.text, page.botMayEdit(), user))
+
+        # Ban all compliant bots in the list.
+        page.text = '{{bots|deny=HagermanBot,Werdnabot}}'
+        self.assertTrue(page.botMayEdit(),
+                        u'%s: %s but user=%s'
+                        % (page.text, page.botMayEdit(), user))
+
+        # Ban all compliant bots not in the list.
+        page.text = '{{bots|allow=%s, HagermanBot}}' % user
+        self.assertTrue(page.botMayEdit(),
+                        u'%s: %s but user=%s'
+                        % (page.text, page.botMayEdit(), user))
+
+        # Ban all compliant bots in the list.
+        page.text = '{{bots|deny=%s, HagermanBot}}' % user
+        self.assertFalse(page.botMayEdit(),
+                         u'%s: %s but user=%s'
+                         % (page.text, page.botMayEdit(), user))
+
+        # Allow all bots.
+        page.text = '{{bots|allow=all}}'
+        self.assertTrue(page.botMayEdit(),
+                        u'%s: %s but user=%s'
+                        % (page.text, page.botMayEdit(), user))
+
+        # Ban all compliant bots.
+        page.text = '{{bots|allow=none}}'
+        self.assertFalse(page.botMayEdit(),
+                         u'%s: %s but user=%s'
+                         % (page.text, page.botMayEdit(), user))
+
+        # Ban all compliant bots.
+        page.text = '{{bots|deny=all}}'
+        self.assertFalse(page.botMayEdit(),
+                         u'%s: %s but user=%s'
+                         % (page.text, page.botMayEdit(), user))
+
+        # Allow all bots.
+        page.text = '{{bots|deny=none}}'
+        self.assertTrue(page.botMayEdit(),
+                        u'%s: %s but user=%s'
+                        % (page.text, page.botMayEdit(), user))
 
 
 class TestPageRedirects(TestCase):
@@ -770,6 +868,25 @@ class DryRevisionCacheTest(DefaultDrySiteTestCase):
             list(page._revision_cache.get_revisions(endid=10, startid=2, reverse=True)),
             cache[::-1])
         self.assertEqual(page.oldest_revision, cache[-1])
+
+
+class HtmlEntity(TestCase):
+
+    """Test that HTML entities are correctly decoded."""
+
+    net = False
+
+    def test_valid_entities(self):
+        """Test valid entities."""
+        self.assertEqual(pywikibot.page.html2unicode('A&amp;O'), 'A&O')
+        self.assertEqual(pywikibot.page.html2unicode('&#x70;&#x79;'), 'py')
+        self.assertEqual(pywikibot.page.html2unicode('&#x10000;'), u'\U00010000')
+
+    @unittest.expectedFailure
+    def test_recursive_entities(self):
+        """Test recursive entities."""
+        self.assertEqual(pywikibot.page.html2unicode('A&amp;amp;O'), 'A&amp;O')
+
 
 
 if __name__ == '__main__':

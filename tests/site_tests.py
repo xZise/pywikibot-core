@@ -693,6 +693,46 @@ class TestSiteGenerators(DefaultSiteTestCase):
         site.lock_page(page=p1, block=False)
         site.unlock_page(page=p1)
 
+    def test_protectedpages_create(self):
+        """Test that protectedpages returns protected page titles."""
+        pages = list(self.get_site().protectedpages(type='create', total=10))
+        for page in pages:
+            self.assertFalse(page.exists())
+        self.assertLessEqual(len(pages), 10)
+
+    def test_protectedpages_edit(self):
+        """Test that protectedpages returns protected pages."""
+        site = self.get_site()
+        pages = list(site.protectedpages(type='edit', total=10))
+        for page in pages:
+            self.assertTrue(page.exists())
+            self.assertIn('edit', page.protection())
+        self.assertLessEqual(len(pages), 10)
+
+    def test_protectedpages_edit_level(self):
+        site = self.get_site()
+        levels = set()
+        all_levels = site.protection_levels().difference([''])
+        for level in all_levels:
+            if list(site.protectedpages(type='edit', level=level, total=1)):
+                levels.add(level)
+        if not levels:
+            raise unittest.SkipTest('The site "{0}" has no protected pages in '
+                                    'main namespace.'.format(site))
+        # select one level which won't yield all pages from above
+        level = next(iter(levels))
+        if len(levels) == 1:
+            # if only one level found, then use any other except that
+            level = next(iter(all_levels.difference([level])))
+        invalid_levels = all_levels.difference([level])
+        pages = list(site.protectedpages(type='edit', level=level, total=10))
+        for page in pages:
+            self.assertTrue(page.exists())
+            self.assertIn('edit', page.protection())
+            self.assertEqual(page.protection()['edit'][0], level)
+            self.assertNotIn(page.protection()['edit'][0], invalid_levels)
+        self.assertLessEqual(len(pages), 10)
+
 
 class TestImageUsage(DefaultSiteTestCase):
 
@@ -1464,6 +1504,10 @@ class TestSiteTokens(DefaultSiteTestCase):
 
     def testInvalidToken(self):
         self.assertRaises(pywikibot.Error, lambda t: self.mysite.tokens[t], "invalidtype")
+
+    def test_deprecated_token(self):
+        self.assertEqual(self.mysite.getToken(), self.mysite.tokens['edit'])
+        self.assertEqual(self.mysite.getPatrolToken(), self.mysite.tokens['patrol'])
 
 
 class TestSiteExtensions(WikimediaDefaultSiteTestCase):
@@ -2398,6 +2442,26 @@ class TestSingleCodeFamilySite(AlteredDefaultSiteTestCase):
         # Languages cant be used due to T71255
         self.assertRaises(pywikibot.UnknownSite,
                           pywikibot.Site, 'en', 'wikidata')
+
+
+class TestNonMWAPISite(TestCase):
+
+    """Test the BaseSite subclass, site.NonMWAPISite."""
+
+    net = False
+
+    def testNonMWsites(self):
+        """Test NonMWAPISite for sites not using MediaWiki."""
+        self._run_test("http://moinmo.in/$1")
+        self._run_test("http://twiki.org/cgi-bin/view/$1")
+        self._run_test("http://www.usemod.com/cgi-bin/wiki.pl?$1")
+        self._run_test("https://developer.mozilla.org/en/docs/$1")
+        self._run_test("http://www.tvtropes.org/pmwiki/pmwiki.php/Main/$1")
+
+    def _run_test(self, url):
+        site = pywikibot.site.NonMWAPISite(url)
+        with self.assertRaises(NotImplementedError):
+            site.attr
 
 
 if __name__ == '__main__':
