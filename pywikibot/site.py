@@ -2535,9 +2535,6 @@ class APISite(BaseSite):
                      langlinks=False):
         """Return a generator to a list of preloaded pages.
 
-        Note that [at least in current implementation] pages may be iterated
-        in a different order than in the underlying pagelist.
-
         @param pagelist: an iterable that returns Page objects
         @param groupsize: how many Pages to query at a time
         @type groupsize: int
@@ -2549,6 +2546,13 @@ class APISite(BaseSite):
             pageids = [str(p._pageid) for p in sublist
                        if hasattr(p, "_pageid") and p._pageid > 0]
             cache = dict((p.title(withSection=False), p) for p in sublist)
+            # Contains the page at the same position in sublist if it has been
+            # cached. Last element is always None (for the while below)
+            ordered_cache = [None] * (len(cache) + 1)
+            # The position of a title in the ordered_cache
+            cache_index = dict((p.title(withSection=False), index)
+                               for index, p in enumerate(sublist))
+            print(cache_index)
 
             props = "revisions|info|categoryinfo"
             if templates:
@@ -2565,6 +2569,7 @@ class APISite(BaseSite):
             rvgen.request[u"rvprop"] = u"ids|flags|timestamp|user|comment|content"
             pywikibot.output(u"Retrieving %s pages from %s."
                              % (len(cache), self))
+            yield_position = 0
             for pagedata in rvgen:
                 pywikibot.debug(u"Preloading %s" % pagedata, _logger)
                 try:
@@ -2592,7 +2597,16 @@ class APISite(BaseSite):
                     continue
                 page = cache[pagedata['title']]
                 api.update_page(page, pagedata, rvgen.props)
-                yield page
+                # cache it in the ordered cache
+                index = cache_index[pagedata['title']]
+                assert(ordered_cache[index] is None)
+                ordered_cache[index] = page
+                # yield any cached pages
+                while ordered_cache[yield_position] is not None:
+                    yield ordered_cache[yield_position]
+                    yield_position += 1
+            assert(yield_position == len(ordered_cache) - 1)
+            assert(entry is not None for entry in ordered_cache[:-1])
 
     def validate_tokens(self, types):
         """Validate if requested tokens are acceptable.

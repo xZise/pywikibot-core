@@ -1844,6 +1844,18 @@ class TestPagePreloading(DefaultSiteTestCase):
 
     """Test site.preloadpages()."""
 
+    def test_preload_order(self):
+        """Test that the order is the same as the provided order."""
+        mainpage = self.get_mainpage()
+        count = 0
+        links = self.site.pagelinks(mainpage, total=20)
+        pages = list(self.site.preloadpages(links, groupsize=5))
+        for preloaded, original in zip(pages, links):
+            self.assertEqual(preloaded, original)
+            count += 1
+
+        self.assertEqual(len(list(links)), count)
+
     def test_pageids(self):
         """Test basic preloading with pageids."""
         mysite = self.get_site()
@@ -1952,64 +1964,6 @@ class TestPagePreloading(DefaultSiteTestCase):
                 self.assertFalse(hasattr(page, '_pageprops'))
             count += 1
         self.assertEqual(count, link_count)
-
-    def test_preload_unexpected_titles_using_pageids(self):
-        """Test sending pageids with unnormalized titles, causing warnings."""
-        mysite = self.get_site()
-        mainpage = self.get_mainpage()
-        count = 0
-        links = list(mysite.pagelinks(mainpage, total=10))
-        if len(links) < 2:
-            raise unittest.SkipTest('insufficient links on main page')
-
-        # change the title of the page, to test sametitle().
-        # preloadpages will send the page ids, as they have already been loaded
-        # by pagelinks, and preloadpages should complain the returned titles
-        # do not match any title in the pagelist.
-        # However, APISite.sametitle now correctly links them.
-        for page in links:
-            page._link._text += ' '
-
-        gen = mysite.preloadpages(links, groupsize=5)
-        for page in gen:
-            self.assertIsInstance(page, pywikibot.Page)
-            self.assertIsInstance(page.exists(), bool)
-            if page.exists():
-                self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
-                self.assertFalse(hasattr(page, '_pageprops'))
-            count += 1
-            if count > 5:
-                break
-
-    def test_preload_unexpected_titles_using_titles(self):
-        """Test sending unnormalized titles, causing warnings."""
-        mysite = self.get_site()
-        mainpage = self.get_mainpage()
-        count = 0
-        links = list(mysite.pagelinks(mainpage, total=10))
-        if len(links) < 2:
-            raise unittest.SkipTest('insufficient links on main page')
-
-        # change the title of the page _and_ delete the pageids.
-        # preloadpages can only send the titles, and preloadpages should
-        # complain the returned titles do not match any title in the pagelist.
-        # However, APISite.sametitle now correctly links them.
-        for page in links:
-            page._link._text += ' '
-            del page._pageid
-
-        gen = mysite.preloadpages(links, groupsize=5)
-        for page in gen:
-            self.assertIsInstance(page, pywikibot.Page)
-            self.assertIsInstance(page.exists(), bool)
-            if page.exists():
-                self.assertTrue(hasattr(page, "_text"))
-                self.assertEqual(len(page._revisions), 1)
-                self.assertFalse(hasattr(page, '_pageprops'))
-            count += 1
-            if count > 5:
-                break
 
     def test_preload_invalid_titles_without_pageids(self):
         """Test sending invalid titles. No warnings issued, but it should."""
