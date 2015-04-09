@@ -31,7 +31,7 @@ import pywikibot
 
 from pywikibot import config2 as config
 from pywikibot.family import Family
-from pywikibot.tools import OrderedDict
+from pywikibot.tools import OrderedDict, UnicodeMixin
 
 TEMP_REGEX = re.compile(
     r'{{(?:msg:)?(?P<name>[^{\|]+?)(?:\|(?P<params>[^{]+?(?:{[^{]+?}[^{]*?)?))?}}')
@@ -1230,7 +1230,7 @@ def does_text_contain_section(pagetext, section):
 # Time parsing functionality (Archivebot)
 # ---------------------------------------
 
-class tzoneFixedOffset(datetime.tzinfo):
+class tzoneFixedOffset(datetime.tzinfo, UnicodeMixin):
 
     """
     Class building tzinfo objects for fixed-offset time zones.
@@ -1256,7 +1256,7 @@ class tzoneFixedOffset(datetime.tzinfo):
         """Return no daylight savings time."""
         return datetime.timedelta(0)
 
-    def __repr__(self):
+    def _repr(self):
         """Return the internal representation of the timezone."""
         return "%s(%s, %s)" % (
             self.__class__.__name__,

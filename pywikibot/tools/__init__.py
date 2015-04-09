@@ -94,7 +94,7 @@ def empty_iterator():
 
 class UnicodeMixin(object):
 
-    """Mixin class to add __str__ method in Python 2 or 3."""
+    """Mixin class to add __str__ and __repr__ method in Python 2 or 3."""
 
     if sys.version_info[0] > 2:
         def __str__(self):
@@ -104,6 +104,15 @@ class UnicodeMixin(object):
         def __str__(self):
             """Return the str representation of the UTF-8 encoded Unicode."""
             return self.__unicode__().encode('utf8')
+
+    if sys.version_info[0] > 2:
+        def __repr__(self):
+            """Return a more complete string representation."""
+            return self._repr()
+    else:
+        def __repr__(self):
+            """Return a more complete string representation."""
+            return self._repr().encode('utf8')
 
 
 # From http://python3porting.com/preparing.html
@@ -500,7 +509,7 @@ class ThreadList(list):
             time.sleep(2)
         super(ThreadList, self).append(thd)
         thd.start()
-        debug("thread started: %r" % thd, self._logger)
+        debug(str('thread started: %r') % thd, self._logger)
 
     def stop_all(self):
         """Stop all threads the pool."""

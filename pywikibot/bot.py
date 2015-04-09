@@ -1025,7 +1025,7 @@ class Bot(object):
         """
         if page != self._current_page:
             self._current_page = page
-            msg = u'Working on %r' % page.title()
+            msg = u'Working on %s' % page.title()
             if config.colorized_output:
                 log(msg)
                 stdout(u'\n\n>>> \03{lightpurple}%s\03{default} <<<'

@@ -193,11 +193,11 @@ class DrySite(pywikibot.site.APISite):
         self._siteinfo._cache['lang'] = (code, True)
         self._namespaces = SelfCallDict(Namespace.builtin_namespaces())
 
-    def __repr__(self):
+    def _repr(self):
         """Override default so warnings and errors indicate test is dry."""
-        return "%s(%r, %r)" % (self.__class__.__name__,
-                               self.code,
-                               self.family.name)
+        return str('%s(%r, %r)') % (self.__class__.__name__,
+                                    self.code,
+                                    self.family.name)
 
     @property
     def userinfo(self):
@@ -206,7 +206,7 @@ class DrySite(pywikibot.site.APISite):
 
     def version(self):
         """Dummy version, with warning to show the callers context."""
-        warn('%r returning version 1.24; override if unsuitable.'
+        warn(str('%r returning version 1.24; override if unsuitable.')
              % self, DrySiteNote, stacklevel=2)
         return '1.24'
 

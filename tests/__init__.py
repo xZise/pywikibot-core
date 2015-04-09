@@ -140,7 +140,7 @@ def collector(loader=unittest.loader.defaultTestLoader):
               % ', '.join(extra_test_modules))
 
     if disabled_tests:
-        print('Skipping tests (to run: python -m unittest ...):\n  %r'
+        print(str('Skipping tests (to run: python -m unittest ...):\n  %r')
               % disabled_tests)
 
     modules = [module

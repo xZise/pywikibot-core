@@ -2813,7 +2813,7 @@ class transliterator(object):
             if value == "?":
                 continue
             while value.encode(encoding, 'replace').decode(encoding) == "?" and value in self.trans:
-                assert value != self.trans[value], "%r == self.trans[%r]!" % (value, value)
+                assert value != self.trans[value], str('%r == self.trans[%r]!') % (value, value)
                 value = self.trans[value]
             self.trans[char] = value
 

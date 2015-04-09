@@ -991,7 +991,7 @@ class SiteUserTestCase(DefaultSiteTestCase):
         mysite = self.get_site()
         if mysite.has_extension("Wikia Search"):
             raise unittest.SkipTest(
-                'The site %r does not use MediaWiki search' % mysite)
+                str('The site %r does not use MediaWiki search') % mysite)
         try:
             se = list(mysite.search("wiki", total=100))
             self.assertLessEqual(len(se), 100)
@@ -1013,7 +1013,7 @@ class SiteUserTestCase(DefaultSiteTestCase):
                 self.assertEqual(hit.namespace(), 0)
         except pywikibot.data.api.APIError as e:
             if e.code == "gsrsearch-error" and "timed out" in e.info:
-                raise unittest.SkipTest("gsrsearch returned timeout on site: %r" % e)
+                raise unittest.SkipTest(str("gsrsearch returned timeout on site: %r") % e)
             raise
 
     def testUsercontribs(self):

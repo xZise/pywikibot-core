@@ -23,9 +23,10 @@ except ImportError as bserror:
 
 import pywikibot
 from pywikibot.backports import format_range_unified  # introduced in 2.7.2
+from pywikibot.tools import UnicodeMixin
 
 
-class Hunk(object):
+class Hunk(UnicodeMixin):
 
     """One change hunk between a and b.
 
@@ -163,11 +164,11 @@ class Hunk(object):
         """Turn a into b for this hunk."""
         return self.b[self.b_rng[0]:self.b_rng[1]]
 
-    def __str__(self):
+    def __unicode__(self):
         """Return the diff as plain text."""
         return u''.join(self.diff_plain_text)
 
-    def __repr__(self):
+    def _repr(self):
         """Return a reconstructable representation."""
         # TODO
         return '%s(a, b, %s)' \

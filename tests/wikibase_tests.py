@@ -110,7 +110,7 @@ class TestWikibaseTypes(WikidataTestCase):
                          '    "unit": "1",\n'
                          '    "upperBound": %(val)r\n'
                          '}' % {'val': 0.044405586})
-        self.assertEqual("%r" % q,
+        self.assertEqual(str('%r') % q,
                          "WbQuantity(amount=%(val)s, "
                          "upperBound=%(val)s, lowerBound=%(val)s, "
                          "unit=1)" % {'val': 0.044405586})

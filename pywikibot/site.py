@@ -84,7 +84,7 @@ class PageInUse(pywikibot.Error):
     """Page cannot be reserved for writing due to existing lock."""
 
 
-class LoginStatus(object):
+class LoginStatus(UnicodeMixin):
 
     """Enum for Login statuses.
 
@@ -110,14 +110,14 @@ class LoginStatus(object):
         for key, value in cls.__dict__.items():
             if key == key.upper() and value == search_value:
                 return key
-        raise KeyError("Value %r could not be found in this enum"
+        raise KeyError(str('Value %r could not be found in this enum')
                        % search_value)
 
     def __init__(self, state):
         """Constructor."""
         self.state = state
 
-    def __repr__(self):
+    def _repr(self):
         """Return internal representation."""
         return 'LoginStatus(%s)' % (LoginStatus.name(self.state))
 
@@ -364,7 +364,7 @@ class Namespace(Iterable, ComparableMixin, UnicodeMixin):
         else:
             kwargs = ''
 
-        return '%s(id=%d, custom_name=%r, canonical_name=%r, aliases=%r%s)' \
+        return str('%s(id=%d, custom_name=%r, canonical_name=%r, aliases=%r%s)') \
                % (self.__class__.__name__, self.id, self.custom_name,
                   self.canonical_name, self.aliases, kwargs)
 
@@ -466,7 +466,7 @@ class Namespace(Iterable, ComparableMixin, UnicodeMixin):
                   for ns in identifiers]
 
         if NotImplemented in result:
-            raise TypeError('identifiers contains inappropriate types: %r'
+            raise TypeError(str('identifiers contains inappropriate types: %r')
                             % identifiers)
 
         # Namespace.lookup_name returns None if the name is not recognised
@@ -479,7 +479,7 @@ class Namespace(Iterable, ComparableMixin, UnicodeMixin):
         return result
 
 
-class BaseSite(ComparableMixin):
+class BaseSite(ComparableMixin, UnicodeMixin):
 
     """Site methods that are independent of the communication interface."""
 
@@ -658,7 +658,7 @@ class BaseSite(ComparableMixin):
             raise AttributeError("%s instance has no attribute '%s'"
                                  % (self.__class__.__name__, attr))
 
-    def __str__(self):
+    def __unicode__(self):
         """Return string representing this Site's name and code."""
         return self.family.name + ':' + self.code
 
@@ -667,7 +667,7 @@ class BaseSite(ComparableMixin):
         """String representing this Site's name and code."""
         return SelfCallString(self.__str__())
 
-    def __repr__(self):
+    def _repr(self):
         return 'Site("%s", "%s")' % (self.code, self.family.name)
 
     def __hash__(self):
@@ -3080,7 +3080,7 @@ class APISite(BaseSite):
                 if namespaces:
                     if excluded_namespaces.intersect(namespaces):
                         raise ValueError(
-                            'incompatible namespaces %r and member_type %r'
+                            str('incompatible namespaces %r and member_type %r')
                             % (namespaces, member_type))
                     # All excluded namespaces are not present in `namespaces`.
                 else:
@@ -5433,7 +5433,7 @@ class DataSite(APISite):
             return self._item_namespace
         else:
             raise EntityTypeUnknownException(
-                '%r does not support entity type "item"'
+                str('%r does not support entity type "item"')
                 % self)
 
     @property
@@ -5451,7 +5451,7 @@ class DataSite(APISite):
             return self._property_namespace
         else:
             raise EntityTypeUnknownException(
-                '%r does not support entity type "property"'
+                str('%r does not support entity type "property"')
                 % self)
 
     def __getattr__(self, attr):
@@ -5476,7 +5476,7 @@ class DataSite(APISite):
                 return f
         return super(APISite, self).__getattr__(attr)
 
-    def __repr__(self):
+    def _repr(self):
         return 'DataSite("%s", "%s")' % (self.code, self.family.name)
 
     @deprecated("pywikibot.PropertyPage")

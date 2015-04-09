@@ -271,10 +271,9 @@ class BasePage(UnicodeMixin, ComparableMixin):
         """Return a unicode string representation."""
         return self.title(asLink=True, forceInterwiki=True)
 
-    def __repr__(self):
+    def _repr(self):
         """Return a more complete string representation."""
-        title = self.title().encode(config.console_encoding).decode('unicode-escape')
-        return '{0}({1})'.format(self.__class__.__name__, title)
+        return '{0}({1})'.format(self.__class__.__name__, self.title())
 
     def _cmpkey(self):
         """
@@ -2946,8 +2945,8 @@ class WikibasePage(BasePage):
         if not isinstance(site, pywikibot.site.DataSite):
             raise TypeError("site must be a pywikibot.site.DataSite object")
         if title and ('ns' not in kwargs and 'entity_type' not in kwargs):
-            pywikibot.debug("%s.__init__: %s title %r specified without "
-                            "ns or entity_type"
+            pywikibot.debug(str('%s.__init__: %s title %r specified without '
+                                'ns or entity_type')
                             % (self.__class__.__name__, site, title),
                             layer='wikibase')
 
@@ -2965,8 +2964,8 @@ class WikibasePage(BasePage):
                 elif site.property_namespace.id == ns:
                     self._namespace = site.property_namespace
                 else:
-                    raise ValueError('%r: Namespace "%d" is not valid'
-                                     % self.site)
+                    raise ValueError(str('%r: Namespace "%d" is not valid')
+                                     % (self.site, ns))
 
         if 'entity_type' in kwargs:
             entity_type = kwargs.pop('entity_type')
@@ -3008,7 +3007,7 @@ class WikibasePage(BasePage):
             elif self.site.property_namespace.id == ns:
                 self._namespace = self.site.property_namespace
             else:
-                raise ValueError('%r: Namespace "%r" is not valid'
+                raise ValueError(str('%r: Namespace "%r" is not valid')
                                  % (self.site, ns))
 
         # .site forces a parse of the Link title to determine site
@@ -4398,7 +4397,7 @@ class Link(ComparableMixin):
 
     def __repr__(self):
         """Return a more complete string representation."""
-        return "pywikibot.page.Link(%r, %r)" % (self.title, self.site)
+        return str('pywikibot.page.Link(%r, %r)') % (self.title, self.site)
 
     def parse_site(self):
         """Parse only enough text to determine which site the link points to.

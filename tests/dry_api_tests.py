@@ -125,11 +125,11 @@ class MockCachedRequestKeyTests(TestCase):
             def siteinfo(self):
                 return self._siteinfo
 
-            def __repr__(self):
+            def _repr(self):
                 return "MockSite()"
 
             def __getattr__(self, attr):
-                raise Exception("Attribute %r not defined" % attr)
+                raise Exception(str('Attribute %r not defined') % attr)
 
         self.mocksite = MockSite()
         super(MockCachedRequestKeyTests, self).setUp()
@@ -194,7 +194,7 @@ class DryWriteAssertTests(DefaultDrySiteTestCase):
         self.assertRaisesRegex(pywikibot.Error, ' without userinfo',
                                Request, site=site, action='edit')
 
-        site._userinfo = {'name': '1.2.3.4', 'groups': []}
+        site._userinfo = {'name': str('1.2.3.4'), 'groups': []}
 
         self.assertRaisesRegex(pywikibot.Error, " as IP '1.2.3.4'",
                                Request, site=site, action='edit')

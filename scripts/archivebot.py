@@ -108,6 +108,7 @@ import pywikibot
 from pywikibot import i18n
 from pywikibot.textlib import TimeStripper
 from pywikibot.textlib import to_local_digits
+from pywikibot.tools import UnicodeMixin
 
 ZERO = datetime.timedelta(0)
 
@@ -231,7 +232,7 @@ def template_title_regex(tpl_page):
     return re.compile(r'(?:(?:%s):)%s%s' % (u'|'.join(ns), marker, title))
 
 
-class TZoneUTC(datetime.tzinfo):
+class TZoneUTC(datetime.tzinfo, UnicodeMixin):
 
     """Class building a UTC tzinfo object."""
 
@@ -244,11 +245,11 @@ class TZoneUTC(datetime.tzinfo):
     def dst(self, dt):  # pylint: disable=unused-argument
         return ZERO
 
-    def __repr__(self):
+    def _repr(self):
         return "%s()" % self.__class__.__name__
 
 
-class DiscussionThread(object):
+class DiscussionThread(UnicodeMixin):
 
     """
     An object representing a discussion thread on a page.
@@ -269,7 +270,7 @@ class DiscussionThread(object):
         self.content = ""
         self.timestamp = None
 
-    def __repr__(self):
+    def _repr(self):
         return '%s("%s",%d bytes)' \
                % (self.__class__.__name__, self.title,
                   len(self.content.encode('utf-8')))

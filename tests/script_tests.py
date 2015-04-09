@@ -172,12 +172,12 @@ def collector(loader=unittest.loader.defaultTestLoader):
               % ', '.join(deadlock_script_list))
 
     if unrunnable_script_list:
-        print('Skipping execution of unrunnable scripts:\n  %r'
+        print(str('Skipping execution of unrunnable scripts:\n  %r')
               % unrunnable_script_list)
 
     if not enable_autorun_tests:
-        print('Skipping execution of auto-run scripts '
-              '(set PYWIKIBOT2_TEST_AUTORUN=1 to enable):\n  %r'
+        print(str('Skipping execution of auto-run scripts '
+                  '(set PYWIKIBOT2_TEST_AUTORUN=1 to enable):\n  %r')
               % auto_run_script_list)
 
     tests = (['test__login_help'] +
@@ -273,7 +273,7 @@ class TestScriptMeta(MetaTestCaseClass):
                         print(' auto-run script simulated edit blocked',
                               end='  ')
                     else:
-                        print(' auto-run script stderr within %d seconds: %r'
+                        print(str(' auto-run script stderr within %d seconds: %r')
                               % (timeout, result['stderr']), end='  ')
 
                 self.assertNotIn('Traceback (most recent call last)',

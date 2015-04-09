@@ -23,6 +23,7 @@ import pywikibot
 from pywikibot.comms import http
 from pywikibot.page import ItemPage, PropertyPage, Claim
 from pywikibot import config
+from pywikibot.tools import UnicodeMixin
 
 
 def listify(x):
@@ -34,7 +35,7 @@ def listify(x):
     return x if isinstance(x, list) else [x]
 
 
-class QuerySet():
+class QuerySet(UnicodeMixin):
 
     """
     A QuerySet represents a set of queries or other query sets.
@@ -111,11 +112,11 @@ class QuerySet():
 
         return s
 
-    def __repr__(self):
+    def _repr(self):
         return u"QuerySet(%s)" % self
 
 
-class Query():
+class Query(UnicodeMixin):
 
     """
     A query is a single query for the WikidataQuery API.
@@ -233,7 +234,7 @@ class Query():
         """
         raise NotImplementedError
 
-    def __repr__(self):
+    def _repr(self):
         return u"Query(%s)" % self
 
 

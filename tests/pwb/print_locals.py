@@ -8,6 +8,6 @@ for k, v in sorted(locals().copy().items()):
     if k in ['__cached__', '__loader__', '__spec__']:
         continue
     if k == '__file__':
-        print("__file__: %r" % os.path.join('.', os.path.relpath(__file__)))
+        print(str('__file__: %r') % os.path.join('.', os.path.relpath(__file__)))
     else:
-        print("%r: %r" % (k, v))
+        print(str('%r: %r') % (k, v))

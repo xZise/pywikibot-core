@@ -187,7 +187,7 @@ if sys.platform == "win32":
                         try:
                             self._stream.flush()
                         except Exception as e:
-                            _complain("%s.flush: %r from %r"
+                            _complain(str('%s.flush: %r from %r')
                                       % (self.name, e, self._stream))
                             raise
 
@@ -210,14 +210,14 @@ if sys.platform == "win32":
                                                        min(remaining, 10000),
                                                        byref(n), None)
                                 if retval == 0 or n.value == 0:
-                                    raise IOError("WriteConsoleW returned %r, n.value = %r"
+                                    raise IOError(str('WriteConsoleW returned %r, n.value = %r')
                                                   % (retval, n.value))
                                 remaining -= n.value
                                 if remaining == 0:
                                     break
                                 text = text[n.value:]
                     except Exception as e:
-                        _complain("%s.write: %r" % (self.name, e))
+                        _complain(str('%s.write: %r') % (self.name, e))
                         raise
 
                 def writelines(self, lines):
@@ -225,7 +225,7 @@ if sys.platform == "win32":
                         for line in lines:
                             self.write(line)
                     except Exception as e:
-                        _complain("%s.writelines: %r" % (self.name, e))
+                        _complain(str('%s.writelines: %r') % (self.name, e))
                         raise
 
             if real_stdin:
@@ -245,7 +245,7 @@ if sys.platform == "win32":
                 stderr = UnicodeOutput(None, sys.stderr, old_stderr_fileno,
                                        '<Unicode redirected stderr>')
     except Exception as e:
-        _complain("exception %r while fixing up sys.stdout and sys.stderr" % (e,))
+        _complain(str('exception %r while fixing up sys.stdout and sys.stderr') % (e,))
 
     # While we're at it, let's unmangle the command-line arguments:
 

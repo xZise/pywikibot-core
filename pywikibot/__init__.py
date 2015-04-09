@@ -194,7 +194,7 @@ class Timestamp(datetime.datetime):
             return newdt
 
 
-class Coordinate(object):
+class Coordinate(UnicodeMixin):
 
     """
     Class for handling and storing Coordinates.
@@ -242,7 +242,7 @@ class Coordinate(object):
         else:
             self.site = site
 
-    def __repr__(self):
+    def _repr(self):
         string = 'Coordinate(%s, %s' % (self.lat, self.lon)
         if self.globe != 'earth':
             string += ', globe="%s"' % self.globe
@@ -322,7 +322,7 @@ class Coordinate(object):
         raise NotImplementedError
 
 
-class WbTime(object):
+class WbTime(UnicodeMixin):
 
     """A Wikibase time representation."""
 
@@ -448,7 +448,7 @@ class WbTime(object):
     def __eq__(self, other):
         return self.__dict__ == other.__dict__
 
-    def __repr__(self):
+    def _repr(self):
         return u"WbTime(year=%(year)d, month=%(month)d, day=%(day)d, " \
             u"hour=%(hour)d, minute=%(minute)d, second=%(second)d, " \
             u"precision=%(precision)d, before=%(before)d, after=%(after)d, " \
@@ -456,7 +456,7 @@ class WbTime(object):
             % self.__dict__
 
 
-class WbQuantity(object):
+class WbQuantity(UnicodeMixin):
 
     """A Wikibase quantity representation."""
 
@@ -517,7 +517,7 @@ class WbQuantity(object):
     def __eq__(self, other):
         return self.__dict__ == other.__dict__
 
-    def __repr__(self):
+    def _repr(self):
         return (u"WbQuantity(amount=%(amount)s, upperBound=%(upperBound)s, "
                 u"lowerBound=%(lowerBound)s, unit=%(unit)s)" % self.__dict__)
 

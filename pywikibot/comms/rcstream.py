@@ -19,11 +19,12 @@ else:
     from Queue import Queue, Empty
 
 from pywikibot.bot import debug, warning
+from pywikibot.tools import UnicodeMixin
 
 _logger = 'pywikibot.rcstream'
 
 
-class RcListenerThread(threading.Thread):
+class RcListenerThread(threading.Thread, UnicodeMixin):
 
     """
     Low-level RC Listener Thread, which reads the RC stream and pushes them to it's internal queue.
@@ -76,14 +77,14 @@ class RcListenerThread(threading.Thread):
         self.count = 0
 
         import socketIO_client
-        debug('Opening connection to %r' % self, _logger)
+        debug(str('Opening connection to %r') % self, _logger)
         self.client = socketIO_client.SocketIO(rchost, rcport)
 
         thread = self
 
         class RCListener(socketIO_client.BaseNamespace):
             def on_change(self, change):
-                debug('Received change %r' % change, _logger)
+                debug(str('Received change %r') % change, _logger)
                 if not thread.running:
                     debug('Thread in shutdown mode; ignoring change.', _logger)
                     return
@@ -91,7 +92,7 @@ class RcListenerThread(threading.Thread):
                 thread.count += 1
                 thread.queue.put(change)
                 if thread.queue.qsize() > thread.warn_queue_length:
-                    warning('%r queue length exceeded %i'
+                    warning(str('%r queue length exceeded %i')
                             % (thread,
                                thread.warn_queue_length),
                             _logger=_logger)
@@ -102,14 +103,14 @@ class RcListenerThread(threading.Thread):
                     return
 
             def on_connect(self):
-                debug('Connected to %r; subscribing to %s'
+                debug(str('Connected to %r; subscribing to %s')
                           % (thread, thread.wikihost),
                       _logger)
                 self.emit('subscribe', thread.wikihost)
                 debug('Subscribed to %s' % thread.wikihost, _logger)
 
             def on_reconnect(self):
-                debug('Reconnected to %r' % (thread,), _logger)
+                debug(str('Reconnected to %r') % (thread,), _logger)
                 self.on_connect()
 
         class GlobalListener(socketIO_client.BaseNamespace):
@@ -119,7 +120,7 @@ class RcListenerThread(threading.Thread):
         self.client.define(RCListener, rcpath)
         self.client.define(GlobalListener)
 
-    def __repr__(self):
+    def _repr(self):
         """Return representation."""
         return "<rcstream for socketio://%s@%s:%s%s>" % (
                self.wikihost, self.rchost, self.rcport, self.rcpath
@@ -130,9 +131,9 @@ class RcListenerThread(threading.Thread):
         self.running = True
         while self.running:
             self.client.wait(seconds=0.1)
-        debug('Shut down event loop for %r' % self, _logger)
+        debug(str('Shut down event loop for %r') % self, _logger)
         self.client.disconnect()
-        debug('Disconnected %r' % self, _logger)
+        debug(str('Disconnected %r') % self, _logger)
         self.queue.put(None)
 
     def stop(self):
@@ -180,7 +181,7 @@ def rc_listener(wikihost, rchost, rcport=80, rcpath='/rc', total=None):
         total=total
     )
 
-    debug('Starting rcstream thread %r' % rc_thread,
+    debug(str('Starting rcstream thread %r') % rc_thread,
           _logger)
     rc_thread.start()
 

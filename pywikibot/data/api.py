@@ -29,7 +29,9 @@ from warnings import warn
 
 import pywikibot
 from pywikibot import config, login
-from pywikibot.tools import MediaWikiVersion, deprecated, itergroup, ip
+from pywikibot.tools import (
+    MediaWikiVersion, deprecated, itergroup, ip, UnicodeMixin
+)
 from pywikibot.exceptions import (
     Server504Error, Server414Error, FatalServerError, Error
 )
@@ -43,7 +45,7 @@ if sys.version_info[0] > 2:
     # unless the fix is not backported to py3.x versions that should
     # instead support PWB.
     basestring = (str, )
-    from urllib.parse import urlencode, unquote
+    from urllib.parse import urlencode, unquote_to_bytes as unquote
     unicode = str
 
     from io import BytesIO
@@ -88,7 +90,7 @@ _logger = "data.api"
 lagpattern = re.compile(r"Waiting for [\d.]+: (?P<lag>\d+) seconds? lagged")
 
 
-class APIError(Error):
+class APIError(Error, UnicodeMixin):
 
     """The wiki site returned an error message."""
 
@@ -99,12 +101,12 @@ class APIError(Error):
         self.other = kwargs
         self.unicode = unicode(self.__str__())
 
-    def __repr__(self):
+    def _repr(self):
         """Return internal representation."""
         return '{name}("{code}", "{info}", {other})'.format(
             name=self.__class__.__name__, **self.__dict__)
 
-    def __str__(self):
+    def __unicode__(self):
         """Return a string representation."""
         return "%(code)s: %(info)s" % self.__dict__
 
@@ -1025,7 +1027,7 @@ class EnableSSLSiteWrapper(object):
         return 'https'
 
 
-class Request(MutableMapping):
+class Request(MutableMapping, UnicodeMixin):
 
     """A request to a Site's api.php interface.
 
@@ -1146,7 +1148,7 @@ class Request(MutableMapping):
 
             if ip.is_IP(self.site._userinfo['name']):
                 raise Error(u"API write action attempted as IP %r"
-                            % str(self.site._userinfo['name']))
+                            % self.site._userinfo['name'])
 
             if not self.site.user():
                 pywikibot.warning(
@@ -1382,15 +1384,17 @@ class Request(MutableMapping):
         """
         return urlencode(self._encoded_items())
 
-    def __str__(self):
+    def __unicode__(self):
         """Return a string representation."""
+        # It's using unquote_to_bytes in Python 3 which will, like in Python 2,
+        # return a bytes object instead of a str/unicode object
         return unquote(self.site.scriptpath() +
                        '/api.php?' +
-                       self._http_param_string())
+                       self._http_param_string()).decode(self.site.encoding())
 
-    def __repr__(self):
+    def _repr(self):
         """Return internal representation."""
-        return "%s.%s<%s->%r>" % (self.__class__.__module__, self.__class__.__name__, self.site, str(self))
+        return "%s.%s<%s->%s>" % (self.__class__.__module__, self.__class__.__name__, self.site, self)
 
     def _simulate(self, action):
         """Simulate action."""
@@ -1859,7 +1863,7 @@ class CachedRequest(Request):
             # file not found
             return False
         except Exception as e:
-            pywikibot.output("Could not load cache: %r" % e)
+            pywikibot.output(str('Could not load cache: %r') % e)
             return False
 
     def _write_cache(self, data):
@@ -2063,8 +2067,8 @@ class QueryGenerator(object):
                     self.limited_module = module
                     limited_modules.remove(module)
                     break
-            pywikibot.log('%s: multiple requested query modules support limits'
-                          "; using the first such module '%s' of %r"
+            pywikibot.log(str('%s: multiple requested query modules support '
+                              "limits; using the first such module '%s' of %r")
                           % (self.__class__.__name__, self.limited_module,
                              self.modules))
 

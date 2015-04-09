@@ -54,6 +54,7 @@ import pywikibot
 from pywikibot.data import api
 
 from pywikibot.site import APISite, DataSite, LoginStatus  # noqa
+from pywikibot.tools import UnicodeMixin
 from pywikibot.page import User  # noqa
 
 
@@ -62,7 +63,7 @@ class ParseError(Exception):
     """Error parsing."""
 
 
-class CacheEntry(api.CachedRequest):
+class CacheEntry(api.CachedRequest, UnicodeMixin):
 
     """A Request cache entry."""
 
@@ -71,10 +72,10 @@ class CacheEntry(api.CachedRequest):
         self.directory = directory
         self.filename = filename
 
-    def __str__(self):
+    def __unicode__(self):
         return self.filename
 
-    def __repr__(self):
+    def _repr(self):
         return self._cachefile_path()
 
     def _create_file_name(self):

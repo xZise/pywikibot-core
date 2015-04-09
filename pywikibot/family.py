@@ -28,7 +28,9 @@ from warnings import warn
 import pywikibot
 
 from pywikibot import config2 as config
-from pywikibot.tools import deprecated, deprecate_arg, issue_deprecation_warning
+from pywikibot.tools import (
+    deprecated, deprecate_arg, issue_deprecation_warning, UnicodeMixin
+)
 from pywikibot.exceptions import Error, UnknownFamily, FamilyMaintenanceWarning
 
 logger = logging.getLogger("pywiki.wiki.family")
@@ -38,7 +40,7 @@ NAME_CHARACTERS = string.ascii_letters + string.digits
 CODE_CHARACTERS = string.ascii_lowercase + string.digits + '-'
 
 
-class Family(object):
+class Family(UnicodeMixin):
 
     """Parent class for all wiki families."""
 
@@ -1237,10 +1239,10 @@ class Family(object):
     def __hash__(self):
         return hash(self.name)
 
-    def __str__(self):
+    def __unicode__(self):
         return self.name
 
-    def __repr__(self):
+    def _repr(self):
         return 'Family("%s")' % self.name
 
     def shared_image_repository(self, code):
