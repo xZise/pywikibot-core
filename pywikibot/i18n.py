@@ -34,6 +34,7 @@ import os
 import pkgutil
 
 from collections import defaultdict
+from warnings import warn
 
 from pywikibot import Error
 from .plural import plural_rules
@@ -458,7 +459,12 @@ def twtranslate(code, twtitle, parameters=None, fallback=True):
     fallback parameter must be True for i18n and False for L10N or testing
     purposes.
 
-    @param code: The language code
+    @param code: The language code which are the 'lang' and 'code' properties
+        when it's a site. Otherwise it's the last entry if it's a list and the
+        value itself otherwise. When a site is given it will first try to use
+        the language and not the code. If the code is specifically required it
+        should be directly supplied instead of a site.
+    @type code: BaseSite or list or str
     @param twtitle: The TranslateWiki string title, in <package>-<key> format
     @param parameters: For passing parameters.
     @param fallback: Try an alternate language code
@@ -471,16 +477,19 @@ def twtranslate(code, twtitle, parameters=None, fallback=True):
             'Read https://mediawiki.org/wiki/PWB/i18n'
             % (_messages_package_name, twtitle))
 
-    code_needed = False
+    use_code = False
     # If a site is given instead of a code, use its language
-    if hasattr(code, 'code'):
-        lang = code.code
-    # check whether we need the language code back
-    elif isinstance(code, list):
-        lang = code.pop()
-        code_needed = True
+    if isinstance(code, pywikibot.BaseSite):
+        langs = [code.lang]
+        if code.code not in langs:
+            langs += [code.code]
+            use_code = True
     else:
-        lang = code
+        # check whether we need the language code back
+        if isinstance(code, list):
+            lang = code[-1]
+        else:
+            lang = code
 
     # There are two possible failure modes: the translation dict might not have
     # the language altogether, or a specific key could be untranslated. Both
@@ -497,9 +506,11 @@ def twtranslate(code, twtitle, parameters=None, fallback=True):
             'No English translation has been defined for TranslateWiki key'
             ' %r\nIt can happen due to lack of i18n submodule or files. '
             'Read https://mediawiki.org/wiki/PWB/i18n' % twtitle)
-    # send the language code back via the given list
-    if code_needed:
-        code.append(lang)
+    # use_code is only True, when code.code is a new value and was added
+    if use_code and alt == code.code:
+        warn("There was no translation for the site's language but for the "
+             "site's code. If you want to use the site's code, apply the code "
+             "value and not the site itself.", DeprecationWarning, 2)
     if parameters:
         return trans % parameters
     else:
