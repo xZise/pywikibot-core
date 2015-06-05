@@ -5,10 +5,13 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 import codecs
 import os
+import re
 
 import pywikibot
 import pywikibot.textlib as textlib
@@ -161,6 +164,53 @@ class TestCategoryRearrangement(DefaultDrySiteTestCase):
         config.line_separator = sep
         self.assertEqual(old, new)
 
+    def test_in_place_replace(self):
+        """Test in-place category change is reversible."""
+        dummy = pywikibot.Category(self.site, 'foo')
+        dummy.sortKey = 'bah'
+
+        cats = textlib.getCategoryLinks(self.old, site=self.site)
+
+        # Sanity checking
+        temp = textlib.replaceCategoryInPlace(self.old, cats[0], dummy, site=self.site)
+        self.assertNotEqual(temp, self.old)
+        new = textlib.replaceCategoryInPlace(temp, dummy, cats[0], site=self.site)
+        self.assertEqual(self.old, new)
+
+        temp = textlib.replaceCategoryInPlace(self.old, cats[1], dummy, site=self.site)
+        self.assertNotEqual(temp, self.old)
+        new = textlib.replaceCategoryInPlace(temp, dummy, cats[1], site=self.site)
+        self.assertEqual(self.old, new)
+
+        temp = textlib.replaceCategoryInPlace(self.old, cats[2], dummy, site=self.site)
+        self.assertNotEqual(temp, self.old)
+        new = textlib.replaceCategoryInPlace(temp, dummy, cats[2], site=self.site)
+        self.assertEqual(self.old, new)
+
+        temp = textlib.replaceCategoryInPlace(self.old, cats[3], dummy, site=self.site)
+        self.assertNotEqual(temp, self.old)
+        new = textlib.replaceCategoryInPlace(temp, dummy, cats[3], site=self.site)
+        self.assertEqual(self.old, new)
+
+        new_cats = textlib.getCategoryLinks(new, site=self.site)
+        self.assertEqual(cats, new_cats)
+
+    def test_in_place_retain_sort(self):
+        """Test in-place category change does not alter the sortkey."""
+        # sort key should be retained when the new cat sortKey is None
+        dummy = pywikibot.Category(self.site, 'foo')
+        self.assertIsNone(dummy.sortKey)
+
+        cats = textlib.getCategoryLinks(self.old, site=self.site)
+
+        self.assertEqual(cats[3].sortKey, 'key')
+        orig_sortkey = cats[3].sortKey
+        temp = textlib.replaceCategoryInPlace(self.old, cats[3], dummy, site=self.site)
+        self.assertNotEqual(self.old, temp)
+        new_dummy = textlib.getCategoryLinks(temp, site=self.site)[3]
+        self.assertIsNotNone(new_dummy.sortKey)
+        self.assertEqual(orig_sortkey, new_dummy.sortKey)
+
 
 class TestTemplatesInCategory(TestCase):
 
@@ -291,6 +341,205 @@ class TestLocalDigits(TestCase):
         self.assertEqual(
             textlib.to_local_digits(
                 "299792458", 'km'), u"២៩៩៧៩២៤៥៨")
+
+
+class TestReplaceExcept(DefaultDrySiteTestCase):
+
+    """Test to verify the replacements with exceptions are done correctly."""
+
+    def test_no_replace(self):
+        self.assertEqual(textlib.replaceExcept('12345678', 'x', 'y', [],
+                                               site=self.site),
+                         '12345678')
+
+    def test_simple_replace(self):
+        self.assertEqual(textlib.replaceExcept('AxB', 'x', 'y', [],
+                                               site=self.site),
+                         'AyB')
+        self.assertEqual(textlib.replaceExcept('AxxB', 'x', 'y', [],
+                                               site=self.site),
+                         'AyyB')
+        self.assertEqual(textlib.replaceExcept('AxyxB', 'x', 'y', [],
+                                               site=self.site),
+                         'AyyyB')
+
+    def test_regex_replace(self):
+        self.assertEqual(textlib.replaceExcept('A123B', r'\d', r'x', [],
+                                               site=self.site),
+                         'AxxxB')
+        self.assertEqual(textlib.replaceExcept('A123B', r'\d+', r'x', [],
+                                               site=self.site),
+                         'AxB')
+        self.assertEqual(textlib.replaceExcept('A123B',
+                                               r'A(\d)2(\d)B', r'A\1x\2B', [],
+                                               site=self.site),
+                         'A1x3B')
+        self.assertEqual(
+            textlib.replaceExcept('', r'(a?)', r'\1B', [], site=self.site),
+            'B')
+        self.assertEqual(
+            textlib.replaceExcept('abc', r'x*', r'-', [], site=self.site),
+            '-a-b-c-')
+        # This is different from re.sub() as re.sub() doesn't allow None groups
+        self.assertEqual(
+            textlib.replaceExcept('', r'(a)?', r'\1\1', [], site=self.site),
+            '')
+        self.assertEqual(
+            textlib.replaceExcept('A123B', r'A(\d)2(\d)B', r'A\g<1>x\g<2>B',
+                                  [], site=self.site),
+            'A1x3B')
+        self.assertEqual(
+            textlib.replaceExcept('A123B', r'A(?P<a>\d)2(?P<b>\d)B',
+                                  r'A\g<a>x\g<b>B', [], site=self.site),
+            'A1x3B')
+        self.assertEqual(
+            textlib.replaceExcept('A123B', r'A(?P<a>\d)2(\d)B',
+                                  r'A\g<a>x\g<2>B', [], site=self.site),
+            'A1x3B')
+        self.assertEqual(
+            textlib.replaceExcept('A123B', r'A(?P<a>\d)2(\d)B',
+                                  r'A\g<a>x\2B', [], site=self.site),
+            'A1x3B')
+
+    def test_case_sensitive(self):
+        self.assertEqual(textlib.replaceExcept('AxB', 'x', 'y', [],
+                                               caseInsensitive=False,
+                                               site=self.site),
+                         'AyB')
+        self.assertEqual(textlib.replaceExcept('AxB', 'X', 'y', [],
+                                               caseInsensitive=False,
+                                               site=self.site),
+                         'AxB')
+        self.assertEqual(textlib.replaceExcept('AxB', 'x', 'y', [],
+                                               caseInsensitive=True,
+                                               site=self.site),
+                         'AyB')
+        self.assertEqual(textlib.replaceExcept('AxB', 'X', 'y', [],
+                                               caseInsensitive=True,
+                                               site=self.site),
+                         'AyB')
+
+    def test_replace_with_marker(self):
+        self.assertEqual(textlib.replaceExcept('AxyxB', 'x', 'y', [],
+                                               marker='.',
+                                               site=self.site),
+                         'Ayyy.B')
+        self.assertEqual(textlib.replaceExcept('AxyxB', '1', 'y', [],
+                                               marker='.',
+                                               site=self.site),
+                         'AxyxB.')
+
+    def test_overlapping_replace(self):
+        self.assertEqual(textlib.replaceExcept('1111', '11', '21', [],
+                                               allowoverlap=False,
+                                               site=self.site),
+                         '2121')
+        self.assertEqual(textlib.replaceExcept('1111', '11', '21', [],
+                                               allowoverlap=True,
+                                               site=self.site),
+                         '2221')
+
+    def test_replace_exception(self):
+        self.assertEqual(textlib.replaceExcept('123x123', '123', '000', [],
+                                               site=self.site),
+                         '000x000')
+        self.assertEqual(textlib.replaceExcept('123x123', '123', '000',
+                                               [re.compile(r'\w123')],
+                                               site=self.site),
+                         '000x123')
+
+    def test_replace_tags(self):
+        self.assertEqual(textlib.replaceExcept('A <!-- x --> B', 'x', 'y',
+                                               ['comment'], site=self.site),
+                         'A <!-- x --> B')
+        self.assertEqual(textlib.replaceExcept('\n==x==\n', 'x', 'y',
+                                               ['header'], site=self.site),
+                         '\n==x==\n')
+        self.assertEqual(textlib.replaceExcept('<pre>x</pre>', 'x', 'y',
+                                               ['pre'], site=self.site),
+                         '<pre>x</pre>')
+        self.assertEqual(textlib.replaceExcept('<source lang="xml">x</source>',
+                                               'x', 'y', ['source'],
+                                               site=self.site),
+                         '<source lang="xml">x</source>')
+        self.assertEqual(textlib.replaceExcept('<syntaxhighlight lang="xml">x</syntaxhighlight>',
+                                               'x', 'y', ['source'],
+                                               site=self.site),
+                         '<syntaxhighlight lang="xml">x</syntaxhighlight>')
+        self.assertEqual(textlib.replaceExcept('<ref>x</ref>', 'x', 'y',
+                                               ['ref'], site=self.site),
+                         '<ref>x</ref>')
+        self.assertEqual(textlib.replaceExcept('<ref name="x">A</ref>',
+                                               'x', 'y',
+                                               ['ref'], site=self.site),
+                         '<ref name="x">A</ref>')
+        self.assertEqual(textlib.replaceExcept(' xA ', 'x', 'y',
+                                               ['startspace'], site=self.site),
+                         ' xA ')
+        self.assertEqual(textlib.replaceExcept('<table>x</table>', 'x', 'y',
+                                               ['table'], site=self.site),
+                         '<table>x</table>')
+        self.assertEqual(textlib.replaceExcept('x [http://www.sample.com x]',
+                                               'x', 'y', ['hyperlink'],
+                                               site=self.site),
+                         'y [http://www.sample.com y]')
+        self.assertEqual(textlib.replaceExcept('x http://www.sample.com/x.html',
+                                               'x', 'y',
+                                               ['hyperlink'], site=self.site),
+                         'y http://www.sample.com/x.html')
+        self.assertEqual(textlib.replaceExcept('<gallery>x</gallery>',
+                                               'x', 'y', ['gallery'],
+                                               site=self.site),
+                         '<gallery>x</gallery>')
+        self.assertEqual(textlib.replaceExcept('[[x]]', 'x', 'y', ['link'],
+                                               site=self.site),
+                         '[[x]]')
+        self.assertEqual(textlib.replaceExcept('{{#property:p171}}', '1', '2',
+                                               ['property'], site=self.site),
+                         '{{#property:p171}}')
+        self.assertEqual(textlib.replaceExcept('{{#invoke:x}}', 'x', 'y',
+                                               ['invoke'], site=self.site),
+                         '{{#invoke:x}}')
+        for ns_name in self.site.namespaces[14]:
+            self.assertEqual(textlib.replaceExcept('[[%s:x]]' % ns_name,
+                                                   'x', 'y', ['category'],
+                                                   site=self.site),
+                             '[[%s:x]]' % ns_name)
+        for ns_name in self.site.namespaces[6]:
+            self.assertEqual(textlib.replaceExcept('[[%s:x]]' % ns_name,
+                                                   'x', 'y', ['file'],
+                                                   site=self.site),
+                             '[[%s:x]]' % ns_name)
+
+    def test_replace_tags_interwiki(self):
+        if 'es' not in self.site.family.langs or 'ey' in self.site.family.langs:
+            raise unittest.SkipTest('family %s doesnt have languages'
+                                    % self.site)
+
+        self.assertEqual(textlib.replaceExcept('[[es:s]]', 's', 't',
+                                               ['interwiki'], site=self.site),
+                         '[[es:s]]')  # "es" is a valid interwiki code
+        self.assertEqual(textlib.replaceExcept('[[ex:x]]', 'x', 'y',
+                                               ['interwiki'], site=self.site),
+                         '[[ey:y]]')  # "ex" is not a valid interwiki code
+
+    def test_replace_template(self):
+        template_sample = r'{{templatename | url= | accessdate={{Fecha|1993}} |atitle=The [[real title]] }}'
+        self.assertEqual(textlib.replaceExcept(template_sample, 'a', 'X',
+                                               ['template'], site=self.site),
+                         template_sample)
+
+    def test_replace_source_reference(self):
+        """Test replacing in text which contains back references."""
+        # Don't use a valid reference number in the original string, in case it
+        # tries to apply that as a reference.
+        self.assertEqual(textlib.replaceExcept(r'\42', r'^(.*)$', r'X\1X',
+                                               [], site=self.site),
+                         r'X\42X')
+        self.assertEqual(textlib.replaceExcept(r'\g<bar>', r'^(?P<foo>.*)$',
+                                               r'X\g<foo>X', [], site=self.site),
+                         r'X\g<bar>X')
+
 
 if __name__ == '__main__':
     try:

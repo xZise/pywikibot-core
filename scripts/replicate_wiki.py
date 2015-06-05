@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 # -*- coding: utf-8  -*-
 """
 This bot replicates pages in a wiki to a second wiki within one family.
@@ -41,20 +41,23 @@ destination_wiki  destination wiki(s)
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
 import sys
 
 import pywikibot
+
 from pywikibot import config, Page
+from pywikibot.tools import deprecated
 
 
+@deprecated('BaseSite.namespaces')
 def namespaces(site):
     """dict from namespace number to prefix."""
-    ns = dict((site.getNamespaceIndex(n), n) for n in site.namespaces())
-    ns[0] = ''
-    return ns
+    return dict((n.id, n.custom_name) for n in site.namespaces)
 
 
 def multiple_replace(text, word_dict):
@@ -86,9 +89,8 @@ class SyncSites:
         self.original.login()
 
         if options.namespace and 'help' in options.namespace:
-            nsd = namespaces(self.original)
-            for k in nsd:
-                pywikibot.output('%s %s' % (k, nsd[k]))
+            for namespace in self.original.namespaces.values():
+                pywikibot.output('%s %s' % (namespace.id, namespace.custom_name))
             sys.exit()
 
         self.sites = [pywikibot.Site(s, family) for s in sites]
@@ -189,18 +191,19 @@ class SyncSites:
         page1 = Page(self.original, pagename)
         txt1 = page1.text
 
-        for site in self.sites:
-            if self.options.dest_namespace:
-                prefix = namespaces(site)[int(self.options.dest_namespace)]
-                if prefix:
-                    prefix += ':'
-                new_pagename = prefix + page1.titleWithoutNamespace()
-                pywikibot.output("\nCross namespace, new title: %s"
-                                 % new_pagename)
-            else:
-                new_pagename = pagename
+        if self.options.dest_namespace:
+            dest_ns = int(self.options.dest_namespace)
+        else:
+            dest_ns = None
 
-            page2 = Page(site, new_pagename)
+        for site in self.sites:
+            if dest_ns is not None:
+                page2 = Page(site, page1.title(withNamespace=False), dest_ns)
+                pywikibot.output("\nCross namespace, new title: %s"
+                                 % page2.title())
+            else:
+                page2 = Page(site, pagename)
+
             if page2.exists():
                 txt2 = page2.text
             else:

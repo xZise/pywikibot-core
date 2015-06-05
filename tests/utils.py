@@ -5,30 +5,30 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
 __version__ = '$Id$'
 #
 import os
+import re
 import subprocess
 import sys
 import time
+import traceback
 
 from warnings import warn
 
+if sys.version_info[0] > 2:
+    import six
+
 import pywikibot
-from pywikibot.tools import SelfCallDict
+
+from pywikibot import config
 from pywikibot.site import Namespace
 from pywikibot.data.api import CachedRequest
 from pywikibot.data.api import Request as _original_Request
 
-from tests import aspects, _pwb_py
+from tests import _pwb_py
 from tests import unittest  # noqa
-
-BaseTestCase = aspects.TestCase
-NoSiteTestCase = aspects.TestCase
-SiteTestCase = aspects.TestCase
-CachedTestCase = aspects.TestCase
-PywikibotTestCase = aspects.TestCase
 
 
 class DrySiteNote(RuntimeWarning):
@@ -65,9 +65,17 @@ def allowed_failure(func):
     def wrapper(*args, **kwargs):
         try:
             func(*args, **kwargs)
+        except AssertionError:
+            tb = traceback.extract_tb(sys.exc_info()[2])
+            for depth, line in enumerate(tb):
+                if re.match('^assert[A-Z]', line[2]):
+                    break
+            tb = traceback.format_list(tb[:depth])
+            pywikibot.error('\n' + ''.join(tb)[:-1])  # remove \n at the end
+            raise unittest.SkipTest('Test is allowed to fail.')
         except Exception:
             pywikibot.exception(tb=True)
-            raise unittest.SkipTest()
+            raise unittest.SkipTest('Test is allowed to fail.')
     wrapper.__name__ = func.__name__
     return wrapper
 
@@ -83,6 +91,15 @@ def allowed_failure_if(expect):
         return allowed_failure
     else:
         return lambda orig: orig
+
+
+def add_metaclass(cls):
+    """Call six's add_metaclass with the site's __metaclass__ in Python 3."""
+    if sys.version_info[0] > 2:
+        return six.add_metaclass(cls.__metaclass__)(cls)
+    else:
+        assert(cls.__metaclass__)
+        return cls
 
 
 class DryParamInfo(dict):
@@ -191,7 +208,16 @@ class DrySite(pywikibot.site.APISite):
         self._paraminfo = DryParamInfo()
         self._siteinfo = DummySiteinfo({})
         self._siteinfo._cache['lang'] = (code, True)
-        self._namespaces = SelfCallDict(Namespace.builtin_namespaces())
+        self._siteinfo._cache['case'] = (
+            'case-sensitive' if self.family.name == 'wiktionary' else
+            'first-letter', True)
+        extensions = []
+        if self.family.name == 'wikisource':
+            extensions.append({'name': 'ProofreadPage'})
+        self._siteinfo._cache['extensions'] = (extensions, True)
+
+    def _build_namespaces(self):
+        return Namespace.builtin_namespaces(case=self.siteinfo['case'])
 
     def __repr__(self):
         """Override default so warnings and errors indicate test is dry."""
@@ -209,13 +235,6 @@ class DrySite(pywikibot.site.APISite):
         warn('%r returning version 1.24; override if unsuitable.'
              % self, DrySiteNote, stacklevel=2)
         return '1.24'
-
-    def case(self):
-        """Return case-sensitive if wiktionary."""
-        if self.family.name == 'wiktionary':
-            return 'case-sensitive'
-        else:
-            return 'first-letter'
 
     def image_repository(self):
         """Return Site object for image repository e.g. commons."""
@@ -236,19 +255,42 @@ class DryDataSite(DrySite, pywikibot.site.DataSite):
 
     """Dummy class to use instead of L{pywikibot.site.DataSite}."""
 
-    def __init__(self, code, fam, user, sysop):
-        """Constructor."""
-        super(DryDataSite, self).__init__(code, fam, user, sysop)
+    def _build_namespaces(self):
+        namespaces = super(DryDataSite, self)._build_namespaces()
+        namespaces[0].defaultcontentmodel = 'wikibase-item'
+        namespaces[120] = Namespace(id=120,
+                                    case='first-letter',
+                                    canonical_name='Property',
+                                    defaultcontentmodel='wikibase-property')
+        return namespaces
 
-        self._namespaces[0].defaultcontentmodel = 'wikibase-item'
 
-        self._namespaces.update(
-            {
-                120: Namespace(id=120,
-                               case='first-letter',
-                               canonical_name='Property',
-                               defaultcontentmodel='wikibase-property')
-            })
+class DryPage(pywikibot.Page):
+
+    """Dummy class that acts like a Page but avoids network activity."""
+
+    _pageid = 1
+    _disambig = False
+    _isredir = False
+
+    def isDisambig(self):
+        """Return disambig status stored in _disambig."""
+        return self._disambig
+
+
+class FakeLoginManager(pywikibot.data.api.LoginManager):
+
+    """Loads a fake password."""
+
+    @property
+    def password(self):
+        """Get the fake password."""
+        return 'foo'
+
+    @password.setter
+    def password(self, value):
+        """Ignore password changes."""
+        pass
 
 
 def execute(command, data_in=None, timeout=0, error=None):
@@ -258,22 +300,27 @@ def execute(command, data_in=None, timeout=0, error=None):
     @param command: executable to run and arguments to use
     @type command: list of unicode
     """
-    def decode(stream):
-        if sys.version_info[0] > 2:
-            return stream.decode(pywikibot.config.console_encoding)
-        else:
-            return stream
+    # Any environment variables added on Windows must be of type
+    # str() on Python 2.
     env = os.environ.copy()
+
+    # Prevent output by test package; e.g. 'max_retries reduced from x to y'
+    env[str('PYWIKIBOT_TEST_QUIET')] = str('1')
+
     # sys.path may have been modified by the test runner to load dependencies.
-    env['PYTHONPATH'] = ":".join(sys.path)
+    pythonpath = os.pathsep.join(sys.path)
+    if sys.platform == 'win32' and sys.version_info[0] < 3:
+        pythonpath = str(pythonpath)
+    env[str('PYTHONPATH')] = pythonpath
+    env[str('PYTHONIOENCODING')] = str(config.console_encoding)
+
     # LC_ALL is used by i18n.input as an alternative for userinterface_lang
     if pywikibot.config.userinterface_lang:
-        env['LC_ALL'] = pywikibot.config.userinterface_lang
+        env[str('LC_ALL')] = str(pywikibot.config.userinterface_lang)
+
     # Set EDITOR to an executable that ignores all arguments and does nothing.
-    if sys.platform == 'win32':
-        env['EDITOR'] = 'call'
-    else:
-        env['EDITOR'] = 'true'
+    env[str('EDITOR')] = str('call' if sys.platform == 'win32' else 'true')
+
     options = {
         'stdout': subprocess.PIPE,
         'stderr': subprocess.PIPE
@@ -281,12 +328,27 @@ def execute(command, data_in=None, timeout=0, error=None):
     if data_in is not None:
         options['stdin'] = subprocess.PIPE
 
-    p = subprocess.Popen(command, env=env, **options)
+    try:
+        p = subprocess.Popen(command, env=env, **options)
+    except TypeError:
+        # Generate a more informative error
+        if sys.platform == 'win32' and sys.version_info[0] < 3:
+            unicode_env = [(k, v) for k, v in os.environ.items()
+                           if not isinstance(k, str) or
+                           not isinstance(v, str)]
+            if unicode_env:
+                raise TypeError('os.environ must contain only str: %r'
+                                % unicode_env)
+            child_unicode_env = [(k, v) for k, v in env.items()
+                                 if not isinstance(k, str) or
+                                 not isinstance(v, str)]
+            if child_unicode_env:
+                raise TypeError('os.environ must contain only str: %r'
+                                % child_unicode_env)
+        raise
 
     if data_in is not None:
-        if sys.version_info[0] > 2:
-            data_in = data_in.encode(pywikibot.config.console_encoding)
-        p.stdin.write(data_in)
+        p.stdin.write(data_in.encode(config.console_encoding))
         p.stdin.flush()  # _communicate() otherwise has a broken pipe
 
     stderr_lines = b''
@@ -299,7 +361,7 @@ def execute(command, data_in=None, timeout=0, error=None):
         if error:
             line = p.stderr.readline()
             stderr_lines += line
-            if error in decode(line):
+            if error in line.decode(config.console_encoding):
                 break
         time.sleep(1)
         waited += 1
@@ -312,8 +374,8 @@ def execute(command, data_in=None, timeout=0, error=None):
 
     data_out = p.communicate()
     return {'exit_code': p.returncode,
-            'stdout': decode(data_out[0]),
-            'stderr': decode(stderr_lines + data_out[1])}
+            'stdout': data_out[0].decode(config.console_encoding),
+            'stderr': (stderr_lines + data_out[1]).decode(config.console_encoding)}
 
 
 def execute_pwb(args, data_in=None, timeout=0, error=None):
@@ -323,5 +385,9 @@ def execute_pwb(args, data_in=None, timeout=0, error=None):
     @param args: list of arguments for pwb.py
     @type args: list of unicode
     """
-    return execute(command=[sys.executable, _pwb_py] + args,
-                   data_in=data_in, timeout=timeout, error=error)
+    if sys.version_info < (2, 7, 9):
+        return execute(command=[sys.executable, '-W ignore:A true', _pwb_py] + args,
+                       data_in=data_in, timeout=timeout, error=error)
+    else:
+        return execute(command=[sys.executable, _pwb_py] + args,
+                       data_in=data_in, timeout=timeout, error=error)

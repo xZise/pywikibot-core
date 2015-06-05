@@ -34,10 +34,12 @@ bandwidth. Instead, use the -xml parameter, or use another way to generate
 a list of affected articles
 """
 #
-# (C) Pywikibot team, 2007-2014
+# (C) Pywikibot team, 2007-2015
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -532,6 +534,20 @@ class NoReferencesBot(Bot):
         * Returns : The modified pagetext
 
         """
+        # Do we have a malformed <reference> tag which could be repaired?
+
+        # Repair two opening tags or a opening and an empty tag
+        pattern = re.compile(r'< *references *>(.*?)'
+                             r'< */?\s*references */? *>', re.DOTALL)
+        if pattern.search(oldText):
+            pywikibot.output('Repairing references tag')
+            return re.sub(pattern, '<references>\1</references>', oldText)
+        # Repair single unclosed references tag
+        pattern = re.compile(r'< *references *>')
+        if pattern.search(oldText):
+            pywikibot.output('Repairing references tag')
+            return re.sub(pattern, '<references />', oldText)
+
         # Is there an existing section where we can add the references tag?
         for section in i18n.translate(self.site, referencesSections):
             sectionR = re.compile(r'\r?\n=+ *%s *=+ *\r?\n' % section)
@@ -546,7 +562,7 @@ class NoReferencesBot(Bot):
                         index = match.end()
                     else:
                         pywikibot.output(
-                            u'Adding references tag to existing %s section...\n'
+                            'Adding references tag to existing %s section...\n'
                             % section)
                         newText = (
                             oldText[:match.end()] + u'\n' +
@@ -661,7 +677,7 @@ class NoReferencesBot(Bot):
             if self.lacksReferences(text):
                 newText = self.addReferences(text)
                 try:
-                    self.userPut(page, page.text, newText, comment=self.comment)
+                    self.userPut(page, page.text, newText, summary=self.comment)
                 except pywikibot.EditConflict:
                     pywikibot.output(u'Skipping %s because of edit conflict'
                                      % page.title())

@@ -1,5 +1,5 @@
-Pywikibot Framework
-===================
+Pywikibot
+=========
 
 The Pywikibot framework is a Python library that interfaces with the
 `MediaWiki API <https://www.mediawiki.org/wiki/Special:MyLanguage/API:Main_page>`_
@@ -34,6 +34,13 @@ If you wish to write your own script it's very easy to get started:
     page = pywikibot.Page(site, 'Wikipedia:Sandbox')
     page.text = page.text.replace('foo', 'bar')
     page.save('Replacing "foo" with "bar"')  # Saves the page
+
+Required external programms
+---------------------------
+
+It may require the following programs to function properly:
+
+* `7za`: To extract 7z files
 
 Contributing
 ------------

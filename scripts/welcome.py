@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8  -*-
 u"""
 Script to welcome new users.
@@ -177,6 +178,8 @@ badword at all but can be used for some bad-nickname.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -622,7 +625,7 @@ class WelcomeBot(object):
 
             com = i18n.twtranslate(self.site, 'welcome-bad_username')
             if rep_text != '':
-                rep_page.put(text_get + rep_text, comment=com, force=True,
+                rep_page.put(text_get + rep_text, summary=com, force=True,
                              minorEdit=True)
                 showStatus(5)
                 pywikibot.output(u'Reported')
@@ -655,7 +658,8 @@ class WelcomeBot(object):
             showStatus()
             pywikibot.output(
                 'Log page is not exist, getting information for page creation')
-            text = i18n.translate(self.site, logpage_header)
+            text = i18n.translate(self.site, logpage_header,
+                                  fallback=i18n.DEFAULT_FALLBACK)
             text += u'\n!%s' % self.site.namespace(2)
             text += u'\n!%s' % str.capitalize(
                 self.site.mediawiki_message('contribslink'))

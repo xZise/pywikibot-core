@@ -5,22 +5,24 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 import os
 import sys
 import warnings
 
-__all__ = ('httplib2', '_cache_dir', 'TestRequest',
+__all__ = ('requests', '_cache_dir', 'TestRequest',
            'patch_request', 'unpatch_request')
 
 # Verify that the unit tests have a base working environment:
-# - httplib2 is mandatory
+# - requests is mandatory
 # - future is needed as a fallback for python 2.6,
 #   however if unavailable this will fail on use; see pywikibot/tools.py
 # - mwparserfromhell is optional, so is only imported in textlib_tests
 try:
-    import httplib2  # noqa
+    import requests  # noqa
 except ImportError as e:
     print("ImportError: %s" % e)
     sys.exit(1)
@@ -32,6 +34,7 @@ else:
     import unittest
 
 from pywikibot import config
+from pywikibot import i18n
 import pywikibot.data.api
 from pywikibot.data.api import Request as _original_Request
 from pywikibot.data.api import CachedRequest
@@ -90,6 +93,8 @@ script_test_modules = [
 disabled_test_modules = [
     'tests',  # tests of the tests package
 ]
+if not i18n.messages_available():
+    disabled_test_modules.append('l10n')
 
 disabled_tests = {
     'textlib': [
@@ -186,7 +191,8 @@ CachedRequest._get_cache_dir = classmethod(
 # overridden here to restrict retries to only 1, so developer builds fail more
 # frequently in code paths resulting from mishandled server problems.
 if config.max_retries > 2:
-    print('max_retries reduced from %d to 1 for tests' % config.max_retries)
+    if 'PYWIKIBOT_TEST_QUIET' not in os.environ:
+        print('tests: max_retries reduced from %d to 1' % config.max_retries)
     config.max_retries = 1
 
 cache_misses = 0

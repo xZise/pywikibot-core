@@ -75,15 +75,18 @@ To complete a move of a page, one can use:
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
-import re
 import codecs
+import itertools
+import re
 
 import pywikibot
 from pywikibot import editor as editarticle
-from pywikibot.tools import concat_options
+from pywikibot.tools import concat_options, first_lower, first_upper as firstcap
 from pywikibot import pagegenerators, config, i18n
 from pywikibot.bot import Bot, QuitKeyboardInterrupt
 
@@ -339,15 +342,11 @@ ignore_title = {
 }
 
 
-def firstcap(string):
-    return string[0].upper() + string[1:]
-
-
 def correctcap(link, text):
     # If text links to a page with title link uncapitalized, uncapitalize link,
     # otherwise capitalize it
     linkupper = link.title()
-    linklower = linkupper[0].lower() + linkupper[1:]
+    linklower = first_lower(linkupper)
     if "[[%s]]" % linklower in text or "[[%s|" % linklower in text:
         return linklower
     else:
@@ -580,7 +579,7 @@ class DisambiguationRobot(Bot):
                     redir_text = '#%s [[%s]]' \
                                  % (self.mysite.redirect(), target)
                     try:
-                        refPage.put_async(redir_text, comment=self.comment)
+                        refPage.put_async(redir_text, summary=self.comment)
                     except pywikibot.PageNotSaved as error:
                         pywikibot.output(u'Page not saved: %s' % error.args)
             else:
@@ -807,8 +806,7 @@ class DisambiguationRobot(Bot):
                         new_page_title = repPl.title()
                     else:
                         new_page_title = repPl.title()
-                        new_page_title = (new_page_title[0].lower() +
-                                          new_page_title[1:])
+                        new_page_title = first_lower(new_page_title)
                     if new_page_title not in new_targets:
                         new_targets.append(new_page_title)
                     if replaceit and trailing_chars:
@@ -846,7 +844,7 @@ class DisambiguationRobot(Bot):
                 self.setSummaryMessage(disambPage, new_targets, unlink_counter,
                                        dn)
                 try:
-                    refPage.put_async(text, comment=self.comment)
+                    refPage.put_async(text, summary=self.comment)
                 except pywikibot.LockedPage:
                     pywikibot.output(u'Page not saved: page is locked')
                 except pywikibot.PageNotSaved as error:
@@ -999,10 +997,7 @@ u"Page does not exist, using the first link in page %s."
                 ignore_title[self.mysite.family.name][self.mylang] = []
 
             ignore_title[self.mysite.family.name][self.mylang] += [
-                u'%s:' % ns
-                for namespace in self.mysite.namespaces()
-                for ns in self.mysite.namespaces[namespace]
-            ]
+                '%s:' % ns for ns in itertools.chain(self.mysite.namespaces)]
 
         for disambPage in self.generator:
             self.primaryIgnoreManager = PrimaryIgnoreManager(
@@ -1011,6 +1006,7 @@ u"Page does not exist, using the first link in page %s."
             if not self.findAlternatives(disambPage):
                 continue
 
+            pywikibot.output('\nAlternatives for %s' % disambPage)
             self.makeAlternativesUnique()
             # sort possible choices
             if config.sort_ignore_case:

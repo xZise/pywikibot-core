@@ -5,6 +5,8 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 
@@ -15,7 +17,9 @@ from datetime import datetime
 import re
 
 import pywikibot
+
 from pywikibot import config
+from pywikibot import async_request, page_put_queue
 from pywikibot.comms import http
 from pywikibot.tools import MediaWikiVersion
 from pywikibot.data import api
@@ -23,6 +27,7 @@ from pywikibot.data import api
 from tests.aspects import (
     unittest, TestCase, DeprecationTestCase,
     DefaultSiteTestCase,
+    DefaultDrySiteTestCase,
     WikimediaDefaultSiteTestCase,
     WikidataTestCase,
     DefaultWikidataClientTestCase,
@@ -37,7 +42,7 @@ if sys.version_info[0] > 2:
 
 class TestSiteObjectDeprecatedFunctions(DefaultSiteTestCase, DeprecationTestCase):
 
-    """Test cases for Site deprecated methods."""
+    """Test cases for Site deprecated methods on a live wiki."""
 
     cached = True
     user = True
@@ -65,6 +70,18 @@ class TestSiteObjectDeprecatedFunctions(DefaultSiteTestCase, DeprecationTestCase
             self.assertEqual(token, mysite.token(mainpage, ttype))
             self.assertDeprecation("pywikibot.site.APISite.token is deprecated"
                                    ", use the 'tokens' property instead.")
+
+
+class TestSiteDryDeprecatedFunctions(DefaultDrySiteTestCase, DeprecationTestCase):
+
+    """Test cases for Site deprecated methods without a user."""
+
+    def test_namespaces_callable(self):
+        """Test that namespaces is callable and returns itself."""
+        site = self.get_site()
+        self.assertIs(site.namespaces(), site.namespaces)
+        self.assertDeprecation('Calling the namespaces property is deprecated, '
+                               'use it directly instead.')
 
 
 class TestBaseSiteProperties(TestCase):
@@ -210,7 +227,7 @@ class TestSiteObject(DefaultSiteTestCase):
         }
         self.assertTrue(all(mysite.ns_index(b) == builtins[b]
                             for b in builtins))
-        ns = mysite.namespaces()
+        ns = mysite.namespaces
         self.assertIsInstance(ns, dict)
         self.assertTrue(all(x in ns for x in range(0, 16)))
         # built-in namespaces always present
@@ -369,6 +386,13 @@ class TestSiteGenerators(DefaultSiteTestCase):
         # TODO: There have been build failures because the following assertion
         # wasn't true. Bug: T92856
         # Example: https://travis-ci.org/wikimedia/pywikibot-core/jobs/54552081#L505
+        namespace_links = set(mysite.pagelinks(mainpage, namespaces=[0, 1]))
+        if namespace_links - links:
+            print('FAILURE wrt T92856:')
+            print(u'Sym. difference: "{0}"'.format(
+                  u'", "'.join(
+                  u'{0}@{1}'.format(link.namespace(), link.title(withNamespace=False))
+                  for link in namespace_links ^ links)))
         self.assertCountEqual(
             set(mysite.pagelinks(mainpage, namespaces=[0, 1])) - links, [])
         for target in mysite.preloadpages(mysite.pagelinks(mainpage,
@@ -595,11 +619,11 @@ class TestSiteGenerators(DefaultSiteTestCase):
         for impage in mysite.allimages(minsize=100, total=5):
             self.assertIsInstance(impage, pywikibot.FilePage)
             self.assertTrue(mysite.page_exists(impage))
-            self.assertGreaterEqual(impage._imageinfo["size"], 100)
+            self.assertGreaterEqual(impage.latest_file_info["size"], 100)
         for impage in mysite.allimages(maxsize=2000, total=5):
             self.assertIsInstance(impage, pywikibot.FilePage)
             self.assertTrue(mysite.page_exists(impage))
-            self.assertLessEqual(impage._imageinfo["size"], 2000)
+            self.assertLessEqual(impage.latest_file_info["size"], 2000)
 
     def test_newfiles(self):
         """Test the site.newfiles() method."""
@@ -1531,7 +1555,7 @@ class TestSiteExtensions(WikimediaDefaultSiteTestCase):
         self.assertTrue(mysite.has_extension('Disambiguator'))
 
         # test case-sensitivity
-        self.assertTrue(mysite.has_extension('disambiguator'))
+        self.assertFalse(mysite.has_extension('disambiguator'))
 
         self.assertFalse(mysite.has_extension('ThisExtensionDoesNotExist'))
 
@@ -1584,7 +1608,8 @@ class TestSiteInfo(WikimediaDefaultSiteTestCase):
         self.assertRegex(mysite.siteinfo['timezone'], "([A-Z]{3,4}|[A-Z][a-z]+/[A-Z][a-z]+)")
         self.assertIsInstance(datetime.strptime(mysite.siteinfo['time'], "%Y-%m-%dT%H:%M:%SZ"), datetime)
         self.assertGreater(mysite.siteinfo['maxuploadsize'], 0)
-        self.assertIn(mysite.case(), ["first-letter", "case-sensitive"])
+        self.assertIn(mysite.siteinfo['case'], ["first-letter", "case-sensitive"])
+        self.assertEqual(mysite.case(), mysite.siteinfo['case'])
         self.assertEqual(re.findall("\$1", mysite.siteinfo['articlepath']), ["$1"])
 
         def entered_loop(iterable):
@@ -1612,6 +1637,18 @@ class TestSiteInfo(WikimediaDefaultSiteTestCase):
         self.assertFalse(entered_loop(mysite.siteinfo.get(not_exists).items()))
         self.assertFalse(entered_loop(mysite.siteinfo.get(not_exists).values()))
         self.assertFalse(entered_loop(mysite.siteinfo.get(not_exists).keys()))
+
+
+class TestSiteinfoAsync(DefaultSiteTestCase):
+
+    """Test asynchronous siteinfo fetch."""
+
+    def test_async_request(self):
+        self.assertTrue(page_put_queue.empty())
+        self.assertTrue('statistics' not in self.site.siteinfo)
+        async_request(self.site.siteinfo.get, 'statistics')
+        page_put_queue.join()
+        self.assertIn('statistics', self.site.siteinfo)
 
 
 class TestSiteLoadRevisions(TestCase):
@@ -1797,7 +1834,7 @@ class TestNonEnglishWikipediaSite(TestCase):
     def testNamespaceAliases(self):
         site = self.get_site()
 
-        namespaces = site.namespaces()
+        namespaces = site.namespaces
         image_namespace = namespaces[6]
         self.assertEqual(image_namespace.custom_name, 'Fil')
         self.assertEqual(image_namespace.canonical_name, 'File')
@@ -2435,6 +2472,46 @@ class TestNonMWAPISite(TestCase):
         site = pywikibot.site.NonMWAPISite(url)
         with self.assertRaises(NotImplementedError):
             site.attr
+
+
+class TestSiteProofreadinfo(DefaultSiteTestCase):
+
+    """Test proofreadinfo information."""
+
+    sites = {
+        'en.ws': {
+            'family': 'wikisource',
+            'code': 'en',
+        },
+        'en.wp': {
+            'family': 'wikipedia',
+            'code': 'en',
+        },
+    }
+
+    cached = True
+
+    def test_cache_proofreadinfo_on_site_with_ProofreadPage(self):
+        """Test Site._cache_proofreadinfo()."""
+        site = self.get_site('en.ws')
+        ql_res = {0: u'Without text', 1: u'Not proofread', 2: u'Problematic',
+                  3: u'Proofread', 4: u'Validated'}
+
+        site._cache_proofreadinfo()
+        self.assertEqual(site.namespaces[106], site.proofread_index_ns)
+        self.assertEqual(site.namespaces[104], site.proofread_page_ns)
+        self.assertEqual(site.proofread_levels, ql_res)
+        self.assertEqual(site.namespaces[106], site.proofread_index_ns)
+        del site._proofread_page_ns  # Check that property reloads.
+        self.assertEqual(site.namespaces[104], site.proofread_page_ns)
+
+    def test_cache_proofreadinfo_on_site_without_ProofreadPage(self):
+        """Test Site._cache_proofreadinfo()."""
+        site = self.get_site('en.wp')
+        self.assertRaises(pywikibot.UnknownExtension, site._cache_proofreadinfo)
+        self.assertRaises(pywikibot.UnknownExtension, lambda x: x.proofread_index_ns, site)
+        self.assertRaises(pywikibot.UnknownExtension, lambda x: x.proofread_page_ns, site)
+        self.assertRaises(pywikibot.UnknownExtension, lambda x: x.proofread_levels, site)
 
 
 if __name__ == '__main__':

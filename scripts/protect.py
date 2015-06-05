@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
 This script can be used to protect and unprotect pages en masse.
@@ -39,7 +40,6 @@ Protect everything in the category 'To protect' prompting.
 Unprotect all pages listed in text file 'unprotect.txt' without prompting.
     python protect.py -file:unprotect.txt -unprotect -always
 """
-
 #
 # Written by https://it.wikisource.org/wiki/Utente:Qualc1
 # Created by modifying delete.py
@@ -48,6 +48,8 @@ Unprotect all pages listed in text file 'unprotect.txt' without prompting.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -106,10 +108,10 @@ class ProtectionRobot(Bot):
 
 
 def check_protection_level(operation, level, levels, default=None):
-    """Check if the protection level is valid or asks if necessary.
+    """Check if the protection level is valid or ask if necessary.
 
-    @return a valid protection level
-    @rtype string
+    @return: a valid protection level
+    @rtype: string
     """
     if level not in levels:
         first_char = []

@@ -1,6 +1,5 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
-
 """
 This script reports and fixes invalid ISBN numbers.
 
@@ -40,12 +39,17 @@ Furthermore, the following command line parameters are supported:
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
 import re
+
+from functools import partial
+
 import pywikibot
-from pywikibot import i18n, pagegenerators, Bot, WikidataBot
+from pywikibot import i18n, pagegenerators, textlib, Bot, WikidataBot
 
 try:
     import stdnum.isbn
@@ -1207,7 +1211,7 @@ class ISBN:
         # Determine the publisher
         for (start, end) in publisherRanges:
             length = len(start)  # NOTE: start and end always have equal length
-            if rest[:length] > start and rest[:length] <= end:
+            if rest[:length] >= start and rest[:length] <= end:
                 result += rest[:length] + '-'
                 rest = rest[length:]
                 break
@@ -1353,11 +1357,11 @@ def is_valid(isbn):
         try:
             stdnum.isbn.validate(isbn)
         except stdnum.isbn.InvalidFormat as e:
-            raise InvalidIsbnException(e)
+            raise InvalidIsbnException(str(e))
         except stdnum.isbn.InvalidChecksum as e:
-            raise InvalidIsbnException(e)
+            raise InvalidIsbnException(str(e))
         except stdnum.isbn.InvalidLength as e:
-            raise InvalidIsbnException(e)
+            raise InvalidIsbnException(str(e))
         return True
 
     try:
@@ -1369,10 +1373,7 @@ def is_valid(isbn):
             raise InvalidIsbnException('Invalid ISBN found')
         return True
 
-    try:
-        getIsbn(isbn)
-    except InvalidIsbnException as e:
-        raise InvalidIsbnException(e)
+    getIsbn(isbn)
     return True
 
 
@@ -1381,14 +1382,15 @@ def _hyphenateIsbnNumber(match):
     isbn = match.group('code')
     isbn = isbn.upper()
     try:
+        is_valid(isbn)
+    except InvalidIsbnException:
+        return isbn
+
+    try:
         stdnum.isbn
     except NameError:
         pass
     else:
-        try:
-            is_valid(isbn)
-        except InvalidIsbnException:
-            return isbn
         i = stdnum.isbn.format(isbn)
         return i
 
@@ -1398,28 +1400,19 @@ def _hyphenateIsbnNumber(match):
         pass
     else:
         try:
-            is_valid(isbn)
             i = isbn_hyphenate.hyphenate(isbn)
-        except (InvalidIsbnException, isbn_hyphenate.IsbnMalformedError,
+        except (isbn_hyphenate.IsbnMalformedError,
                 isbn_hyphenate.IsbnUnableToHyphenateError):
             return isbn
         return i
 
-    try:
-        is_valid(isbn)
-    except InvalidIsbnException:
-        # don't change
-        return isbn
     i = getIsbn(isbn)
     i.format()
     return i.code
 
 
-def hyphenateIsbnNumbers(text):
-    """Helper function to hyphenate an ISBN."""
-    isbnR = re.compile(r'(?<=ISBN )(?P<code>[\d\-]+[\dXx])')
-    text = isbnR.sub(_hyphenateIsbnNumber, text)
-    return text
+hyphenateIsbnNumbers = partial(textlib.reformat_ISBNs,
+                               match_func=_hyphenateIsbnNumber)
 
 
 def _isbn10toIsbn13(match):
@@ -1505,7 +1498,7 @@ class IsbnBot(Bot):
             if self.getOption('format'):
                 new_text = self.isbnR.sub(_hyphenateIsbnNumber, new_text)
             try:
-                self.userPut(page, page.text, new_text, comment=self.comment)
+                self.userPut(page, page.text, new_text, summary=self.comment)
             except pywikibot.EditConflict:
                 pywikibot.output(u'Skipping %s because of edit conflict'
                                  % page.title())

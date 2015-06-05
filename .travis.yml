@@ -1,57 +1,55 @@
 # See tests/README.rst for instructions for using travis with developer builds.
-
 language: python
+
+sudo: false
 
 python:
   - '2.7'
   - '3.3'
+  - '3.4'
   - '2.6'
 
-before_install:
-  - if [[ "$PYSETUP_TEST_EXTRAS" == "1" ]]; then sudo apt-get update -qq; fi
-  - if [[ "$PYSETUP_TEST_EXTRAS" == "1" ]]; then sudo apt-get install -y liblua5.1-dev; fi
+# OSX builds are not yet available
+os:
+  - linux
+  - osx
+
+addons:
+  apt:
+    packages:
+      - graphviz
+      - liblua5.1-0-dev
 
 install:
   - if [[ "$SITE_ONLY" == '1' ]]; then export USE_NOSE=1; fi
   - if [[ $TRAVIS_PYTHON_VERSION == '2.6' ]]; then pip install unittest2==0.8.0; fi
   - pip install six
   - export GITHUB_USER=`echo $TRAVIS_REPO_SLUG | cut -d '/' -f 1`
-  - mkdir ~/.pywikibot
   - mkdir ~/.python-eggs
   - chmod 700 ~/.python-eggs
 
-  - touch ~/.pywikibot/user-config.py
-  - echo "import os" >> ~/.pywikibot/user-config.py
-  - echo "mylang = '$LANGUAGE'" >> ~/.pywikibot/user-config.py
-  - echo "family = '$FAMILY'" >> ~/.pywikibot/user-config.py
+  - pip install requests
 
-  - echo "password_file = os.path.expanduser('~/.pywikibot/passwordfile')" >> ~/.pywikibot/user-config.py
-  - touch ~/.pywikibot/passwordfile
-
-  - echo "max_retries = 2" >> ~/.pywikibot/user-config.py
-  - echo "maximum_GET_length = 5000" >> ~/.pywikibot/user-config.py
-  - echo "console_encoding = 'utf8'" >> ~/.pywikibot/user-config.py
-
-  - if [[ "$GITHUB_USER" == "wikimedia" ]]; then
-      PYWIKIBOT2_USERNAME="Pywikibot-test" ;
-    else
+  - if [[ "$GITHUB_USER" != "wikimedia" ]]; then
       export PYWIKIBOT2_TEST_WRITE_FAIL=1 ;
     fi
 
+  - mkdir ~/.pywikibot
+  - python -W error::UserWarning -m generate_user_files -dir:~/.pywikibot/ -family:$FAMILY -lang:$LANGUAGE -v -user:"$PYWIKIBOT2_USERNAME"
+
   - if [[ -n "$USER_PASSWORD" && -n "$PYWIKIBOT2_USERNAME" ]]; then
-      echo "usernames['$FAMILY']['$LANGUAGE'] = '$PYWIKIBOT2_USERNAME'" >> ~/.pywikibot/user-config.py ;
       echo "usernames['wikipedia']['en'] = '$PYWIKIBOT2_USERNAME'" >> ~/.pywikibot/user-config.py ;
       echo "usernames['wikipedia']['test'] = '$PYWIKIBOT2_USERNAME'" >> ~/.pywikibot/user-config.py ;
       echo "usernames['wikidata']['test'] = '$PYWIKIBOT2_USERNAME'" >> ~/.pywikibot/user-config.py ;
       echo "usernames['commons']['commons'] = '$PYWIKIBOT2_USERNAME'" >> ~/.pywikibot/user-config.py ;
       echo "('$PYWIKIBOT2_USERNAME', '$USER_PASSWORD')" > ~/.pywikibot/passwordfile ;
+      echo "import os" >> ~/.pywikibot/user-config.py ;
+      echo "password_file = os.path.expanduser('~/.pywikibot/passwordfile')" >> ~/.pywikibot/user-config.py ;
     fi
 
-  - if [[ "$EXTERNALS_HTTPLIB2" == "1" ]]; then
-      (cd externals/httplib2 && python setup.py install) ;
-    else
-      rm -rf externals/httplib2 ;
-    fi
+  - echo "max_retries = 2" >> ~/.pywikibot/user-config.py
+  - echo "maximum_GET_length = 5000" >> ~/.pywikibot/user-config.py
+  - echo "console_encoding = 'utf8'" >> ~/.pywikibot/user-config.py
 
   - python -c "import setuptools; print(setuptools.__version__)"
 
@@ -59,9 +57,9 @@ script:
   - if [[ "$USE_NOSE" == "1" ]]; then
       if [[ "$SITE_ONLY" == "1" ]]; then
         echo "Running site tests only code ${LANGUAGE} on family ${FAMILY}" ;
-        python setup.py nosetests --tests tests -v -a "family=$FAMILY,code=$LANGUAGE" ;
+        python setup.py nosetests --tests tests --verbosity=2 -a "family=$FAMILY,code=$LANGUAGE" ;
       else
-        python setup.py nosetests --tests tests -v ;
+        python setup.py nosetests --tests tests --verbosity=2 ;
       fi ;
     else
       python setup.py test ;
@@ -74,11 +72,23 @@ env:
     # the github repository 'wikimedia/pywikibot-core'.
     # See http://docs.travis-ci.com/user/encryption-keys/ for more information.
     - secure: kofInMlisiTBt9o/Ustc/vySlkKfxGzGCX2LwA1D2waym8sDTS0o5gMJ5LsrT/BUKwZbe1vLozPHqZrrkQvsdTml+DpZuotzdILs0m0f3BUoexEC6OON5IDljuxFyETrD1Ug44ih5Mc4lVFOdTcBzg501ZmswGwQrBvg/OyEFfE=
+
   matrix:
-    - LANGUAGE=en FAMILY=wikipedia EXTERNALS_HTTPLIB2=1
-    - LANGUAGE=ar FAMILY=wikipedia PYSETUP_TEST_EXTRAS=1
-    - LANGUAGE=test FAMILY=wikidata SITE_ONLY=1
-    - LANGUAGE=fr FAMILY=wiktionary SITE_ONLY=1 EXTERNALS_HTTPLIB2=1
+    - LANGUAGE=en FAMILY=wikipedia PYWIKIBOT2_TEST_PROD_ONLY=1
+    - LANGUAGE=fr FAMILY=wiktionary PYSETUP_TEST_EXTRAS=1 PYWIKIBOT2_TEST_PROD_ONLY=1 PYWIKIBOT2_TEST_NO_RC=1
+
+matrix:
+  include:
+    - python: '2.7'
+      env: LANGUAGE=he FAMILY=wikivoyage SITE_ONLY=1
+    - python: '3.3'
+      env: LANGUAGE=zh FAMILY=wikisource SITE_ONLY=1
+    - python: '3.4'
+      env: LANGUAGE=test FAMILY=wikidata SITE_ONLY=1
+    - python: 'nightly'
+      env: LANGUAGE=ar FAMILY=wiktionary PYWIKIBOT2_TEST_NO_RC=1
+    - python: '2.6'
+      env: LANGUAGE=wikidata FAMILY=wikidata SITE_ONLY=1
 
 notifications:
   email:

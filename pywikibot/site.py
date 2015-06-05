@@ -10,6 +10,8 @@ groups of wikis on the same topic in different languages.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -32,7 +34,7 @@ import pywikibot.family
 from pywikibot.tools import (
     itergroup, UnicodeMixin, ComparableMixin, SelfCallDict, SelfCallString,
     deprecated, deprecate_arg, deprecated_args, remove_last_args,
-    redirect_func, manage_wrapping, MediaWikiVersion, normalize_username,
+    redirect_func, manage_wrapping, MediaWikiVersion, first_upper, normalize_username,
 )
 from pywikibot.tools.ip import is_IP
 from pywikibot.throttle import Throttle
@@ -52,7 +54,7 @@ from pywikibot.exceptions import (
     LockedNoPage,
     NoPage,
     UnknownSite,
-    SiteDefinitionError,
+    UnknownExtension,
     FamilyMaintenanceWarning,
     NoUsername,
     SpamfilterError,
@@ -366,10 +368,22 @@ class Namespace(Iterable, ComparableMixin, UnicodeMixin):
                % (self.__class__.__name__, self.id, self.custom_name,
                   self.canonical_name, self.aliases, kwargs)
 
+    @staticmethod
+    def default_case(id, default_case=None):
+        """Return the default fixed case value for the namespace ID."""
+        # https://www.mediawiki.org/wiki/Manual:$wgCapitalLinkOverrides#Warning
+        if id > 0 and id % 2 == 1:  # the talk ns has the non-talk ns case
+            id -= 1
+        if id in (-1, 2, 8):
+            return 'first-letter'
+        else:
+            return default_case
+
     @classmethod
-    def builtin_namespaces(cls, use_image_name=False):
+    def builtin_namespaces(cls, use_image_name=False, case='first-letter'):
         """Return a dict of the builtin namespaces."""
-        return dict((i, cls(i, use_image_name=use_image_name, case='first-letter'))
+        return dict((i, cls(i, use_image_name=use_image_name,
+                            case=cls.default_case(i, case)))
                      for i in range(-2, 16))
 
     @staticmethod
@@ -475,6 +489,14 @@ class Namespace(Iterable, ComparableMixin, UnicodeMixin):
                                         if ns is None]))
 
         return result
+
+
+# This class can be removed after self-callability has been removed
+class _NamespacesDict(SelfCallDict):
+
+    """A wrapper to add a deprecation message when called."""
+
+    _own_desc = 'the namespaces property'
 
 
 class BaseSite(ComparableMixin):
@@ -624,6 +646,9 @@ class BaseSite(ComparableMixin):
         del new['_pagemutex']
         if '_throttle' in new:
             del new['_throttle']
+        # site cache contains exception information, which cant be pickled
+        if '_iw_sites' in new:
+            del new['_iw_sites']
         return new
 
     def __setstate__(self, attrs):
@@ -677,9 +702,9 @@ class BaseSite(ComparableMixin):
 
     def validLanguageLinks(self):
         """Return list of language codes that can be used in interwiki links."""
-        nsnames = [name for name in self.namespaces().values()]
+        nsnames = [name for name in self.namespaces.values()]
         return [lang for lang in self.languages()
-                if lang[:1].upper() + lang[1:] not in nsnames]
+                if first_upper(lang) not in nsnames]
 
     def _cache_interwikimap(self, force=False):
         """Cache the interwikimap with usable site instances."""
@@ -689,10 +714,10 @@ class BaseSite(ComparableMixin):
             self._iw_sites = {}
             for iw in self.siteinfo['interwikimap']:
                 try:
-                    site = (pywikibot.Site(url=iw['url']), 'local' in iw)
-                except Error:
-                    site = (None, False)
-                self._iw_sites[iw['prefix']] = site
+                    site = pywikibot.Site(url=iw['url'])
+                except Exception as e:
+                    site = e
+                self._iw_sites[iw['prefix']] = (site, 'local' in iw)
 
     def interwiki(self, prefix):
         """
@@ -705,11 +730,13 @@ class BaseSite(ComparableMixin):
         self._cache_interwikimap()
         if prefix in self._iw_sites:
             site = self._iw_sites[prefix]
-            if site[0]:
+            if isinstance(site[0], BaseSite):
                 return site[0]
+            elif isinstance(site[0], Exception):
+                raise site[0]
             else:
-                raise SiteDefinitionError(
-                    u"No family/site found for prefix '{0}'".format(prefix))
+                raise TypeError('_iw_sites[%s] is wrong type: %s'
+                                % (prefix, type(site[0])))
         else:
             raise KeyError(u"'{0}' is not an interwiki prefix.".format(prefix))
 
@@ -767,13 +794,16 @@ class BaseSite(ComparableMixin):
     getNamespaceIndex = redirect_func(ns_index, old_name='getNamespaceIndex',
                                       class_name='BaseSite')
 
+    def _build_namespaces(self):
+        """Create default namespaces."""
+        use_image_name = MediaWikiVersion(self.version()) < MediaWikiVersion("1.14")
+        return Namespace.builtin_namespaces(use_image_name)
+
     @property
     def namespaces(self):
         """Return dict of valid namespaces on this wiki."""
         if not hasattr(self, '_namespaces'):
-            use_image_name = MediaWikiVersion(self.version()) < MediaWikiVersion("1.14")
-            self._namespaces = SelfCallDict(
-                Namespace.builtin_namespaces(use_image_name))
+            self._namespaces = _NamespacesDict(self._build_namespaces())
         return self._namespaces
 
     def ns_normalize(self, value):
@@ -926,8 +956,8 @@ class BaseSite(ComparableMixin):
         # If the namespace has a case definition it's overriding the site's
         # case definition
         if ns1_obj.case == 'first-letter':
-            name1 = name1[:1].upper() + name1[1:]
-            name2 = name2[:1].upper() + name2[1:]
+            name1 = first_upper(name1)
+            name2 = first_upper(name2)
         return name1 == name2
 
     # namespace shortcuts for backwards-compatibility
@@ -1092,6 +1122,31 @@ def need_version(version):
     return decorator
 
 
+def need_extension(extension):
+    """Decorator to require a certain MediaWiki extension.
+
+    @param extension: the MediaWiki extension required
+    @type extension: unicode
+    @return: a decorator to make sure the requirement is satisfied when
+        the decorated function is called.
+    """
+    def decorator(fn):
+        def callee(self, *args, **kwargs):
+            if not self.has_extension(extension):
+                raise UnknownExtension(
+                    'Method "%s" is not implemented without the extension %s'
+                    % (fn.__name__, extension))
+            return fn(self, *args, **kwargs)
+
+        if not __debug__:
+            return fn
+
+        manage_wrapping(callee, fn)
+
+        return callee
+    return decorator
+
+
 class Siteinfo(Container):
 
     """
@@ -1226,7 +1281,8 @@ class Siteinfo(Container):
         elif not cache_date:  # default values are always expired
             return True
         else:
-            return cache_date + expire >= datetime.datetime.utcnow()
+            # cached date + expiry are in the past if it's expired
+            return cache_date + expire < datetime.datetime.utcnow()
 
     def _get_general(self, key, expiry):
         """
@@ -1742,22 +1798,29 @@ class APISite(BaseSite):
     globaluserinfo = property(fget=getglobaluserinfo, doc=getuserinfo.__doc__)
 
     def is_blocked(self, sysop=False):
-        """Return true if and only if user is blocked.
+        """
+        Return True when logged in user is blocked.
+
+        To check whether a user can perform an action,
+        the method has_right should be used.
 
         @param sysop: If true, log in to sysop account (if available)
-
+        @type sysop: bool
+        @rtype: bool
         """
         if not self.logged_in(sysop):
             self.login(sysop)
         return 'blockinfo' in self._userinfo
 
-    @deprecated('is_blocked()')
-    def isBlocked(self, sysop=False):
-        """DEPRECATED."""
-        return self.is_blocked(sysop)
-
+    @deprecated('has_right() or is_blocked()')
     def checkBlocks(self, sysop=False):
-        """Check if the user is blocked, and raise an exception if so."""
+        """
+        Raise an exception when the user is blocked. DEPRECATED.
+
+        @param sysop: If true, log in to sysop account (if available)
+        @type sysop: bool
+        @raises UserBlocked: The logged in user/sysop account is blocked.
+        """
         if self.is_blocked(sysop):
             # User blocked
             raise UserBlocked('User is blocked in site %s' % self)
@@ -1793,7 +1856,7 @@ class APISite(BaseSite):
             self._useroptions['_name'] = (
                 None if 'anon' in uidata['query']['userinfo'] else
                 uidata['query']['userinfo']['name'])
-        return set(ns for ns in self.namespaces().values() if ns.id >= 0 and
+        return set(ns for ns in self.namespaces.values() if ns.id >= 0 and
                    self._useroptions['searchNs{0}'.format(ns.id)] in ['1', True])
 
     def assert_valid_iter_params(self, msg_prefix, start, end, reverse):
@@ -1821,11 +1884,6 @@ class APISite(BaseSite):
             self.login(sysop)
         return right.lower() in self._userinfo['rights']
 
-    @deprecated("Site.has_right()")
-    def isAllowed(self, right, sysop=False):
-        """DEPRECATED."""
-        return self.has_right(right, sysop)
-
     def has_group(self, group, sysop=False):
         """Return true if and only if the user is a member of specified group.
 
@@ -1843,38 +1901,38 @@ class APISite(BaseSite):
             self.login(sysop)
         return 'hasmsg' in self._userinfo
 
+    @need_extension('Echo')
     def notifications(self, **kwargs):
         """Yield Notification objects from the Echo extension."""
-        if self.has_extension('Echo'):
-            params = dict(site=self, action='query',
-                          meta='notifications',
-                          notprop='list', notformat='text')
+        params = dict(site=self, action='query',
+                      meta='notifications',
+                      notprop='list', notformat='text')
 
-            for key in kwargs:
-                params['not' + key] = kwargs[key]
+        for key in kwargs:
+            params['not' + key] = kwargs[key]
 
-            data = api.Request(**params).submit()
-            for notif in data['query']['notifications']['list'].values():
-                yield Notification.fromJSON(self, notif)
+        data = api.Request(**params).submit()
+        for notif in data['query']['notifications']['list'].values():
+            yield Notification.fromJSON(self, notif)
 
+    @need_extension('Echo')
     def notifications_mark_read(self, **kwargs):
         """Mark selected notifications as read.
 
         @return: whether the action was successful
         @rtype: bool
         """
-        if self.has_extension('Echo'):
-            # TODO: ensure that the 'echomarkread' action
-            # is supported by the site
-            req = api.Request(site=self,
-                              action='echomarkread',
-                              token=self.tokens['edit'],
-                              **kwargs)
-            data = req.submit()
-            try:
-                return data['query']['echomarkread']['result'] == 'success'
-            except KeyError:
-                return False
+        # TODO: ensure that the 'echomarkread' action
+        # is supported by the site
+        req = api.Request(site=self,
+                          action='echomarkread',
+                          token=self.tokens['edit'],
+                          **kwargs)
+        data = req.submit()
+        try:
+            return data['query']['echomarkread']['result'] == 'success'
+        except KeyError:
+            return False
 
     def mediawiki_messages(self, keys):
         """Fetch the text of a set of MediaWiki messages.
@@ -2116,7 +2174,7 @@ class APISite(BaseSite):
         return self.getmagicwords("pagenamee")
 
     def _build_namespaces(self):
-        _namespaces = SelfCallDict()
+        _namespaces = {}
 
         # In MW 1.14, API siprop 'namespaces' added 'canonical',
         # and Image became File with Image as an alias.
@@ -2136,8 +2194,11 @@ class APISite(BaseSite):
                 if is_mw114:
                     canonical_name = nsdata.pop('canonical')
 
+            default_case = Namespace.default_case(ns)
             if 'case' not in nsdata:
-                nsdata['case'] = self.siteinfo['case']
+                nsdata['case'] = default_case or self.siteinfo['case']
+            elif default_case is not None:
+                assert(default_case == nsdata['case'])
 
             namespace = Namespace(ns, canonical_name, custom_name,
                                   use_image_name=not is_mw114,
@@ -2149,7 +2210,7 @@ class APISite(BaseSite):
             if item['*'] not in _namespaces[ns]:
                 _namespaces[ns].aliases.append(item['*'])
 
-        self._namespaces = _namespaces
+        return _namespaces
 
     @need_version("1.14")
     @deprecated("has_extension")
@@ -2167,20 +2228,25 @@ class APISite(BaseSite):
         if unknown is not None:
             pywikibot.debug(u'unknown argument of hasExtension is deprecated.',
                             _logger)
-        return self.has_extension(name)
+        extensions = self.siteinfo['extensions']
+        name = name.lower()
+        for ext in extensions:
+            if ext['name'].lower() == name:
+                return True
+        return False
 
     @need_version("1.14")
     def has_extension(self, name):
         """Determine whether extension `name` is loaded.
 
-        @param name: The extension to check for, case insensitive
+        @param name: The extension to check for, case sensitive
         @type name: str
         @return: If the extension is loaded
         @rtype: bool
         """
         extensions = self.siteinfo['extensions']
         for ext in extensions:
-            if ext['name'].lower() == name.lower():
+            if ext['name'] == name:
                 return True
         return False
 
@@ -2268,12 +2334,73 @@ class APISite(BaseSite):
         # 'title' is expected to be URL-encoded already
         return self.siteinfo["articlepath"].replace("$1", title)
 
+    @need_version('1.21')
+    @need_extension('ProofreadPage')
+    def _cache_proofreadinfo(self, expiry=False):
+        """Retrieve proofreadinfo from site and cache response.
+
+        Applicable only to sites with ProofreadPage extension installed.
+
+        The following info is returned by the query and cached:
+        - self._proofread_index_ns: Index Namespace
+        - self._proofread_page_ns: Page Namespace
+        - self._proofread_levels: a dictionary with:
+                keys: int in the range [0, 1, ..., 4]
+                values: category name corresponding to the 'key' quality level
+            e.g. on en.wikisource:
+            {0: u'Without text', 1: u'Not proofread', 2: u'Problematic',
+             3: u'Proofread', 4: u'Validated'}
+
+        @param expiry: either a number of days or a datetime.timedelta object
+        @type expiry: int (days), L{datetime.timedelta}, False (config)
+        @return: A tuple containing _proofread_index_ns, self._proofread_page_ns
+            and self._proofread_levels.
+        @rtype: Namespace, Namespace, dict
+
+        """
+        if (not hasattr(self, '_proofread_index_ns') or
+                not hasattr(self, '_proofread_page_ns') or
+                not hasattr(self, '_proofread_levels')):
+
+            pirequest = api.CachedRequest(
+                site=self,
+                expiry=pywikibot.config.API_config_expiry if expiry is False else expiry,
+                action='query',
+                meta='proofreadinfo',
+                piprop='namespaces|qualitylevels'
+            )
+
+            pidata = pirequest.submit()
+            ns_id = pidata['query']['proofreadnamespaces']['index']['id']
+            self._proofread_index_ns = self.namespaces[ns_id]
+
+            ns_id = pidata['query']['proofreadnamespaces']['page']['id']
+            self._proofread_page_ns = self.namespaces[ns_id]
+
+            self._proofread_levels = {}
+            for ql in pidata['query']['proofreadqualitylevels']:
+                self._proofread_levels[ql['id']] = ql['category']
+
     @property
-    def namespaces(self):
-        """Return dict of valid namespaces on this wiki."""
-        if not hasattr(self, '_namespaces'):
-            self._build_namespaces()
-        return self._namespaces
+    def proofread_index_ns(self):
+        """Return Index namespace for the ProofreadPage extension."""
+        if not hasattr(self, '_proofread_index_ns'):
+            self._cache_proofreadinfo()
+        return self._proofread_index_ns
+
+    @property
+    def proofread_page_ns(self):
+        """Return Page namespace for the ProofreadPage extension."""
+        if not hasattr(self, '_proofread_page_ns'):
+            self._cache_proofreadinfo()
+        return self._proofread_page_ns
+
+    @property
+    def proofread_levels(self):
+        """Return Quality Levels for the ProofreadPage extension."""
+        if not hasattr(self, '_proofread_levels'):
+            self._cache_proofreadinfo()
+        return self._proofread_levels
 
     def namespace(self, num, all=False):
         """Return string containing local name of namespace 'num'.
@@ -2958,7 +3085,7 @@ class APISite(BaseSite):
         else:
             clargs['titles'] = page.title(
                 withSection=False).encode(self.encoding())
-        clgen = self._generator(api.CategoryPageGenerator,
+        clgen = self._generator(api.PageGenerator,
                                 type_arg="categories", step=step, total=total,
                                 g_content=content, **clargs)
         return clgen
@@ -2972,7 +3099,7 @@ class APISite(BaseSite):
 
         """
         imtitle = page.title(withSection=False).encode(self.encoding())
-        imgen = self._generator(api.ImagePageGenerator, type_arg="images",
+        imgen = self._generator(api.PageGenerator, type_arg="images",
                                 titles=imtitle, step=step, total=total,
                                 g_content=content)
         return imgen
@@ -3074,7 +3201,7 @@ class APISite(BaseSite):
 
             # Covert namespaces to a known type
             namespaces = set(Namespace.resolve(namespaces or [],
-                                               self.namespaces()))
+                                               self.namespaces))
 
             if 'page' in member_type:
                 excluded_namespaces = set()
@@ -3097,7 +3224,7 @@ class APISite(BaseSite):
                     # namespaces requested is higher than available, and split
                     # the request into several batches.
                     excluded_namespaces.add([-1, -2])
-                    namespaces = set(self.namespaces()) - excluded_namespaces
+                    namespaces = set(self.namespaces) - excluded_namespaces
             else:
                 if 'file' in member_type:
                     namespaces.add(6)
@@ -3211,7 +3338,10 @@ class APISite(BaseSite):
                 raise ValueError(
                     "loadrevisions: endid > startid with rvdir=False")
 
-        rvargs = dict(type_arg=u"info|revisions")
+        if self.has_extension('ProofreadPage'):
+            rvargs = {'type_arg': 'info|revisions|proofread'}
+        else:
+            rvargs = {'type_arg': 'info|revisions'}
 
         if getText:
             rvargs[u"rvprop"] = u"ids|flags|timestamp|user|comment|content"
@@ -3465,7 +3595,7 @@ class APISite(BaseSite):
             description page, not the pages that are members of the category
 
         """
-        acgen = self._generator(api.CategoryPageGenerator,
+        acgen = self._generator(api.PageGenerator,
                                 type_arg="allcategories", gacfrom=start,
                                 step=step, total=total, g_content=content)
         if prefix:
@@ -3552,7 +3682,7 @@ class APISite(BaseSite):
             description page, not the image itself
 
         """
-        aigen = self._generator(api.ImagePageGenerator,
+        aigen = self._generator(api.PageGenerator,
                                 type_arg="allimages", gaifrom=start,
                                 step=step, total=total, g_content=content)
         if prefix:
@@ -3617,7 +3747,7 @@ class APISite(BaseSite):
             bkgen.request["bkusers"] = users
         return bkgen
 
-    def exturlusage(self, url, protocol="http", namespaces=None,
+    def exturlusage(self, url=None, protocol="http", namespaces=None,
                     step=None, total=None, content=False):
         """Iterate Pages that contain links to the given URL.
 
@@ -3822,7 +3952,7 @@ class APISite(BaseSite):
         if where not in ("text", "titles"):
             raise Error("search: unrecognized 'where' value: %s" % where)
         if namespaces == []:
-            namespaces = [ns for ns in list(self.namespaces().keys()) if ns >= 0]
+            namespaces = [ns_id for ns_id in self.namespaces if ns_id >= 0]
         if not namespaces:
             pywikibot.warning(u"search: namespaces cannot be empty; using [0].")
             namespaces = [0]
@@ -4662,7 +4792,7 @@ class APISite(BaseSite):
         Block a user for certain amount of time and for a certain reason.
 
         @param user: The username/IP to be blocked without a namespace.
-        @type user: User
+        @type user: L{pywikibot.User}
         @param expiry: The length or date/time when the block expires. If
             'never', 'infinite', 'indefinite' it never does. If the value is
             given as a basestring it's parsed by php's strtotime function:
@@ -4708,7 +4838,7 @@ class APISite(BaseSite):
         Remove the block for the user.
 
         @param user: The username/IP without a namespace.
-        @type user: User
+        @type user: L{pywikibot.User}
         @param reason: Reason for the unblock.
         @type reason: basestring
         """
@@ -4719,6 +4849,7 @@ class APISite(BaseSite):
         data = req.submit()
         return data
 
+    @must_be(group='user')
     def watchpage(self, page, unwatch=False):
         """Add or remove page from watchlist.
 
@@ -4728,7 +4859,7 @@ class APISite(BaseSite):
 
         """
         token = self.tokens['watch']
-        req = api.Request(action="watch", token=token,
+        req = api.Request(site=self, action='watch', token=token,
                           title=page.title(withSection=False), unwatch=unwatch)
         result = req.submit()
         if "watch" not in result:
@@ -4995,7 +5126,7 @@ class APISite(BaseSite):
             # If we receive a nochange, that would mean we're in simulation
             # mode, don't attempt to access imageinfo
             if "nochange" not in result:
-                filepage._imageinfo = result["imageinfo"]
+                filepage._load_file_revisions([result["imageinfo"]])
             return
 
     @deprecated_args(number="step",
@@ -5177,7 +5308,7 @@ class APISite(BaseSite):
         @param step: request batch size
         @param total: number of pages to return
         """
-        wcgen = self._generator(api.CategoryPageGenerator,
+        wcgen = self._generator(api.PageGenerator,
                                 type_arg="querypage", gqppage="Wantedcategories",
                                 step=step, total=total)
 
@@ -5191,7 +5322,7 @@ class APISite(BaseSite):
         @param step: request batch size
         @param total: number of pages to return
         """
-        ucgen = self._generator(api.CategoryPageGenerator,
+        ucgen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="Uncategorizedcategories",
                                 step=step, total=total)
@@ -5205,7 +5336,7 @@ class APISite(BaseSite):
         @param step: request batch size
         @param total: number of pages to return
         """
-        uigen = self._generator(api.ImagePageGenerator,
+        uigen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="Uncategorizedimages",
                                 step=step, total=total)
@@ -5249,7 +5380,7 @@ class APISite(BaseSite):
         @param step: request batch size
         @param total: number of pages to return
         """
-        ucgen = self._generator(api.CategoryPageGenerator,
+        ucgen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="Unusedcategories",
                                 step=step, total=total)
@@ -5261,7 +5392,7 @@ class APISite(BaseSite):
         @param step: request batch size
         @param total: number of pages to return
         """
-        uigen = self._generator(api.ImagePageGenerator,
+        uigen = self._generator(api.PageGenerator,
                                 type_arg="querypage",
                                 gqppage="Unusedimages",
                                 step=step, total=total)
@@ -5398,6 +5529,12 @@ class APISite(BaseSite):
         comparison = data['compare']['*']
         return comparison
 
+    # aliases for backwards compatibility
+    isBlocked = redirect_func(is_blocked, old_name='isBlocked',
+                              class_name='APISite')
+    isAllowed = redirect_func(has_right, old_name='isAllowed',
+                              class_name='APISite')
+
 
 class DataSite(APISite):
 
@@ -5414,7 +5551,7 @@ class DataSite(APISite):
         self._item_namespace = False
         self._property_namespace = False
 
-        for namespace in self.namespaces().values():
+        for namespace in self.namespaces.values():
             if not hasattr(namespace, 'defaultcontentmodel'):
                 continue
 
@@ -5679,6 +5816,33 @@ class DataSite(APISite):
         return data
 
     @must_be(group='user')
+    def save_claim(self, claim, **kwargs):
+        """
+        Save the whole claim to the wikibase site.
+
+        @param claim: The claim to save
+        @type claim: Claim
+        """
+        if claim.isReference or claim.isQualifier:
+            raise NotImplementedError
+        if not claim.snak:
+            # We need to already have the snak value
+            raise NoPage(claim)
+        params = {'action': 'wbsetclaim',
+                  'claim': json.dumps(claim.toJSON()),
+                  'token': self.tokens['edit'],
+                  'baserevid': claim.on_item.lastrevid,
+                  }
+        if 'bot' not in kwargs or kwargs['bot']:
+            params['bot'] = True
+        if 'summary' in kwargs:
+            params['summary'] = kwargs['summary']
+
+        req = api.Request(site=self, **params)
+        data = req.submit()
+        return data
+
+    @must_be(group='user')
     def editSource(self, claim, source, new=False, bot=True, **kwargs):
         """
         Create/Edit a source.
@@ -5855,6 +6019,25 @@ class DataSite(APISite):
         data = req.submit()
         return data
 
+    def set_redirect_target(self, from_item, to_item):
+        """
+        Make a redirect to another item.
+
+        @param to_item: title of target item.
+        @type to_item: pywikibot.ItemPage
+        @param from_item: Title of the item to be redirected.
+        @type from_item: pywikibot.ItemPage
+        """
+        params = {
+            'action': 'wbcreateredirect',
+            'from': from_item.getID(),
+            'to': to_item.getID(),
+            'token': self.tokens['edit']
+        }
+        req = api.Request(site=self, **params)
+        data = req.submit()
+        return data
+
     def createNewItemFromPage(self, page, bot=True, **kwargs):
         """
         Create a new Wikibase item for a provided page.
@@ -5941,6 +6124,9 @@ class DataSite(APISite):
 
     # deprecated APISite methods
     def isBlocked(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def checkBlocks(self, *args, **kwargs):
         raise NotImplementedError
 
     def isAllowed(self, *args, **kwargs):

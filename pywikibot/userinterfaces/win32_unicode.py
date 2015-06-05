@@ -19,7 +19,7 @@
 # Licensed under both CC-BY-SA and the MIT license.
 #
 ################################################
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
 from io import UnsupportedOperation
 import sys
 stdin = sys.stdin
@@ -232,14 +232,14 @@ if sys.platform == "win32":
                 stdin = UnicodeInput(hStdin, name='<Unicode console stdin>')
 
             if real_stdout:
-                stdout = UnicodeOutput(hStdout, None, STDOUT_FILENO,
+                stdout = UnicodeOutput(hStdout, sys.stdout, STDOUT_FILENO,
                                        '<Unicode console stdout>')
             else:
                 stdout = UnicodeOutput(None, sys.stdout, old_stdout_fileno,
                                        '<Unicode redirected stdout>')
 
             if real_stderr:
-                stderr = UnicodeOutput(hStderr, None, STDERR_FILENO,
+                stderr = UnicodeOutput(hStderr, sys.stderr, STDERR_FILENO,
                                        '<Unicode console stderr>')
             else:
                 stderr = UnicodeOutput(None, sys.stderr, old_stderr_fileno,

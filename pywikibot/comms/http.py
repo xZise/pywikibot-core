@@ -11,6 +11,7 @@ This module is responsible for
     - URL-encoding all data
     - Basic HTTP error handling
 """
+from __future__ import unicode_literals
 
 #
 # (C) Pywikibot team, 2007-2015
@@ -21,39 +22,18 @@ This module is responsible for
 __version__ = '$Id$'
 __docformat__ = 'epytext'
 
-import sys
 import atexit
-import time
+import sys
 
-# Verify that a working httplib2 is present.
-try:
-    import httplib2
-except ImportError:
-    print("Error: Python module httplib2 >= 0.6.0 is required.")
-    sys.exit(1)
+from string import Formatter
+from warnings import warn
 
-from distutils.version import StrictVersion
-# httplib2 0.6.0 was released with __version__ as '$Rev$'
-#                and no module variable CA_CERTS.
-if httplib2.__version__ == '$Rev$' and 'CA_CERTS' not in httplib2.__dict__:
-    httplib2.__version__ = '0.6.0'
-if StrictVersion(httplib2.__version__) < StrictVersion("0.6.0"):
-    print("Error: Python module httplib2 (%s) is not 0.6.0 or greater." %
-          httplib2.__file__)
-    sys.exit(1)
+import requests
 
 if sys.version_info[0] > 2:
-    from ssl import SSLError as SSLHandshakeError
-    import queue as Queue
     from http import cookiejar as cookielib
     from urllib.parse import quote
 else:
-    if 'SSLHandshakeError' in httplib2.__dict__:
-        from httplib2 import SSLHandshakeError
-    elif httplib2.__version__ == '0.6.0':
-        from httplib2 import ServerNotFoundError as SSLHandshakeError
-
-    import Queue
     import cookielib
     from urllib2 import quote
 
@@ -77,16 +57,10 @@ else:
 
 _logger = "comm.http"
 
-# global variables
+session = requests.Session()
 
-numthreads = 1
-threads = []
-
-connection_pool = threadedhttp.ConnectionPool()
-http_queue = Queue.Queue()
-
-cookie_jar = threadedhttp.LockableCookieJar(
-    config.datafilepath("pywikibot.lwp"))
+cookie_jar = cookielib.LWPCookieJar(
+    config.datafilepath("pywikibot.lwp2"))
 try:
     cookie_jar.load()
 except (IOError, cookielib.LoadError):
@@ -94,23 +68,13 @@ except (IOError, cookielib.LoadError):
 else:
     pywikibot.debug(u"Loaded cookies from file.", _logger)
 
-
-# Build up HttpProcessors
-pywikibot.log(u'Starting %(numthreads)i threads...' % locals())
-for i in range(numthreads):
-    proc = threadedhttp.HttpProcessor(http_queue, cookie_jar, connection_pool)
-    proc.setDaemon(True)
-    threads.append(proc)
-    proc.start()
+session.cookies = cookie_jar
 
 
 # Prepare flush on quit
 def _flush():
-    for i in threads:
-        http_queue.put(None)
-
-    message = (u'Waiting for %i network thread(s) to finish. '
-               u'Press ctrl-c to abort' % len(threads))
+    session.close()
+    message = 'Closing network session.'
     if hasattr(sys, 'last_type'):
         # we quit because of an exception
         print(sys.last_type)
@@ -118,20 +82,35 @@ def _flush():
     else:
         pywikibot.log(message)
 
-    while any(t for t in threads if t.isAlive()):
-        time.sleep(.1)
-
-    pywikibot.log(u"All threads finished.")
+    pywikibot.log('Network session closed.')
 atexit.register(_flush)
+
 
 # export cookie_jar to global namespace
 pywikibot.cookie_jar = cookie_jar
 
+
 USER_AGENT_PRODUCTS = {
     'python': 'Python/' + '.'.join([str(i) for i in sys.version_info]),
-    'httplib2': 'httplib2/' + httplib2.__version__,
+    'http_backend': 'requests/' + requests.__version__,
     'pwb': 'Pywikibot/' + pywikibot.__release__,
 }
+
+
+class _UserAgentFormatter(Formatter):
+
+    """User-agent formatter to load version/revision only if necessary."""
+
+    def get_value(self, key, args, kwargs):
+        """Get field as usual except for version and revision."""
+        # This is the Pywikibot revision; also map it to {version} at present.
+        if key == 'version' or key == 'revision':
+            return pywikibot.version.getversiondict()['rev']
+        else:
+            return super(_UserAgentFormatter, self).get_value(key, args, kwargs)
+
+
+_USER_AGENT_FORMATTER = _UserAgentFormatter()
 
 
 def user_agent_username(username=None):
@@ -177,13 +156,6 @@ def user_agent(site=None, format_string=None):
     """
     values = USER_AGENT_PRODUCTS.copy()
 
-    # This is the Pywikibot revision; also map it to {version} at present.
-    if pywikibot.version.cache:
-        values['revision'] = pywikibot.version.cache['rev']
-    else:
-        values['revision'] = ''
-    values['version'] = values['revision']
-
     values['script'] = pywikibot.calledModuleName()
 
     # TODO: script_product should add the script version, if known
@@ -213,18 +185,19 @@ def user_agent(site=None, format_string=None):
     if not format_string:
         format_string = config.user_agent_format
 
-    formatted = format_string.format(**values)
+    formatted = _USER_AGENT_FORMATTER.format(format_string, **values)
     # clean up after any blank components
     formatted = formatted.replace(u'()', u'').replace(u'  ', u' ').strip()
     return formatted
 
 
 @deprecate_arg('ssl', None)
-def request(site=None, uri=None, charset=None, *args, **kwargs):
+def request(site=None, uri=None, method='GET', body=None, headers=None,
+            **kwargs):
     """
     Request to Site with default error handling and response decoding.
 
-    See L{httplib2.Http.request} for additional parameters.
+    See L{requests.Session.request} for additional parameters.
 
     If the site argument is provided, the uri is a relative uri from
     and including the document root '/'.
@@ -244,9 +217,9 @@ def request(site=None, uri=None, charset=None, *args, **kwargs):
     """
     assert(site or uri)
     if not site:
-        # TODO: deprecate this usage, once the library code has been
-        # migrated to using the other request methods.
-        r = fetch(uri, *args, **kwargs)
+        warn('Invoking http.request without argument site is deprecated. '
+             'Use http.fetch.', DeprecationWarning, 2)
+        r = fetch(uri, method, body, headers, **kwargs)
         return r.content
 
     baseuri = site.base_url(uri)
@@ -254,12 +227,31 @@ def request(site=None, uri=None, charset=None, *args, **kwargs):
     kwargs.setdefault("disable_ssl_certificate_validation",
                       site.ignore_certificate_error())
 
-    format_string = kwargs.setdefault("headers", {}).get("user-agent")
-    kwargs["headers"]["user-agent"] = user_agent(site, format_string)
-    kwargs['charset'] = charset
+    if not headers:
+        headers = {}
+        format_string = None
+    else:
+        format_string = headers.get('user-agent', None)
 
-    r = fetch(baseuri, *args, **kwargs)
+    headers['user-agent'] = user_agent(site, format_string)
+
+    r = fetch(baseuri, method, body, headers, **kwargs)
     return r.content
+
+
+def _http_process(session, http_request):
+    method = http_request.method
+    uri = http_request.uri
+    body = http_request.body
+    headers = http_request.headers
+
+    try:
+        request = session.request(method, uri, data=body, headers=headers,
+                                  verify=True)
+    except Exception as e:
+        http_request.data = e
+    else:
+        http_request.data = request
 
 
 def error_handling_callback(request):
@@ -270,7 +262,7 @@ def error_handling_callback(request):
     @rtype request: L{threadedhttp.HttpRequest}
     """
     # TODO: do some error correcting stuff
-    if isinstance(request.data, SSLHandshakeError):
+    if isinstance(request.data, requests.exceptions.SSLError):
         if SSL_CERT_VERIFY_FAILED_MSG in str(request.data):
             raise FatalServerError(str(request.data))
 
@@ -288,7 +280,7 @@ def error_handling_callback(request):
     # used by the version module.
     if request.status not in (200, 207):
         pywikibot.warning(u"Http response status %(status)s"
-                          % {'status': request.data[0].status})
+                          % {'status': request.data.status_code})
 
 
 def _enqueue(uri, method="GET", body=None, headers=None, **kwargs):
@@ -306,7 +298,7 @@ def _enqueue(uri, method="GET", body=None, headers=None, **kwargs):
     as they are limited by the number of http threads in L{numthreads},
     which is set to 1 by default.
 
-    @see: L{httplib2.Http.request} for parameters.
+    @see: L{requests.Session.request} for parameters.
 
     @kwarg default_error_handling: Use default error handling
     @type default_error_handling: bool
@@ -336,7 +328,7 @@ def _enqueue(uri, method="GET", body=None, headers=None, **kwargs):
 
     request = threadedhttp.HttpRequest(
         uri, method, body, headers, callbacks, **kwargs)
-    http_queue.put(request)
+    _http_process(session, request)
     return request
 
 
@@ -348,14 +340,14 @@ def fetch(uri, method="GET", body=None, headers=None,
     Note: The callback runs in the HTTP thread, where exceptions are logged
     but are not able to be caught.
 
-    See L{httplib2.Http.request} for parameters.
+    See L{requests.Session.request} for parameters.
 
     @param default_error_handling: Use default error handling
     @type default_error_handling: bool
     @rtype: L{threadedhttp.HttpRequest}
     """
     request = _enqueue(uri, method, body, headers, **kwargs)
-    request._join()  # wait for it
+    assert(request._data is not None)  # if there's no data in the answer we're in trouble
     # Run the error handling callback in the callers thread so exceptions
     # may be caught.
     if default_error_handling:

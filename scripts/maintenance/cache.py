@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8  -*-
 r"""
 This script runs commands on each entry in the API caches.
@@ -42,7 +43,7 @@ print("%s" % entry._uniquedescriptionstr())
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
 __version__ = '$Id$'
 #
 

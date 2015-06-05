@@ -5,10 +5,13 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 from pywikibot.family import Family
 from pywikibot.exceptions import UnknownFamily
+
 import pywikibot.site
 
 from tests.aspects import (
@@ -77,7 +80,7 @@ class TestFamily(TestCase):
         other = 'unknown'
         self.assertRaises(UnknownFamily, family.__eq__, other)
 
-    def test_obsolete(self):
+    def test_get_obsolete_wp(self):
         """Test three types of obsolete codes."""
         family = Family.load('wikipedia')
         self.assertIsInstance(family.obsolete, dict)
@@ -87,6 +90,98 @@ class TestFamily(TestCase):
         self.assertEqual(family.obsolete['mh'], None)
         # offline site (see site tests test_removed_site)
         self.assertEqual(family.obsolete['ru-sib'], None)
+
+    def test_get_obsolete_test(self):
+        """Test WikimediaFamily default obsolete."""
+        family = Family.load('test')
+        self.assertIn('dk', family.obsolete)
+        self.assertIn('dk', family.interwiki_replacements)
+        self.assertEqual(family.obsolete, family.interwiki_replacements)
+        self.assertEqual(family.interwiki_removals, set())
+
+    def test_set_obsolete(self):
+        """Test obsolete can be set."""
+        family = Family()
+        self.assertEqual(family.obsolete, {})
+        self.assertEqual(family.interwiki_replacements, {})
+        self.assertEqual(family.interwiki_removals, [])
+
+        family.obsolete = {'a': 'b', 'c': None}
+        self.assertEqual(family.obsolete, {'a': 'b', 'c': None})
+        self.assertEqual(family.interwiki_replacements, {'a': 'b'})
+        self.assertEqual(family.interwiki_removals, ['c'])
+
+    def test_obsolete_readonly(self):
+        """Test obsolete result not updatable."""
+        family = Family.load('test')
+        self.assertRaises(TypeError, family.obsolete.update, {})
+        self.assertRaises(TypeError, family.obsolete.__setitem__, 'a', 'b')
+
+    def test_WikimediaFamily_obsolete_readonly(self):
+        """Test WikimediaFamily obsolete is readonly."""
+        family = Family.load('test')
+        self.assertRaises(TypeError, family.__setattr__, 'obsolete',
+                          {'a': 'b', 'c': None})
+
+
+class TestFamilyUrlRegex(TestCase):
+
+    """Test family URL regex."""
+
+    net = False
+
+    def test_get_regex_wikipedia_precise(self):
+        """Test the family regex is optimal."""
+        f = Family.load('wikipedia')
+        regex = f._get_regex_all()
+
+        self.assertTrue(regex.startswith('(?:\/\/|https\:\/\/)('))
+        self.assertIn('vo\.wikipedia\.org', regex)
+        self.assertTrue(regex.endswith(')(?:\/w\/index\.php\/?|\/wiki\/)'))
+
+    def test_from_url_wikipedia_extra(self):
+        """Test various URLs against wikipedia regex."""
+        f = Family.load('wikipedia')
+
+        prefix = 'https://vo.wikipedia.org'
+
+        self.assertEqual(f.from_url(prefix + '/wiki/'), 'vo')
+        self.assertEqual(f.from_url(prefix + '/w/index.php'), 'vo')
+        self.assertEqual(f.from_url(prefix + '/w/index.php/'), 'vo')
+        self.assertEqual(f.from_url(prefix + '/w/index.php?title=$1'), 'vo')
+
+        self.assertEqual(f.from_url(prefix + '/wiki/$1'), 'vo')
+        self.assertEqual(f.from_url('//vo.wikipedia.org/wiki/$1'), 'vo')
+        self.assertEqual(f.from_url('//vo.wikipedia.org/wiki/$1/foo'), 'vo')
+        self.assertEqual(f.from_url(prefix + '/w/index.php/$1'), 'vo')
+        self.assertEqual(f.from_url('//vo.wikipedia.org/wiki/$1'), 'vo')
+        self.assertEqual(f.from_url('//vo.wikipedia.org/wiki/$1/foo'), 'vo')
+
+        # wrong protocol
+        self.assertIsNone(f.from_url('http://vo.wikipedia.org/wiki/$1'))
+        self.assertIsNone(f.from_url('ftp://vo.wikipedia.org/wiki/$1'))
+        # wrong code
+        self.assertIsNone(f.from_url('https://foobar.wikipedia.org/wiki/$1'))
+        # wrong family
+        self.assertIsNone(f.from_url('https://vo.wikibooks.org/wiki/$1'))
+        self.assertIsNone(f.from_url('http://vo.wikibooks.org/wiki/$1'))
+        # invalid path
+        self.assertIsNone(f.from_url('https://vo.wikipedia.org/wik/$1'))
+        self.assertIsNone(f.from_url('https://vo.wikipedia.org/index.php/$1'))
+
+    def test_each_family(self):
+        """Test each family builds a working regex."""
+        for family in pywikibot.config.family_files:
+            family = Family.load(family)
+            # Test family does not respond to from_url due to overlap
+            # with Wikipedia family.
+            if family.name == 'test':
+                continue
+            for code in family.langs:
+                url = ('%s://%s%s$1' % (family.protocol(code),
+                                        family.hostname(code),
+                                        family.path(code)))
+                self.assertEqual(family.from_url(url), code)
 
 
 class TestOldFamilyMethod(DeprecationTestCase):

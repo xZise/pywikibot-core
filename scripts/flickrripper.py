@@ -15,6 +15,7 @@ Tool to copy a flickr stream to Commons.
 #**Add a nice hotcat lookalike for the adding of categories
 #**Filter the categories
 #*Upload the image
+from __future__ import unicode_literals
 
 Todo:
 *Check if the image is already uploaded (SHA hash)
@@ -41,9 +42,8 @@ import time
 
 if sys.version_info[0] > 2:
     from urllib.parse import urlencode
-    from urllib.request import urlopen
 else:
-    from urllib import urlencode, urlopen
+    from urllib import urlencode
 
 try:
     import flickrapi                # see: http://stuvel.eu/projects/flickrapi
@@ -56,6 +56,8 @@ except ImportError as e:
 import pywikibot
 
 from pywikibot import config, textlib
+from pywikibot.comms.http import fetch
+
 from scripts import upload
 
 try:
@@ -125,7 +127,7 @@ def downloadPhoto(photoUrl=''):
     TODO: Add exception handling
 
     """
-    imageFile = urlopen(photoUrl).read()
+    imageFile = fetch(photoUrl).raw
     return io.BytesIO(imageFile)
 
 
@@ -161,10 +163,8 @@ def getFlinfoDescription(photo_id=0):
     """
     parameters = urlencode({'id': photo_id, 'raw': 'on'})
 
-    rawDescription = urlopen(
-        "http://wikipedia.ramselehof.de/flinfo.php?%s" % parameters).read()
-
-    return rawDescription.decode('utf-8')
+    return fetch(
+        'http://wikipedia.ramselehof.de/flinfo.php?%s' % parameters).content
 
 
 def getFilename(photoInfo=None, site=None, project=u'Flickr'):

@@ -1,5 +1,6 @@
 # -*- coding: utf-8  -*-
 """Family module for Wikipedia."""
+from __future__ import unicode_literals
 
 from pywikibot import family
 
@@ -11,46 +12,81 @@ class Family(family.WikimediaFamily):
 
     """Family module for Wikipedia."""
 
+    closed_wikis = [
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Afar_Wikipedia
+        'aa',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Choctaw_Wikipedia
+        'cho',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Hiri_Motu_Wikipedia
+        'ho',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Herero_Wikipedia
+        'hz',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Yi_Wikipedia
+        'ii',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Kwanyama_Wikipedia
+        'kj',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Kanuri_Wikipedia
+        'kr',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Marshallese_Wikipedia
+        'mh',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Moldovan_Wikipedia
+        'mo',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Muscogee_Wikipedia
+        'mus',
+    ]
+
+    removed_wikis = [
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Ndonga_Wikipedia
+        'ng',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Siberian_Wikipedia
+        'ru-sib',
+        # Klingon, locked in 2005, and moved to http://klingon.wikia.com/
+        'tlh',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Tokipona_Wikipedia
+        'tokipona',
+    ]
+
     def __init__(self):
         """Constructor."""
         super(Family, self).__init__()
         self.name = 'wikipedia'
 
         self.languages_by_size = [
-            'en', 'sv', 'nl', 'de', 'fr', 'ru', 'it', 'es', 'vi', 'war', 'ceb',
-            'pl', 'ja', 'pt', 'zh', 'uk', 'ca', 'no', 'fa', 'fi', 'id', 'ar',
-            'cs', 'ko', 'ms', 'hu', 'ro', 'sr', 'tr', 'min', 'sh', 'kk', 'eo',
-            'sk', 'eu', 'da', 'lt', 'bg', 'he', 'hr', 'sl', 'uz', 'hy', 'et',
-            'vo', 'nn', 'gl', 'simple', 'hi', 'la', 'el', 'az', 'th', 'oc',
-            'ka', 'mk', 'be', 'new', 'tt', 'pms', 'tl', 'ta', 'te', 'cy', 'lv',
-            'be-x-old', 'ht', 'ur', 'ce', 'bs', 'sq', 'br', 'jv', 'mg', 'lb',
-            'mr', 'is', 'ml', 'pnb', 'ba', 'af', 'my', 'zh-yue', 'bn', 'ga',
-            'lmo', 'yo', 'fy', 'an', 'cv', 'tg', 'ky', 'sw', 'ne', 'io', 'gu',
-            'bpy', 'sco', 'scn', 'nds', 'ku', 'ast', 'qu', 'su', 'als', 'gd',
-            'kn', 'am', 'ckb', 'ia', 'nap', 'bug', 'bat-smg', 'wa', 'map-bms',
-            'mn', 'arz', 'pa', 'mzn', 'si', 'zh-min-nan', 'yi', 'sah', 'fo',
-            'vec', 'sa', 'bar', 'nah', 'os', 'roa-tara', 'pam', 'or', 'hsb',
-            'se', 'li', 'mrj', 'mi', 'ilo', 'co', 'hif', 'bcl', 'gan', 'frr',
-            'bo', 'rue', 'glk', 'mhr', 'nds-nl', 'fiu-vro', 'ps', 'tk', 'pag',
-            'vls', 'gv', 'xmf', 'diq', 'km', 'kv', 'zea', 'csb', 'crh', 'hak',
-            'vep', 'sc', 'ay', 'dv', 'so', 'zh-classical', 'nrm', 'rm', 'udm',
-            'koi', 'kw', 'ug', 'stq', 'lad', 'wuu', 'lij', 'eml', 'fur', 'mt',
-            'bh', 'as', 'cbk-zam', 'gn', 'pi', 'pcd', 'szl', 'gag', 'ksh',
-            'nov', 'ang', 'ie', 'nv', 'ace', 'ext', 'frp', 'mwl', 'ln', 'sn',
-            'lez', 'dsb', 'pfl', 'krc', 'haw', 'pdc', 'kab', 'xal', 'rw', 'myv',
-            'to', 'arc', 'kl', 'bjn', 'kbd', 'lo', 'ha', 'pap', 'tpi', 'av',
-            'lbe', 'mdf', 'jbo', 'na', 'wo', 'bxr', 'ty', 'srn', 'ig', 'nso',
-            'kaa', 'kg', 'tet', 'ab', 'ltg', 'zu', 'za', 'cdo', 'tyv', 'chy',
-            'tw', 'rmy', 'roa-rup', 'cu', 'tn', 'om', 'chr', 'got', 'bi', 'pih',
-            'rn', 'sm', 'bm', 'ss', 'iu', 'sd', 'pnt', 'ki', 'xh', 'ts', 'ee',
-            'ak', 'ti', 'fj', 'lg', 'ks', 'ff', 'sg', 'ny', 've', 'cr', 'st',
-            'dz', 'ik', 'tum', 'ch',
+            'en', 'sv', 'nl', 'de', 'fr', 'war', 'ru', 'ceb', 'it', 'es', 'vi',
+            'pl', 'ja', 'pt', 'zh', 'uk', 'ca', 'fa', 'no', 'sh', 'fi', 'ar',
+            'id', 'cs', 'sr', 'ro', 'ko', 'hu', 'ms', 'tr', 'min', 'eo', 'kk',
+            'eu', 'sk', 'da', 'bg', 'he', 'lt', 'hy', 'hr', 'sl', 'et', 'uz',
+            'gl', 'nn', 'vo', 'la', 'simple', 'el', 'hi', 'az', 'th', 'ka',
+            'ce', 'oc', 'be', 'mk', 'mg', 'new', 'ur', 'tt', 'ta', 'pms', 'cy',
+            'tl', 'lv', 'bs', 'te', 'be-x-old', 'br', 'ht', 'sq', 'jv', 'lb',
+            'mr', 'is', 'ml', 'zh-yue', 'bn', 'af', 'ba', 'ga', 'pnb', 'cv',
+            'fy', 'lmo', 'tg', 'sco', 'my', 'yo', 'an', 'ky', 'sw', 'io', 'ne',
+            'gu', 'scn', 'bpy', 'nds', 'ku', 'ast', 'qu', 'als', 'su', 'pa',
+            'kn', 'ckb', 'ia', 'mn', 'nap', 'bug', 'arz', 'bat-smg', 'wa',
+            'zh-min-nan', 'am', 'map-bms', 'gd', 'yi', 'mzn', 'si', 'fo', 'bar',
+            'vec', 'nah', 'sah', 'os', 'sa', 'roa-tara', 'li', 'hsb', 'or',
+            'pam', 'mrj', 'mhr', 'se', 'mi', 'ilo', 'hif', 'bcl', 'gan', 'rue',
+            'ps', 'glk', 'nds-nl', 'bo', 'vls', 'diq', 'fiu-vro', 'bh', 'xmf',
+            'tk', 'gv', 'sc', 'co', 'csb', 'hak', 'km', 'kv', 'vep', 'zea',
+            'crh', 'zh-classical', 'frr', 'eml', 'ay', 'stq', 'udm', 'wuu',
+            'nrm', 'kw', 'rm', 'szl', 'so', 'koi', 'as', 'lad', 'fur', 'mt',
+            'dv', 'gn', 'dsb', 'ie', 'pcd', 'sd', 'lij', 'cbk-zam', 'cdo',
+            'ksh', 'ext', 'mwl', 'gag', 'ang', 'ug', 'ace', 'pi', 'pag', 'nv',
+            'lez', 'frp', 'sn', 'kab', 'ln', 'myv', 'pfl', 'xal', 'krc', 'haw',
+            'rw', 'pdc', 'kaa', 'to', 'kl', 'arc', 'nov', 'kbd', 'av', 'bxr',
+            'lo', 'bjn', 'ha', 'tet', 'tpi', 'na', 'pap', 'lbe', 'jbo', 'ty',
+            'mdf', 'roa-rup', 'wo', 'tyv', 'ig', 'srn', 'nso', 'kg', 'ab',
+            'ltg', 'zu', 'om', 'za', 'chy', 'cu', 'rmy', 'tw', 'tn', 'chr',
+            'mai', 'pih', 'got', 'xh', 'bi', 'sm', 'ss', 'rn', 'ki', 'pnt',
+            'bm', 'iu', 'ee', 'lg', 'ts', 'fj', 'ak', 'ik', 'st', 'sg', 'ff',
+            'dz', 'ny', 'ch', 'ti', 've', 'ks', 'tum', 'cr',
         ]
 
-        langs = self.languages_by_size + ['test', 'test2']  # Sites we want to edit but not count as real languages
+        # Sites we want to edit but not count as real languages
+        self.test_codes = ['test', 'test2']
 
-        self.langs = dict([(lang, '%s.wikipedia.org' % lang)
-                           for lang in langs])
+        self.langs = dict((lang, '%s.wikipedia.org' % lang) for lang in
+                          self.languages_by_size + self.test_codes)
 
         self.category_redirect_templates = {
             '_default': (),
@@ -319,31 +355,6 @@ class Family(family.WikimediaFamily):
             'ur': ['ar', 'fa', 'en'] + self.alphabetic,
             'vi': self.alphabetic_revised,
             'yi': ['en', 'he', 'de']
-        }
-
-        self.obsolete = {
-            'aa': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Afar_Wikipedia
-            'cho': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Choctaw_Wikipedia
-            'dk': 'da',
-            'ho': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Hiri_Motu_Wikipedia
-            'hz': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Herero_Wikipedia
-            'ii': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Yi_Wikipedia
-            'kj': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Kwanyama_Wikipedia
-            'kr': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Kanuri_Wikipedia
-            'mh': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Marshallese_Wikipedia
-            'minnan': 'zh-min-nan',
-            'mo': 'ro',  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Moldovan_Wikipedia
-            'mus': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Muscogee_Wikipedia
-            'nan': 'zh-min-nan',
-            'nl_nds': 'nl-nds',  # miss-spelling
-            'nb': 'no',
-            'ng': None,  # (not reachable) https://meta.wikimedia.org/wiki/Inactive_wikis
-            'jp': 'ja',
-            'ru-sib': None,  # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Siberian_Wikipedia
-            'tlh': None,
-            'tokipona': None,
-            'zh-tw': 'zh',
-            'zh-cn': 'zh'
         }
 
         # Languages that used to be coded in iso-8859-1

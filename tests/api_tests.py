@@ -1,10 +1,12 @@
 # -*- coding: utf-8  -*-
 """API test module."""
 #
-# (C) Pywikibot team, 2007-2014
+# (C) Pywikibot team, 2007-2015
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 import datetime
@@ -12,7 +14,9 @@ import types
 
 import pywikibot.data.api as api
 import pywikibot.family
+import pywikibot.login
 import pywikibot.site
+
 from pywikibot.tools import MediaWikiVersion
 
 from tests.aspects import (
@@ -21,7 +25,7 @@ from tests.aspects import (
     DefaultSiteTestCase,
     DefaultDrySiteTestCase,
 )
-from tests.utils import allowed_failure
+from tests.utils import allowed_failure, FakeLoginManager
 
 
 class TestApiFunctions(DefaultSiteTestCase):
@@ -70,8 +74,9 @@ class TestParamInfo(DefaultSiteTestCase):
 
         self.assertIn('main', pi._paraminfo)
         self.assertIn('paraminfo', pi._paraminfo)
-        self.assertEqual(len(pi),
-                         len(pi.preloaded_modules))
+        if MediaWikiVersion(self.site.version()) >= MediaWikiVersion("1.12"):
+            self.assertEqual(len(pi),
+                             len(pi.preloaded_modules))
 
         self.assertIn('info', pi._query_modules)
         self.assertIn('login', pi._action_modules)
@@ -87,6 +92,9 @@ class TestParamInfo(DefaultSiteTestCase):
         self.assertIn('main', pi._paraminfo)
         self.assertIn('paraminfo', pi._paraminfo)
         self.assertIn('pageset', pi._paraminfo)
+
+        if MediaWikiVersion(self.site.version()) < MediaWikiVersion("1.12"):
+            return
 
         if 'query' in pi.preloaded_modules:
             self.assertIn('query', pi._paraminfo)
@@ -130,8 +138,9 @@ class TestParamInfo(DefaultSiteTestCase):
 
         self.assertIn('main', pi._paraminfo)
         self.assertIn('paraminfo', pi._paraminfo)
-        self.assertEqual(len(pi),
-                         1 + len(pi.preloaded_modules))
+        if MediaWikiVersion(self.site.version()) >= MediaWikiVersion("1.12"):
+            self.assertEqual(len(pi),
+                             1 + len(pi.preloaded_modules))
 
         self.assertEqual(pi['info']['prefix'], 'in')
 
@@ -142,6 +151,10 @@ class TestParamInfo(DefaultSiteTestCase):
         self.assertNotIn('deprecated', param)
 
         self.assertIsInstance(param['type'], list)
+
+        if MediaWikiVersion(self.site.version()) < MediaWikiVersion("1.12"):
+            return
+
         self.assertIn('protection', param['type'])
 
     def test_with_module_revisions(self):
@@ -153,8 +166,9 @@ class TestParamInfo(DefaultSiteTestCase):
 
         self.assertIn('main', pi._paraminfo)
         self.assertIn('paraminfo', pi._paraminfo)
-        self.assertEqual(len(pi),
-                         1 + len(pi.preloaded_modules))
+        if MediaWikiVersion(self.site.version()) >= MediaWikiVersion("1.12"):
+            self.assertEqual(len(pi),
+                             1 + len(pi.preloaded_modules))
 
         self.assertEqual(pi['revisions']['prefix'], 'rv')
 
@@ -165,6 +179,10 @@ class TestParamInfo(DefaultSiteTestCase):
         self.assertNotIn('deprecated', param)
 
         self.assertIsInstance(param['type'], list)
+
+        if MediaWikiVersion(self.site.version()) < MediaWikiVersion("1.12"):
+            return
+
         self.assertIn('user', param['type'])
 
     def test_multiple_modules(self):
@@ -177,6 +195,10 @@ class TestParamInfo(DefaultSiteTestCase):
 
         self.assertIn('main', pi._paraminfo)
         self.assertIn('paraminfo', pi._paraminfo)
+
+        if MediaWikiVersion(self.site.version()) < MediaWikiVersion("1.12"):
+            return
+
         self.assertEqual(len(pi),
                          2 + len(pi.preloaded_modules))
 
@@ -187,8 +209,14 @@ class TestParamInfo(DefaultSiteTestCase):
         pi.fetch('foobar')
         self.assertNotIn('foobar', pi._paraminfo)
 
+        self.assertRaises(KeyError, pi.__getitem__, 'foobar')
+
         self.assertIn('main', pi._paraminfo)
         self.assertIn('paraminfo', pi._paraminfo)
+
+        if MediaWikiVersion(self.site.version()) < MediaWikiVersion("1.12"):
+            return
+
         self.assertEqual(len(pi),
                          len(pi.preloaded_modules))
 
@@ -222,8 +250,10 @@ class TestParamInfo(DefaultSiteTestCase):
 
         self.assertIn('main', pi._paraminfo)
         self.assertIn('paraminfo', pi._paraminfo)
-        self.assertEqual(len(pi),
-                         1 + len(pi.preloaded_modules))
+
+        if MediaWikiVersion(self.site.version()) >= MediaWikiVersion("1.12"):
+            self.assertEqual(len(pi),
+                             1 + len(pi.preloaded_modules))
 
         self.assertIn('revisions', pi.prefixes)
 
@@ -239,6 +269,7 @@ class TestParamInfo(DefaultSiteTestCase):
 
         self.assertIn('main', pi._paraminfo)
         self.assertIn('paraminfo', pi._paraminfo)
+
         self.assertEqual(len(pi),
                          1 + len(pi.preloaded_modules))
 
@@ -635,25 +666,92 @@ class TestCachedRequest(DefaultSiteTestCase):
         self.assertEqual(req._data, data)
 
 
-class TestLazyLogin(TestCase):
+class TestLazyLoginBase(TestCase):
 
     """
     Test that it tries to login when read API access is denied.
 
     Because there is no such family configured it creates an AutoFamily and
     BaseSite on it's own. It's testing against steward.wikimedia.org.
+
+    These tests are split into two subclasses as only the first failed login
+    behaves as expected.  All subsequent logins will raise an APIError, making
+    it impossible to test two scenarios with the same APISite object.
     """
 
     net = True
     hostname = 'steward.wikimedia.org'
 
-    def test_access_denied(self):
-        """Test the query."""
+    @classmethod
+    def setUpClass(cls):
+        """Set up steward Family."""
+        super(TestLazyLoginBase, cls).setUpClass()
         fam = pywikibot.family.AutoFamily(
             'steward', 'https://steward.wikimedia.org/w/api.php')
-        site = pywikibot.site.APISite('steward', fam)
-        req = api.Request(site=site, action='query')
+        cls.site = pywikibot.site.APISite('steward', fam)
+
+
+class TestLazyLoginNotExistUsername(TestLazyLoginBase):
+
+    """Test missing username."""
+
+    # FIXME: due to limitations of LoginManager, it will ask the user
+    # for a password even if the username does not exist, and even if
+    # pywikibot is not connected to a tty. T100964
+
+    def setUp(self):
+        self.orig_login_manager = pywikibot.data.api.LoginManager
+        pywikibot.data.api.LoginManager = FakeLoginManager
+
+    def tearDown(self):
+        pywikibot.data.api.LoginManager = self.orig_login_manager
+
+    def test_access_denied_notexist_username(self):
+        """Test the query with a username which does not exist."""
+        self.site._username = ['Not registered username', None]
+        req = api.Request(site=self.site, action='query')
         self.assertRaises(pywikibot.NoUsername, req.submit)
+        # FIXME: T100965
+        self.assertRaises(api.APIError, req.submit)
+
+
+class TestLazyLoginNoUsername(TestLazyLoginBase):
+
+    """Test no username."""
+
+    def test_access_denied_no_username(self):
+        """Test the query without a username."""
+        self.site._username = [None, None]
+
+        # FIXME: The following prevents LoginManager
+        # from loading the username from the config when the site
+        # username is None. i.e. site.login(user=None) means load
+        # username from the configuration.
+        if 'steward' in pywikibot.config.usernames:
+            del pywikibot.config.usernames['steward']
+
+        req = api.Request(site=self.site, action='query')
+        self.assertRaises(pywikibot.NoUsername, req.submit)
+        # FIXME: T100965
+        self.assertRaises(api.APIError, req.submit)
+
+
+class TestBadTokenRecovery(TestCase):
+
+    """Test that the request recovers from bad tokens."""
+
+    family = 'wikipedia'
+    code = 'test'
+
+    write = True
+
+    def test_bad_token(self):
+        site = self.get_site()
+        site.tokens._tokens.setdefault(site.user(), {})['edit'] = 'INVALID'
+        page = pywikibot.Page(site, 'Pywikibot bad token test')
+        page.text = ('This page is testing whether pywikibot-core rerequests '
+                     'a token when a badtoken error was received.')
+        page.save(summary='Bad token test')
 
 
 if __name__ == '__main__':

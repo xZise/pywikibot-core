@@ -11,7 +11,7 @@ mixin to show cache usage is included.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
 __version__ = '$Id$'
 """
     TODO:
@@ -45,7 +45,9 @@ from pywikibot.comms import http
 from pywikibot.data.api import Request as _original_Request
 
 import tests
+
 from tests import unittest, patch_request, unpatch_request
+from tests.utils import execute_pwb, DrySite, DryRequest, add_metaclass
 
 
 class TestCaseBase(unittest.TestCase):
@@ -395,8 +397,7 @@ class DisconnectedSiteMixin(TestCaseBase):
         #       as the default, to show a useful error message.
         config.site_interface = SiteNotPermitted
 
-        pywikibot.data.api.Request = tests.utils.DryRequest
-        from tests.utils import DrySite
+        pywikibot.data.api.Request = DryRequest
         self.old_convert = pywikibot.Claim.TARGET_CONVERTER['commonsMedia']
         pywikibot.Claim.TARGET_CONVERTER['commonsMedia'] = (
             lambda value, site: pywikibot.FilePage(
@@ -640,6 +641,7 @@ class MetaTestCaseClass(type):
 
             def wrapped_method(self):
                 sitedata = self.sites[key]
+                self.site_key = key
                 self.family = sitedata['family']
                 self.code = sitedata['code']
                 self.site = sitedata['site']
@@ -790,6 +792,7 @@ class MetaTestCaseClass(type):
         return super(MetaTestCaseClass, cls).__new__(cls, name, bases, dct)
 
 
+@add_metaclass
 class TestCase(TestTimerMixin, TestLoggingMixin, TestCaseBase):
 
     """Run tests on pre-defined sites."""
@@ -819,12 +822,17 @@ class TestCase(TestTimerMixin, TestLoggingMixin, TestCaseBase):
             pywikibot._sites = {}
 
         interface = None  # defaults to 'APISite'
-        if hasattr(cls, 'dry') and cls.dry:
-            # Delay load to avoid cyclic import
-            from tests.utils import DrySite
+        dry = hasattr(cls, 'dry') and cls.dry
+        if dry:
             interface = DrySite
 
         for data in cls.sites.values():
+            if ('code' in data and data['code'] in ('test', 'mediawiki') and
+                    'PYWIKIBOT2_TEST_PROD_ONLY' in os.environ and not dry):
+                raise unittest.SkipTest(
+                    'Site code "%s" and PYWIKIBOT2_TEST_PROD_ONLY is set.'
+                    % data['code'])
+
             if 'site' not in data and 'code' in data and 'family' in data:
                 data['site'] = Site(data['code'], data['family'],
                                     interface=interface)
@@ -918,9 +926,17 @@ class TestCase(TestTimerMixin, TestLoggingMixin, TestCaseBase):
         return page
 
 
-if sys.version_info[0] > 2:
-    import six
-    TestCase = six.add_metaclass(MetaTestCaseClass)(TestCase)
+class SiteAttributeTestCase(TestCase):
+
+    """Add the sites as attributes to the instances."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Add each initialized site as an attribute to cls."""
+        super(SiteAttributeTestCase, cls).setUpClass()
+        for site in cls.sites:
+            if 'site' in cls.sites[site]:
+                setattr(cls, site, cls.sites[site]['site'])
 
 
 class DefaultSiteTestCase(TestCase):
@@ -929,6 +945,23 @@ class DefaultSiteTestCase(TestCase):
 
     family = config.family
     code = config.mylang
+
+    @classmethod
+    def override_default_site(cls, site):
+        print('%s using %s instead of %s:%s.'
+              % (cls.__name__, site, cls.family, cls.code))
+        cls.site = site
+        cls.family = site.family.name
+        cls.code = site.code
+
+        cls.sites = {
+            cls.site: {
+                'family': cls.family,
+                'code': cls.code,
+                'site': cls.site,
+                'hostname': cls.site.hostname(),
+            }
+        }
 
 
 class AlteredDefaultSiteTestCase(TestCase):
@@ -995,19 +1028,7 @@ class WikimediaDefaultSiteTestCase(DefaultSiteTestCase, WikimediaSiteTestCase):
         site = cls.get_site()
 
         if not isinstance(site.family, WikimediaFamily):
-            print('%s using English Wikipedia instead of non-WMF config.family %s.'
-                  % (cls.__name__, cls.family))
-            cls.family = 'wikipedia'
-            cls.code = 'en'
-            cls.site = pywikibot.Site('en', 'wikipedia')
-            cls.sites = {
-                cls.site: {
-                    'family': 'wikipedia',
-                    'code': 'en',
-                    'site': cls.site,
-                    'hostname': cls.site.hostname(),
-                }
-            }
+            cls.override_default_site(pywikibot.Site('en', 'wikipedia'))
 
 
 class WikibaseTestCase(TestCase):
@@ -1152,24 +1173,45 @@ class PwbTestCase(TestCase):
         self.orig_pywikibot_dir = None
         if 'PYWIKIBOT2_DIR' in os.environ:
             self.orig_pywikibot_dir = os.environ['PYWIKIBOT2_DIR']
-        os.environ['PYWIKIBOT2_DIR'] = pywikibot.config.base_dir
+        base_dir = pywikibot.config.base_dir
+        if sys.platform == 'win32' and sys.version_info[0] < 3:
+            base_dir = str(base_dir)
+        os.environ[str('PYWIKIBOT2_DIR')] = base_dir
 
     def tearDown(self):
         """Restore the environment after running the pwb.py script."""
         super(PwbTestCase, self).tearDown()
         del os.environ['PYWIKIBOT2_DIR']
         if self.orig_pywikibot_dir:
-            os.environ['PYWIKIBOT2_DIR'] = self.orig_pywikibot_dir
+            os.environ[str('PYWIKIBOT2_DIR')] = self.orig_pywikibot_dir
 
     def _execute(self, args, data_in=None, timeout=0, error=None):
-        from tests.utils import execute_pwb
-
         site = self.get_site()
 
         args = args + ['-family:' + site.family.name,
                        '-code:' + site.code]
 
         return execute_pwb(args, data_in, timeout, error)
+
+
+class RecentChangesTestCase(WikimediaDefaultSiteTestCase):
+
+    """Test cases for tests that use recent change."""
+
+    # site.recentchanges() includes external edits from wikidata,
+    # except on wiktionaries which are not linked to wikidata
+    # so total=3 should not be too high for most sites.
+    length = 3
+
+    @classmethod
+    def setUpClass(cls):
+        if os.environ.get('PYWIKIBOT2_TEST_NO_RC', '0') == '1':
+            raise unittest.SkipTest('RecentChanges tests disabled.')
+
+        super(RecentChangesTestCase, cls).setUpClass()
+
+        if cls.get_site().code == 'test':
+            cls.override_default_site(pywikibot.Site('en', 'wikipedia'))
 
 
 class DebugOnlyTestCase(TestCase):

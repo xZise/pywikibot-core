@@ -5,6 +5,8 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -22,10 +24,12 @@ from pywikibot.family import Family
 
 from tests import _images_dir
 from tests.utils import DummySiteinfo
-from tests.aspects import unittest, TestCase, DefaultDrySiteTestCase
+from tests.aspects import (
+    unittest, TestCase, DefaultDrySiteTestCase, SiteAttributeTestCase,
+)
 
 
-class DryCachedRequestTests(TestCase):
+class DryCachedRequestTests(SiteAttributeTestCase):
 
     """Test CachedRequest using real site objects."""
 
@@ -44,8 +48,6 @@ class DryCachedRequestTests(TestCase):
 
     def setUp(self):
         super(DryCachedRequestTests, self).setUp()
-        self.basesite = self.get_site('basesite')
-        self.altsite = self.get_site('altsite')
         self.parms = {'site': self.basesite,
                       'action': 'query',
                       'meta': 'userinfo'}
@@ -192,7 +194,9 @@ class DryWriteAssertTests(DefaultDrySiteTestCase):
         self.assertRaisesRegex(pywikibot.Error, ' without userinfo',
                                Request, site=site, action='edit')
 
-        site._userinfo = {'name': '1.2.3.4', 'groups': []}
+        # Explicitly using str as the test expects it to be str (without the
+        # u-prefix) in Python 2 and this module is using unicode_literals
+        site._userinfo = {'name': str('1.2.3.4'), 'groups': []}
 
         self.assertRaisesRegex(pywikibot.Error, " as IP '1.2.3.4'",
                                Request, site=site, action='edit')

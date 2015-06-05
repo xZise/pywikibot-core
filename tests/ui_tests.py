@@ -1,11 +1,10 @@
 # -*- coding: utf-8  -*-
 """Tests for the user interface."""
 #
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
-
 # NOTE FOR RUNNING WINDOWS UI TESTS
 #
 # Windows UI tests have to be run using the tests\ui_tests.bat helper script.
@@ -25,18 +24,43 @@
 #     easy_install --upgrade https://pywinauto.googlecode.com/files/pywinauto-0.4.2.zip
 #
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
+import inspect
+import io
 import logging
 import os
+import subprocess
 import sys
 import time
-import io
+
+if os.name == "nt":
+    from multiprocessing.managers import BaseManager
+    import threading
+
+    try:
+        import win32api
+    except ImportError:
+        win32api = None
+
+    try:
+        import pywinauto
+    except ImportError:
+        pywinauto = None
+
+    try:
+        import win32clipboard
+    except ImportError:
+        win32clipboard = None
 
 import pywikibot
+
 from pywikibot.bot import (
     ui, DEBUG, VERBOSE, INFO, STDOUT, INPUT, WARNING, ERROR, CRITICAL
 )
+
 from tests.utils import unittest
 
 if sys.version_info[0] > 2:
@@ -62,6 +86,10 @@ class Stream(object):
         self._original = getattr(sys, self._name)
         patched_streams[self._original] = self._stream
 
+    def __repr__(self):
+        return '<patched %s %r wrapping %r>' % (
+            self._name, self._stream, self._original)
+
     def reset(self):
         """Reset own stream."""
         self._stream.truncate(0)
@@ -69,23 +97,18 @@ class Stream(object):
 
 
 if os.name == "nt":
-    from multiprocessing.managers import BaseManager
-    import threading
 
     class pywikibotWrapper(object):
 
         """pywikibot wrapper class."""
 
         def init(self):
-            import pywikibot  # noqa
             pywikibot.version._get_program_dir()
 
         def output(self, *args, **kwargs):
-            import pywikibot  # noqa
             return pywikibot.output(*args, **kwargs)
 
         def request_input(self, *args, **kwargs):
-            import pywikibot  # noqa
             self.input = None
 
             def threadedinput():
@@ -98,11 +121,9 @@ if os.name == "nt":
             return self.input
 
         def set_config(self, key, value):
-            import pywikibot  # noqa
             setattr(pywikibot.config, key, value)
 
         def set_ui(self, key, value):
-            import pywikibot  # noqa
             setattr(pywikibot.ui, key, value)
 
         def cls(self):
@@ -114,15 +135,23 @@ if os.name == "nt":
 
         pass
 
-    pywikibotManager.register('pywikibot', pywikibotWrapper)
-    _manager = pywikibotManager(address=("127.0.0.1", 47228), authkey="4DJSchgwy5L5JxueZEWbxyeG")
+    pywikibotManager.register(str('pywikibot'), pywikibotWrapper)
+    _manager = pywikibotManager(
+        address=('127.0.0.1', 47228),
+        authkey=b'4DJSchgwy5L5JxueZEWbxyeG')
     if len(sys.argv) > 1 and sys.argv[1] == "--run-as-slave-interpreter":
         s = _manager.get_server()
         s.serve_forever()
 
 
 def patched_print(text, targetStream):
-    org_print(text, patched_streams[targetStream])
+    try:
+        stream = patched_streams[targetStream]
+    except KeyError:
+        assert(isinstance(targetStream, pywikibot.userinterfaces.win32_unicode.UnicodeOutput))
+        assert(targetStream._stream)
+        stream = patched_streams[targetStream._stream]
+    org_print(text, stream)
 
 
 def patched_input():
@@ -137,6 +166,19 @@ strin = Stream('in', {})
 newstdout = strout._stream
 newstderr = strerr._stream
 newstdin = strin._stream
+
+if sys.version_info[0] == 2:
+    # In Python 2 the sys.std* streams use bytes instead of unicode
+    # But this module is using unicode_literals so '…' will generate unicode
+    # So it'll convert those back into bytes
+    original_write = newstdin.write
+
+    def encoded_write(text):
+        if isinstance(text, unicode):
+            text = text.encode('utf8')
+        original_write(text)
+
+    newstdin.write = encoded_write
 
 org_print = ui._print
 org_input = ui._raw_input
@@ -302,7 +344,7 @@ class TestTerminalInput(UITestCase):
 
     """Terminal input tests."""
 
-    input_choice_output = 'question ([A]nswer 1, a[n]swer 2, an[s]wer 3) '
+    input_choice_output = 'question ([A]nswer 1, a[n]swer 2, an[s]wer 3): '
 
     def testInput(self):
         newstdin.write('input to read\n')
@@ -311,7 +353,7 @@ class TestTerminalInput(UITestCase):
         returned = pywikibot.input('question')
 
         self.assertEqual(newstdout.getvalue(), '')
-        self.assertEqual(newstderr.getvalue(), 'question ')
+        self.assertEqual(newstderr.getvalue(), 'question: ')
 
         self.assertIsInstance(returned, unicode)
         self.assertEqual(returned, u'input to read')
@@ -439,7 +481,7 @@ class TestTerminalUnicodeUnix(UITestCase):
         self.assertEqual(newstdout.getvalue(), '')
         self.assertEqual(
             newstderr.getvalue(),
-            self._encode(u'Википедию?  ', 'utf-8'))
+            self._encode(u'Википедию? ', 'utf-8'))
 
         self.assertIsInstance(returned, unicode)
         self.assertEqual(returned, u'Заглавная_страница')
@@ -472,22 +514,46 @@ class WindowsTerminalTestCase(UITestCase):
     def setUpClass(cls):
         if os.name != 'nt':
             raise unittest.SkipTest('requires Windows console')
+        if not win32api:
+            raise unittest.SkipTest('requires Windows package pywin32')
+        if not win32clipboard:
+            raise unittest.SkipTest('requires Windows package win32clipboard')
+        if not pywinauto:
+            raise unittest.SkipTest('requires Windows package pywinauto')
+        try:
+            # pywinauto 0.5.0
+            cls._app = pywinauto.Application()
+        except AttributeError as e1:
+            try:
+                cls._app = pywinauto.application.Application()
+            except AttributeError as e2:
+                raise unittest.SkipTest('pywinauto Application failed: %s\n%s'
+                                        % (e1, e2))
         super(WindowsTerminalTestCase, cls).setUpClass()
 
     @classmethod
     def setUpProcess(cls, command):
-        import pywinauto
-        import subprocess
         si = subprocess.STARTUPINFO()
         si.dwFlags = subprocess.STARTF_USESTDHANDLES
         cls._process = subprocess.Popen(command,
                                         creationflags=subprocess.CREATE_NEW_CONSOLE)
 
-        cls._app = pywinauto.application.Application()
         cls._app.connect_(process=cls._process.pid)
 
         # set truetype font (Lucida Console, hopefully)
-        cls._app.window_().TypeKeys('% {UP}{ENTER}^L{HOME}L{ENTER}', with_spaces=True)
+        try:
+            window = cls._app.window_()
+        except Exception as e:
+            cls.tearDownProcess()
+            raise unittest.SkipTest('Windows package pywinauto could not locate window: %r'
+                                    % e)
+
+        try:
+            window.TypeKeys('% {UP}{ENTER}^L{HOME}L{ENTER}', with_spaces=True)
+        except Exception as e:
+            cls.tearDownProcess()
+            raise unittest.SkipTest('Windows package pywinauto could not use window TypeKeys: %r'
+                                    % e)
 
     @classmethod
     def tearDownProcess(cls):
@@ -515,15 +581,11 @@ class WindowsTerminalTestCase(UITestCase):
             time.sleep(0.01)
 
     def setclip(self, text):
-        import win32clipboard
-
         win32clipboard.OpenClipboard()
         win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, unicode(text))
         win32clipboard.CloseClipboard()
 
     def getclip(self):
-        import win32clipboard
-
         win32clipboard.OpenClipboard()
         data = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
         win32clipboard.CloseClipboard()
@@ -545,7 +607,6 @@ class TestWindowsTerminalUnicode(WindowsTerminalTestCase):
     @classmethod
     def setUpClass(cls):
         super(TestWindowsTerminalUnicode, cls).setUpClass()
-        import inspect
         fn = inspect.getfile(inspect.currentframe())
         cls.setUpProcess(['python', 'pwb.py', fn, '--run-as-slave-interpreter'])
 

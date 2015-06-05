@@ -5,6 +5,8 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __release__ = '2.0b3'
 __version__ = '$Id$'
 
@@ -38,7 +40,8 @@ from pywikibot.bot import (
 from pywikibot.exceptions import (
     Error, InvalidTitle, BadTitle, NoPage, SectionError,
     SiteDefinitionError, NoSuchSite, UnknownSite, UnknownFamily,
-    NoUsername, UserBlocked, UserActionRefuse,
+    UnknownExtension,
+    NoUsername, UserBlocked,
     PageRelatedError, IsRedirectPage, IsNotRedirectPage,
     PageSaveRelatedError, PageNotSaved, OtherPageSaveError,
     LockedPage, CascadeLockedPage, LockedNoPage, NoCreateError,
@@ -75,6 +78,7 @@ __all__ = ('config', 'ui', 'UnicodeMixin', 'translate',
            'calledModuleName', 'Bot', 'CurrentPageBot', 'WikidataBot',
            'Error', 'InvalidTitle', 'BadTitle', 'NoPage', 'SectionError',
            'SiteDefinitionError', 'NoSuchSite', 'UnknownSite', 'UnknownFamily',
+           'UnknownExtension',
            'NoUsername', 'UserBlocked', 'UserActionRefuse',
            'PageRelatedError', 'IsRedirectPage', 'IsNotRedirectPage',
            'PageSaveRelatedError', 'PageNotSaved', 'OtherPageSaveError',
@@ -558,21 +562,25 @@ def Site(code=None, fam=None, user=None, sysop=None, interface=None, url=None):
                 code = cached[0]
                 fam = cached[1]
             else:
-                raise Error("Unknown URL '{0}'.".format(url))
+                raise SiteDefinitionError("Unknown URL '{0}'.".format(url))
         else:
             # Iterate through all families and look, which does apply to
             # the given URL
             for fam in config.family_files:
-                family = pywikibot.family.Family.load(fam)
-                code = family.from_url(url)
-                if code:
-                    _url_cache[url] = (code, fam)
-                    break
+                try:
+                    family = pywikibot.family.Family.load(fam)
+                    code = family.from_url(url)
+                    if code:
+                        _url_cache[url] = (code, fam)
+                        break
+                except Exception as e:
+                    pywikibot.warning('Error in Family(%s).from_url: %s'
+                                      % (fam, e))
             else:
                 _url_cache[url] = None
                 # TODO: As soon as AutoFamily is ready, try and use an
                 #       AutoFamily
-                raise Error("Unknown URL '{0}'.".format(url))
+                raise SiteDefinitionError("Unknown URL '{0}'.".format(url))
     else:
         # Fallback to config defaults
         code = code or config.mylang
@@ -638,14 +646,14 @@ def setAction(s):
     config.default_edit_summary = s
 
 
-def showDiff(oldtext, newtext):
+def showDiff(oldtext, newtext, context=0):
     """
     Output a string showing the differences between oldtext and newtext.
 
     The differences are highlighted (only on compatible systems) to show which
     changes were made.
     """
-    PatchManager(oldtext, newtext).print_hunks()
+    PatchManager(oldtext, newtext, context=context).print_hunks()
 
 
 # Throttle and thread handling
@@ -713,6 +721,7 @@ def async_manager():
         if request is None:
             break
         request(*args, **kwargs)
+        page_put_queue.task_done()
 
 
 def async_request(request, *args, **kwargs):
@@ -742,3 +751,7 @@ wrapper._add_deprecated_attr(
     'PageNotFound', pywikibot.exceptions.DeprecatedPageNotFoundError,
     warning_message=('{0}.{1} is deprecated, and no longer '
                      'used by pywikibot; use http.fetch() instead.'))
+wrapper._add_deprecated_attr(
+    'UserActionRefuse', pywikibot.exceptions._EmailUserError,
+    warning_message='UserActionRefuse is deprecated; '
+                    'use UserRightsError and/or NotEmailableError')

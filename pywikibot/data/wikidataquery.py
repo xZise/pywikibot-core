@@ -4,11 +4,13 @@
 # (C) Pywikibot team, 2013
 #
 # Distributed under the terms of the MIT license.
+from __future__ import unicode_literals
 
 import json
 import sys
 if sys.version_info[0] > 2:
     from urllib.parse import quote
+    basestring = (str, )
 else:
     from urllib2 import quote
 import pickle
@@ -250,7 +252,7 @@ class HasClaim(Query):
         """Constructor."""
         self.prop = self.convertWDType(prop)
 
-        if isinstance(items, Tree):
+        if isinstance(items, Query):
             self.items = items
         elif isinstance(self, StringClaim):
             self.items = listify(items)
@@ -267,12 +269,12 @@ class HasClaim(Query):
         return res
 
     def validate(self):
-        return self.isOrContainsOnlyTypes(self.items, [int, Tree])
+        return self.isOrContainsOnlyTypes(self.items, [int, Query])
 
     def __str__(self):
         if isinstance(self.items, list):
             return "%s[%s%s]" % (self.queryType, self.prop, self.formatItems())
-        elif isinstance(self.items, Tree):  # maybe Query?
+        elif isinstance(self.items, Query):
             return "%s[%s:(%s)]" % (self.queryType, self.prop, self.items)
 
 
@@ -294,7 +296,7 @@ class StringClaim(HasClaim):
         return '"%s"' % x
 
     def validate(self):
-        return self.isOrContainsOnlyTypes(self.items, str)
+        return self.isOrContainsOnlyTypes(self.items, basestring)
 
 
 class Tree(Query):
@@ -368,7 +370,7 @@ class Between(Query):
     to be in UTC, timezones are not supported by the API
 
     @param prop: the property
-    @param begin: WbTime object representign the beginning of the period
+    @param begin: WbTime object representing the beginning of the period
     @param end: WbTime object representing the end of the period
     """
 
@@ -408,7 +410,7 @@ class Link(Query):
         self.validateOrRaise()
 
     def validate(self):
-        return self.isOrContainsOnlyTypes(self.link, str)
+        return self.isOrContainsOnlyTypes(self.link, basestring)
 
     def __str__(self):
         return "%s[%s]" % (self.queryType, self.formatList(self.link))
@@ -558,16 +560,25 @@ class WikidataQuery():
         url = self.getUrl(queryStr)
 
         try:
-            resp = http.request(None, url)
+            resp = http.fetch(url)
         except:
             pywikibot.warning(u"Failed to retrieve %s" % url)
             raise
 
+        data = resp.content
+        if not data:
+            pywikibot.warning('No data received for %s' % url)
+            raise pywikibot.ServerError('No data received for %s' % url)
+
         try:
-            data = json.loads(resp)
+            data = json.loads(data)
         except ValueError:
-            pywikibot.warning(u"Data received from host but no JSON could be decoded")
-            raise pywikibot.ServerError("Data received from host but no JSON could be decoded")
+            pywikibot.warning(
+                'Data received for %s but no JSON could be decoded: %r'
+                % (url, data))
+            raise pywikibot.ServerError(
+                'Data received for %s but no JSON could be decoded: %r'
+                % (url, data))
 
         return data
 

@@ -5,11 +5,13 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 import pywikibot
 from pywikibot import config2 as config
-from pywikibot.page import Link
+from pywikibot.page import Link, Page
 from pywikibot.exceptions import Error, InvalidTitle
 from tests.aspects import (
     unittest,
@@ -34,6 +36,7 @@ class TestLink(DefaultDrySiteTestCase):
     """
 
     def test_valid(self):
+        """Test that valid titles are correctly normalized."""
         self.assertEqual(Link('Sandbox', self.get_site()).title, 'Sandbox')
         self.assertEqual(Link('A "B"', self.get_site()).title, 'A "B"')
         self.assertEqual(Link('A \'B\'', self.get_site()).title, 'A \'B\'')
@@ -66,6 +69,7 @@ class TestLink(DefaultDrySiteTestCase):
         self.assertEqual(l.section, 'B')
 
     def test_invalid(self):
+        """Test that invalid titles raise InvalidTitle exception."""
         self.assertRaises(InvalidTitle, Link('', self.get_site()).parse)
         self.assertRaises(InvalidTitle, Link(':', self.get_site()).parse)
         self.assertRaises(InvalidTitle, Link('__  __', self.get_site()).parse)
@@ -104,6 +108,21 @@ class TestLink(DefaultDrySiteTestCase):
         self.assertRaises(InvalidTitle, Link('Category: ', self.get_site()).parse)
         self.assertRaises(InvalidTitle, Link('Category: #bar', self.get_site()).parse)
 
+    def test_relative(self):
+        """Test that relative links are handled properly."""
+        # Subpage
+        p = Page(self.get_site(), 'Foo')
+        l = Link('/bar', p)
+        self.assertEquals(l.title, 'Foo/bar')
+        self.assertEquals(l.site, self.get_site())
+        # Subpage of Page with section
+        p = Page(self.get_site(), 'Foo#Baz')
+        l = Link('/bar', p)
+        self.assertEquals(l.title, 'Foo/bar')
+        self.assertEquals(l.site, self.get_site())
+        # Non-subpage link text beginning with slash
+        l = Link('/bar', self.get_site())
+        self.assertEquals(l.title, '/bar')
 
 # ---- The first set of tests are explicit links, starting with a ':'.
 

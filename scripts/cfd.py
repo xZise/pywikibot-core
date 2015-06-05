@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
 This script processes the Categories for discussion working page.
@@ -14,6 +15,8 @@ Syntax: python cfd.py
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -176,7 +179,7 @@ def findDay(pageTitle, oldDay):
         # Try to parse day link from CFD template parameters.
         templates = page.templatesWithParams()
         for template in templates:
-            if template[0] in cfdTemplates:
+            if template[0].title() in cfdTemplates:
                 params = template[1]
                 (day, month, year) = [None, None, None]
                 for param in params:

@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8  -*-
 """Wrapper script to use Pywikibot in 'directory' mode.
 
@@ -12,7 +13,7 @@ search paths so the package does not need to be installed, etc.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
 __version__ = '$Id$'
 
 # The following snippet was developed by Ned Batchelder (and others)
@@ -26,6 +27,8 @@ import os
 import re
 import sys
 import types
+
+from warnings import warn
 
 pwb = None
 
@@ -57,7 +60,8 @@ def run_python_file(filename, argv, argvu, package=None):
 
     # Create a module to serve as __main__
     old_main_mod = sys.modules['__main__']
-    main_mod = types.ModuleType('__main__')
+    # it's explicitly using str() to bypass unicode_literals in Python 2
+    main_mod = types.ModuleType(str('__main__'))
     sys.modules['__main__'] = main_mod
     main_mod.__file__ = filename
     if sys.version_info[0] > 2:
@@ -65,7 +69,8 @@ def run_python_file(filename, argv, argvu, package=None):
     else:
         main_mod.__builtins__ = sys.modules['__builtin__']
     if package:
-        main_mod.__package__ = package
+        # it's explicitly using str() to bypass unicode_literals in Python 2
+        main_mod.__package__ = str(package)
 
     # Set sys.argv and the first path element properly.
     old_argv = sys.argv
@@ -77,7 +82,8 @@ def run_python_file(filename, argv, argvu, package=None):
     sys.path[0] = os.path.dirname(filename)
 
     try:
-        source = open(filename).read()
+        with open(filename, 'rb') as f:
+            source = f.read()
         exec(compile(source, filename, "exec", dont_inherit=True),
              main_mod.__dict__)
     finally:
@@ -90,6 +96,17 @@ def run_python_file(filename, argv, argvu, package=None):
         pwb.argvu = old_argvu
 
 # end of snippet from coverage
+
+
+def abspath(path):
+    """Convert path to absolute path, with uppercase drive letter on win32."""
+    path = os.path.abspath(path)
+    if path[0] != '/':
+        # normalise Windows drive letter
+        # TODO: use pywikibot.tools.first_upper
+        path = path[0].upper() + path[1:]
+    return path
+
 
 if sys.version_info[0] not in (2, 3):
     raise RuntimeError("ERROR: Pywikibot only runs under Python 2 "
@@ -105,57 +122,38 @@ if version >= (3, ) and version < (3, 3):
 # Establish a normalised path for the directory containing pwb.py.
 # Either it is '.' if the user's current working directory is the same,
 # or it is the absolute path for the directory of pwb.py
-absolute_path = os.path.dirname(sys.argv[0])
-if not os.path.isabs(absolute_path):
-    absolute_path = os.path.abspath(os.path.join(os.curdir, absolute_path))
+absolute_path = abspath(os.path.dirname(sys.argv[0]))
 rewrite_path = absolute_path
 
 sys.path = [sys.path[0], rewrite_path,
             os.path.join(rewrite_path, 'pywikibot', 'compat'),
-            os.path.join(rewrite_path, 'externals')
             ] + sys.path[1:]
 
-# try importing the known externals, and raise an error if they are not found
 try:
-    import httplib2
-    if not hasattr(httplib2, '__version__'):
-        print("httplib2 import problem: httplib2.__version__ does not exist.")
-        if sys.version_info > (3, 3):
-            print("Python 3.4+ has probably loaded externals/httplib2 "
-                  "although it doesnt have an __init__.py.")
-        httplib2 = None
+    import requests
+    if not hasattr(requests, '__version__'):
+        print("requests import problem: requests.__version__ does not exist.")
+        requests = None
 except ImportError as e:
     print("ImportError: %s" % e)
-    httplib2 = None
+    requests = None
 
-if not httplib2:
-    print("Python module httplib2 >= 0.6.0 is required.")
-    print("Did you clone without --recursive?\n"
-          "Try running 'git submodule update --init' "
-          "or 'pip install httplib2'.")
+if not requests:
+    print("Python module requests is required.")
+    print("Try running 'pip install requests'.")
     sys.exit(1)
 
-# httplib2 0.6.0 was released with __version__ as '$Rev$'
-#                and no module variable CA_CERTS.
-if httplib2.__version__ == '$Rev$' and 'CA_CERTS' not in httplib2.__dict__:
-    httplib2.__version__ = '0.6.0'
-from distutils.version import StrictVersion
-if StrictVersion(httplib2.__version__) < StrictVersion("0.6.0"):
-    print("Python module httplib2 (%s) needs to be 0.6.0 or greater." %
-          httplib2.__file__)
-    print("Did you clone without --recursive?\n"
-          "Try running 'git submodule update --init' "
-          "or 'pip install --upgrade httplib2'.")
-    sys.exit(1)
-
-del httplib2
+del requests
 
 # Search for user-config.py before creating one.
 try:
     # If successful, user-config.py already exists in one of the candidate
     # directories. See config2.py for details on search order.
     # Use env var to communicate to config2.py pwb.py location (bug 72918).
-    os.environ['PYWIKIBOT2_DIR_PWB'] = os.path.split(__file__)[0]
+    _pwb_dir = os.path.split(__file__)[0]
+    if sys.platform == 'win32' and sys.version_info[0] < 3:
+        _pwb_dir = str(_pwb_dir)
+    os.environ[str('PYWIKIBOT2_DIR_PWB')] = _pwb_dir
     import pywikibot  # noqa
 except RuntimeError as err:
     # user-config.py to be created
@@ -166,7 +164,9 @@ except RuntimeError as err:
                     [])
     sys.exit(1)
 
-if __name__ == "__main__":
+
+def main():
+    """Command line entry point."""
     if len(sys.argv) > 1 and not re.match('-{1,2}help', sys.argv[1]):
         file_package = None
         tryimport_pwb()
@@ -193,10 +193,10 @@ if __name__ == "__main__":
         # This is a rough (and quick!) emulation of 'package name' detection.
         # a much more detailed implementation is in coverage's find_module.
         # https://bitbucket.org/ned/coveragepy/src/default/coverage/execfile.py
-        cwd = os.path.abspath(os.getcwd())
+        cwd = abspath(os.getcwd())
         if absolute_path == cwd:
-            absolute_filename = os.path.abspath(filename)
-            if absolute_filename.startswith(rewrite_path):
+            absolute_filename = abspath(filename)[:len(cwd)]
+            if absolute_filename == cwd:
                 relative_filename = os.path.relpath(filename)
                 # remove the filename, and use '.' instead of path separator.
                 file_package = os.path.dirname(
@@ -207,9 +207,14 @@ if __name__ == "__main__":
             try:
                 __import__(file_package)
             except ImportError as e:
-                print('Parent module %s not found: %s'
-                      % (file_package, e), file=sys.stderr)
+                warn('Parent module %s not found: %s'
+                     % (file_package, e), ImportWarning)
 
         run_python_file(filename, argv, argvu, file_package)
+        return True
     else:
+        return False
+
+if __name__ == '__main__':
+    if not main():
         print(__doc__)

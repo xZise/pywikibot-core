@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
 Fetch and add titles for bare links in references.
@@ -41,7 +42,7 @@ See [[:en:User:DumZiBoT/refLinks]] for more information on the bot.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import division
+from __future__ import division, unicode_literals
 __version__ = '$Id$'
 #
 
@@ -453,14 +454,14 @@ class ReferencesRobot(Bot):
             raise
 
         # Regex to grasp content-type meta HTML tag in HTML source
-        self.META_CONTENT = re.compile(r'(?i)<meta[^>]*content\-type[^>]*>')
+        self.META_CONTENT = re.compile(br'(?i)<meta[^>]*content\-type[^>]*>')
         # Extract the encoding from a charset property (from content-type !)
-        self.CHARSET = re.compile(r'(?i)charset\s*=\s*(?P<enc>[^\'",;>/]*)')
+        self.CHARSET = re.compile(br'(?i)charset\s*=\s*(?P<enc>[^\'",;>/]*)')
         # Extract html title from page
         self.TITLE = re.compile(r'(?is)(?<=<title>).*?(?=</title>)')
         # Matches content inside <script>/<style>/HTML comments
         self.NON_HTML = re.compile(
-            r'(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|<!--.*?-->|<!\[CDATA\[.*?\]\]>')
+            br'(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|<!--.*?-->|<!\[CDATA\[.*?\]\]>')
 
         # Authorized mime types for HTML pages
         self.MIME = re.compile(
@@ -554,7 +555,10 @@ class ReferencesRobot(Bot):
                         f = urlopen(ref.url)
                     # Try to get Content-Type from server
                     headers = f.info()
-                    contentType = headers.getheader('Content-Type')
+                    if sys.version_info[0] > 2:
+                        contentType = headers.get_content_type()
+                    else:
+                        contentType = headers.getheader('Content-Type')
                     if contentType and not self.MIME.search(contentType):
                         if ref.link.lower().endswith('.pdf') and \
                            not self.getOption('ignorepdf'):
@@ -644,7 +648,7 @@ class ReferencesRobot(Bot):
                         f.close()
 
                 # remove <script>/<style>/comments/CDATA tags
-                linkedpagetext = self.NON_HTML.sub('', linkedpagetext)
+                linkedpagetext = self.NON_HTML.sub(b'', linkedpagetext)
 
                 meta_content = self.META_CONTENT.search(linkedpagetext)
                 enc = []
@@ -754,7 +758,7 @@ class ReferencesRobot(Bot):
 
             new_text = self.deduplicator.process(new_text)
 
-            self.userPut(page, page.text, new_text, comment=self.msg,
+            self.userPut(page, page.text, new_text, summary=self.msg,
                          ignore_save_related_errors=True,
                          ignore_server_errors=True)
 

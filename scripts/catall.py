@@ -1,5 +1,5 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
-
 """
 This script shows the categories on each page and lets you change them.
 
@@ -23,6 +23,8 @@ Options:
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -74,7 +76,7 @@ def make_categories(page, list, site=None):
         pllist.append(pywikibot.Page(site, cattitle))
     page.put_async(textlib.replaceCategoryLinks(page.get(), pllist,
                                                 site=page.site),
-                   comment=i18n.twtranslate(site.code, 'catall-changing'))
+                   summary=i18n.twtranslate(site.code, 'catall-changing'))
 
 
 def main(*args):

@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
 This script can be used to delete and undelete pages en masse.
@@ -30,6 +31,8 @@ Delete everything in the category "To delete" without prompting.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 

@@ -72,6 +72,11 @@ Furthermore, the following command line parameters are supported:
                   (or no replacements are defined via -fix or the arguments)
                   it'll ask for additional replacements at start.
 
+-replacementfile  Lines from the given file name(s) will be read as replacement
+                  arguments. i.e. a file containing lines "a" and "b", used as
+                  python replace.py -page:X -replacementfile:file c d
+                  will replace 'a' with 'b' and 'c' with 'd'.
+
 -always           Don't prompt you for each replacement
 
 -recursive        Recurse replacement as long as possible. Be careful, this
@@ -122,20 +127,26 @@ Please type "replace.py -help | more" if you can't read the top of the help.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
+import codecs
 import collections
 import re
 import time
 import sys
 
 import pywikibot
+
 from pywikibot import i18n, textlib, pagegenerators, Bot
 from pywikibot import editor as editarticle
 
 # Imports predefined replacements tasks from fixes.py
 from pywikibot import fixes
+
+from pywikibot.tools import chars, deprecated_args
 
 if sys.version_info[0] > 2:
     basestring = (str, )
@@ -395,9 +406,10 @@ class ReplaceRobot(Bot):
 
     """A bot that can do text replacements."""
 
+    @deprecated_args(acceptall='always')
     def __init__(self, generator, replacements, exceptions={},
-                 acceptall=False, allowoverlap=False, recursive=False,
-                 addedCat=None, sleep=None, summary='', site=None):
+                 always=False, allowoverlap=False, recursive=False,
+                 addedCat=None, sleep=None, summary='', site=None, **kwargs):
         """
         Constructor.
 
@@ -409,12 +421,13 @@ class ReplaceRobot(Bot):
                              string).
             * exceptions   - A dictionary which defines when not to change an
                              occurrence. See below.
-            * acceptall    - If True, the user won't be prompted before changes
+            * always       - If True, the user won't be prompted before changes
                              are made.
             * allowoverlap - If True, when matches overlap, all of them are
                              replaced.
             * addedCat     - If set to a value, add this category to every page
                              touched.
+                             It can be a string or a Category object.
 
         Structure of the exceptions dictionary:
         This dictionary can have these keys:
@@ -435,7 +448,11 @@ class ReplaceRobot(Bot):
                 exceptionRegexes dictionary in textlib.replaceExcept().
 
         """
-        super(ReplaceRobot, self).__init__(generator=generator)
+        super(ReplaceRobot, self).__init__(generator=generator,
+                                           always=always,
+                                           site=site,
+                                           **kwargs)
+
         for i, replacement in enumerate(replacements):
             if isinstance(replacement, collections.Sequence):
                 if len(replacement) != 2:
@@ -447,15 +464,16 @@ class ReplaceRobot(Bot):
                                                             replacement[1])
         self.replacements = replacements
         self.exceptions = exceptions
-        self.acceptall = acceptall
+        self.acceptall = always  # deprecated
         self.allowoverlap = allowoverlap
         self.recursive = recursive
-        if site:
-            self.site = site
+
         if addedCat:
-            cat_ns = site.category_namespaces()[0]
-            self.addedCat = pywikibot.Page(self.site,
-                                           cat_ns + ':' + addedCat)
+            if isinstance(addedCat, pywikibot.Category):
+                self.addedCat = addedCat
+            else:
+                self.addedCat = pywikibot.Category(self.site, addedCat)
+
         self.sleep = sleep
         self.summary = summary
         self.changed_pages = 0
@@ -585,8 +603,10 @@ class ReplaceRobot(Bot):
                     pywikibot.output(u'No changes were necessary in %s'
                                      % page.title(asLink=True))
                     break
-                if hasattr(self, "addedCat"):
-                    cats = page.categories(nofollow_redirects=True)
+                if hasattr(self, 'addedCat'):
+                    # Fetch only categories in wikitext, otherwise the others will
+                    # be explicitly added.
+                    cats = textlib.getCategoryLinks(new_text, site=page.site)
                     if self.addedCat not in cats:
                         cats.append(self.addedCat)
                         new_text = textlib.replaceCategoryLinks(new_text,
@@ -597,7 +617,7 @@ class ReplaceRobot(Bot):
                 pywikibot.output(u"\n\n>>> \03{lightpurple}%s\03{default} <<<"
                                  % page.title())
                 pywikibot.showDiff(original_text, new_text)
-                if self.acceptall:
+                if self.getOption('always'):
                     break
                 choice = pywikibot.input_choice(
                     u'Do you want to accept these changes?',
@@ -622,12 +642,12 @@ class ReplaceRobot(Bot):
                     new_text = original_text
                     continue
                 if choice == 'a':
-                    self.acceptall = True
+                    self.options['always'] = True
                 if choice == 'y':
                     page.put_async(new_text, self.generate_summary(applied), callback=self.count_changes)
                 # choice must be 'N'
                 break
-            if self.acceptall and new_text != original_text:
+            if self.getOption('always') and new_text != original_text:
                 try:
                     page.put(new_text, self.generate_summary(applied), callback=self.count_changes)
                 except pywikibot.EditConflict:
@@ -712,6 +732,9 @@ def main(*args):
     sleep = None
     # Request manual replacements even if replacements are already defined
     manual_input = False
+    # Replacements loaded from a file
+    replacement_file = None
+    replacement_file_arg_misplaced = False
 
     # Read commandline parameters.
 
@@ -768,13 +791,48 @@ def main(*args):
             allowoverlap = True
         elif arg.startswith('-manualinput'):
             manual_input = True
+        elif arg.startswith('-replacementfile'):
+            if len(commandline_replacements) % 2:
+                replacement_file_arg_misplaced = True
+
+            if arg == '-replacementfile':
+                replacement_file = pywikibot.input(
+                    u'Please enter the filename to read replacements from:')
+            else:
+                replacement_file = arg[len('-replacementfile:'):]
         else:
             commandline_replacements.append(arg)
 
     site = pywikibot.Site()
 
-    if (len(commandline_replacements) % 2):
-        raise pywikibot.Error('require even number of replacements.')
+    if len(commandline_replacements) % 2:
+        pywikibot.error('Incomplete command line pattern replacement pair.')
+        return False
+
+    if replacement_file_arg_misplaced:
+        pywikibot.error(
+            '-replacementfile used between a pattern replacement pair.')
+        return False
+
+    if replacement_file:
+        try:
+            with codecs.open(replacement_file, 'r', 'utf-8') as f:
+                file_replacements = f.readlines()
+        except (IOError, OSError) as e:
+            pywikibot.error(u'Error loading {0}: {1}'.format(
+                replacement_file, e))
+            return False
+
+        if len(file_replacements) % 2:
+            pywikibot.error(
+                '{0} contains an incomplete pattern replacement pair.'.format(
+                    replacement_file))
+            return False
+
+        # Strip BOM from first line
+        file_replacements[0].lstrip(u'\uFEFF')
+        commandline_replacements.extend(file_replacements)
+
     if not(commandline_replacements or fixes_set) or manual_input:
         old = pywikibot.input(u'Please enter the text that should be replaced:')
         while old:
@@ -815,6 +873,9 @@ def main(*args):
         except KeyError:
             pywikibot.output(u'Available predefined fixes are: %s'
                              % ', '.join(fixes.fixes.keys()))
+            if not fixes.user_fixes_loaded:
+                pywikibot.output('The user fixes file could not be found: '
+                                 '{0}'.format(fixes.filename))
             return
         if "msg" in fix:
             if isinstance(fix['msg'], basestring):
@@ -829,6 +890,14 @@ def main(*args):
                                           set_summary)
         for replacement in fix['replacements']:
             summary = None if len(replacement) < 3 else replacement[2]
+            if chars.contains_invisible(replacement[0]):
+                pywikibot.warning('The old string "{0}" contains formatting '
+                                  'characters like U+200E'.format(
+                    chars.replace_invisible(replacement[0])))
+            if chars.contains_invisible(replacement[1]):
+                pywikibot.warning('The new string "{0}" contains formatting '
+                                  'characters like U+200E'.format(
+                    chars.replace_invisible(replacement[1])))
             replacements.append(ReplacementListEntry(
                 old=replacement[0],
                 new=replacement[1],

@@ -5,6 +5,8 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 from collections import Container, MutableMapping
@@ -139,6 +141,12 @@ class ParamInfo(Container):
 
     Provides cache aware fetching of parameter information.
 
+    Full support for MW 1.12+, when 'paraminfo' was introduced to the API.
+    Partially supports MW 1.11, using data extracted from API 'help'.
+    MW 1.10 not supported as module prefixes are not extracted from API 'help'.
+
+    TODO: Rewrite help parser to support earlier releases.
+
     TODO: establish a data structure in the class which prefills
         the param information available for a site given its
         version, using the API information available for each
@@ -168,7 +176,7 @@ class ParamInfo(Container):
         @type preloaded_modules: set of string
         @param modules_only_mode: use the 'modules' only syntax for API request
         @type: modules_only_mode: bool or None to only use default, which True
-            if the site is 1.25wm4+
+            if the site is 1.25wmf4+
         """
         self.site = site
 
@@ -194,6 +202,10 @@ class ParamInfo(Container):
 
     def _init(self):
         _mw_ver = MediaWikiVersion(self.site.version())
+
+        if _mw_ver < MediaWikiVersion('1.15'):
+            self._parse_help(_mw_ver)
+
         # The paraminfo api deprecated the old request syntax of
         # querymodules='info'; to avoid warnings sites with 1.25wmf4+
         # must only use 'modules' parameter.
@@ -271,12 +283,14 @@ class ParamInfo(Container):
         self.__inited = True
 
     def _emulate_pageset(self):
+        """Emulate the pageset module, which existed in MW 1.15-1.24."""
         # pageset isnt a module in the new system, so it is emulated, with
         # the paraminfo from the query module.
         assert('query' in self._paraminfo)
 
         self._paraminfo['pageset'] = {
             'name': 'pageset',
+            'path': 'pageset',
             'classname': 'ApiPageSet',
             'prefix': '',
             'readrights': '',
@@ -284,9 +298,213 @@ class ParamInfo(Container):
             'parameters': self._paraminfo['query']['parameters']
         }
 
+    def _parse_help(self, _mw_ver):
+        """Emulate paraminfo data using help."""
+        # 1.14 paraminfo 'main' module doesnt exist.
+        # paraminfo only exists 1.12+.
+
+        # Request need ParamInfo to determine use_get
+        request = CachedRequest(expiry=config.API_config_expiry,
+                                use_get=True, site=self.site, action='help')
+        result = request.submit()
+
+        assert('help' in result)
+        assert(isinstance(result['help'], dict))
+        assert('mime' in result['help'])
+        assert(result['help']['mime'] == 'text/plain')
+        assert('help' in result['help'])
+        assert(isinstance(result['help']['help'], basestring))
+
+        help_text = result['help']['help']
+
+        start = help_text.find('What action you would like to perform')
+        start = help_text.find('One value: ', start) + len('One value: ')
+        end = help_text.find('\n', start)
+
+        action_modules = help_text[start:end].split(', ')
+
+        self._paraminfo['main'] = {
+            'name': 'main',
+            'path': 'main',
+            'classname': 'ApiMain',
+            'prefix': '',
+            'readrights': '',
+            'helpurls': [],
+            'parameters': [
+                {
+                    "name": "action",
+                    'type': action_modules,
+                },
+            ],
+        }
+
+        if _mw_ver >= MediaWikiVersion('1.12'):
+            return
+
+        query_help_list_prefix = "Values (separate with '|'): "
+
+        start = help_text.find('Which properties to get')
+        start = help_text.find(query_help_list_prefix, start)
+        start += len(query_help_list_prefix)
+        end = help_text.find('\n', start)
+
+        prop_modules = help_text[start:end].split(', ')
+
+        start = help_text.find('Which lists to get')
+        start = help_text.find(query_help_list_prefix, start)
+        start += len(query_help_list_prefix)
+        end = help_text.find('\n', start)
+
+        list_modules = help_text[start:end].split(', ')
+
+        start = help_text.find('Which meta data to get')
+        start = help_text.find(query_help_list_prefix, start)
+        start += len(query_help_list_prefix)
+        end = help_text.find('\n', start)
+
+        meta_modules = help_text[start:end].split(', ')
+
+        start = help_text.find('Use the output of a list as the input')
+        start = help_text.find('One value: ', start)
+        start += len('One value: ')
+        end = help_text.find('\n', start)
+
+        gen_modules = help_text[start:end].split(', ')
+
+        self._paraminfo['paraminfo'] = {
+            'name': 'paraminfo',
+            'path': 'paraminfo',
+            'classname': 'ApiParamInfo',
+            'prefix': '',
+            'readrights': '',
+            'helpurls': [],
+            'parameters': [
+                {
+                    'name': 'querymodules',
+                    'type': (prop_modules + list_modules +
+                             meta_modules + gen_modules),
+                    'limit': 50,
+                },
+            ],
+        }
+
+        self._paraminfo['query'] = {
+            'name': 'query',
+            'path': 'query',
+            'classname': 'ApiQuery',
+            'prefix': '',
+            'readrights': '',
+            'helpurls': [],
+            'parameters': [
+                {
+                    'name': 'prop',
+                    'type': prop_modules,
+                },
+                {
+                    'name': 'list',
+                    'type': list_modules,
+                },
+                {
+                    'name': 'meta',
+                    'type': meta_modules,
+                },
+                {
+                    'name': 'generator',
+                    'type': gen_modules,
+                },
+            ],
+        }
+
+        # TODO: rewrite 'help' parser to determine prefix from the parameter
+        # names, as API 1.10 help does not include prefix on the first line.
+
+        for mod_type in ['action', 'prop', 'list', 'meta', 'generator']:
+            if mod_type == 'action':
+                submodules = self.parameter('main', mod_type)['type']
+                path_prefix = ''
+            else:
+                submodules = self.parameter('query', mod_type)
+                submodules = submodules['type']
+                path_prefix = 'query+'
+
+            for submodule in submodules:
+                mod_begin_string = '* %s=%s' % (mod_type, submodule)
+                start = help_text.find(mod_begin_string)
+                assert(start)
+                start += len(mod_begin_string)
+                end = help_text.find('\n*', start)
+
+                if help_text[start + 1] == '(' and help_text[start + 4] == ')':
+                    prefix = help_text[start + 2:start + 4]
+                else:
+                    prefix = ''
+
+                path = path_prefix + submodule
+
+                # query is added above; some query modules appear as both
+                # prop and generator, and the generator doesnt have a
+                # prefix in the help.
+                if path not in self._paraminfo:
+                    php_class = 'Api'
+                    if mod_type == 'action':
+                        php_class += 'Query'
+                    # This doesnt correctly derive PHP class names where there
+                    # are additional uppercase letters in the class name.
+                    php_class += submodule.title()
+
+                    self._paraminfo[path] = {
+                        'name': submodule,
+                        'path': path,
+                        'classname': php_class,
+                        'prefix': prefix,
+                        'readrights': '',
+                        'helpurls': [],
+                        'parameters': [],
+                    }
+
+                if not prefix:
+                    continue
+
+                params = {}
+
+                # Check existence of parameters used frequently by pywikibot.
+                # TODO: for each parameter, parse list of values ('type')
+                if prefix + 'limit' in help_text:
+                    params['limit'] = {
+                        'name': 'limit',
+                        'type': 'limit',
+                        'max': 50,
+                    }
+
+                if prefix + 'namespace' in help_text:
+                    params['namespace'] = {
+                        'name': 'namespace',
+                        'type': 'namespace',
+                    }
+                    if not submodule.startswith('all'):
+                        params['namespace']['multi'] = ''
+
+                for param_name in ['token', 'prop', 'type', 'show']:
+                    if prefix + param_name in help_text:
+                        params[param_name] = {
+                            'name': param_name,
+                            'type': [],
+                            'multi': '',
+                        }
+
+                self._paraminfo[path]['parameters'] = params.values()
+                if (help_text.find('\n\nThis module only accepts POST '
+                                   'requests.\n', start) < end):
+                    self._paraminfo[path]['mustbeposted'] = ''
+
+        self._emulate_pageset()
+
     def fetch(self, modules, _init=False):
         """
         Fetch paraminfo for multiple modules.
+
+        No exception is raised when paraminfo for a module does not exist.
+        Use __getitem__ to cause an exception if a module does not exist.
 
         @param modules: API modules to load
         @type modules: set
@@ -307,10 +525,20 @@ class ParamInfo(Container):
 
         assert(self._query_modules or _init)
 
+        if MediaWikiVersion(self.site.version()) < MediaWikiVersion("1.12"):
+            # When the help is parsed, all paraminfo should already be loaded
+            # and the caller is responsible for detecting missing modules.
+            pywikibot.log('ParamInfo did not detect modules: %s'
+                          % modules, _logger=_logger)
+            return
+
         # This can be further optimised, by grouping them in more stable
         # subsets, which are unlikely to change. i.e. first request core
         # modules which have been a stable part of the API for a long time.
         # Also detecting extension based modules may help.
+        # Also, when self.modules_only_mode is disabled, both modules and
+        # querymodules may each be filled with self._limit items, doubling the
+        # number of modules that may be processed in a single batch.
         for module_batch in itergroup(sorted(modules), self._limit):
             if self.modules_only_mode and 'pageset' in module_batch:
                 pywikibot.debug('paraminfo fetch: removed pageset', _logger)
@@ -350,7 +578,7 @@ class ParamInfo(Container):
 
             self._paraminfo.update(normalized_result)
 
-        if self.modules_only_mode and 'pageset' in modules:
+        if 'pageset' in modules and 'pageset' not in self._paraminfo:
             self._emulate_pageset()
 
     def _normalize_modules(self, modules):
@@ -455,19 +683,21 @@ class ParamInfo(Container):
             return False
 
     def __len__(self):
-        """Obtain length of the iterable."""
+        """Return number of cached modules."""
         return len(self._paraminfo)
 
     def parameter(self, module, param_name):
         """
         Get details about one modules parameter.
 
+        Returns None if the parameter does not exist.
+
         @param module: API module name
         @type module: str
         @param param_name: parameter name in the module
         @type param_name: str
         @return: metadata that describes how the parameter may be used
-        @rtype: dict
+        @rtype: dict or None
         """
         # TODO: the 'description' field of each parameter is not in the default
         # output of v1.25, and cant removed from previous API versions.
@@ -488,7 +718,16 @@ class ParamInfo(Container):
         params = module['parameters']
         param_data = [param for param in params
                       if param['name'] == param_name]
-        return param_data[0] if len(param_data) else None
+
+        if not param_data:
+            return None
+
+        assert(len(param_data) == 1)
+        param_data = param_data[0]
+        # pre 1.14 doesnt provide limit attribute on parameters
+        if 'multi' in param_data and 'limit' not in param_data:
+            param_data['limit'] = self._limit
+        return param_data
 
     @property
     def modules(self):
@@ -866,6 +1105,7 @@ class Request(MutableMapping):
             self.site = kwargs.pop("site")
         except KeyError:
             self.site = pywikibot.Site()
+            warn('Request() invoked without a site', RuntimeWarning, 2)
         if 'mime_params' in kwargs:
             self.mime_params = kwargs.pop('mime_params')
             # mime may not be different from mime_params
@@ -896,7 +1136,7 @@ class Request(MutableMapping):
             "wbeditentity", "wbsetlabel", "wbsetdescription",
             "wbsetaliases", "wblinktitles", "wbsetsitelink",
             "wbcreateclaim", "wbremoveclaims", "wbsetclaimvalue",
-            "wbsetreference", "wbremovereferences"
+            "wbsetreference", "wbremovereferences", "wbsetclaim",
         )
         # Client side verification that the request is being performed
         # by a logged in user, and warn if it isn't a config username.
@@ -1154,7 +1394,7 @@ class Request(MutableMapping):
         return "%s.%s<%s->%r>" % (self.__class__.__module__, self.__class__.__name__, self.site, str(self))
 
     def _simulate(self, action):
-        """Simualte action."""
+        """Simulate action."""
         if action and config.simulate and (self.write or action in config.actions_to_block):
             pywikibot.output(
                 u'\03{lightyellow}SIMULATION: %s action blocked.\03{default}'
@@ -1226,10 +1466,9 @@ class Request(MutableMapping):
         # strip the headers to get the HTTP message body
         if sys.version_info[0] > 2:
             body = container.as_bytes()
-            marker = b"\n\n"  # separates headers from body
         else:
             body = container.as_string()
-            marker = "\n\n"  # separates headers from body
+        marker = b'\n\n'  # separates headers from body
         eoh = body.find(marker)
         body = body[eoh + len(marker):]
         # retrieve the headers from the MIME object
@@ -1248,7 +1487,7 @@ class Request(MutableMapping):
                     text = warning['html']['*']
                 else:
                     pywikibot.warning(
-                        u'API warning ({0})of unknown format: {1}'.
+                        u'API warning ({0}) of unknown format: {1}'.
                         format(mod, warning))
                     continue
                 # multiple warnings are in text separated by a newline
@@ -1308,13 +1547,13 @@ class Request(MutableMapping):
                         use_get = False
                     if use_get:
                         uri = '{0}?{1}'.format(uri, paramstring)
-                        body = None  # default in httplib2
+                        body = None
                     else:
                         body = paramstring
 
                 rawdata = http.request(
-                    self.site, uri, method='GET' if use_get else 'POST',
-                    headers=headers, body=body)
+                    site=self.site, uri=uri, method='GET' if use_get else 'POST',
+                    body=body, headers=headers)
             except Server504Error:
                 pywikibot.log(u"Caught HTTP 504 error; retrying")
                 self.wait()
@@ -1401,8 +1640,8 @@ class Request(MutableMapping):
             if "*" in result["error"]:
                 # help text returned
                 result['error']['help'] = result['error'].pop("*")
-            code = result["error"].pop("code", "Unknown")
-            info = result["error"].pop("info", None)
+            code = result['error'].setdefault('code', 'Unknown')
+            info = result['error'].setdefault('info', None)
             if code == "maxlag":
                 lag = lagpattern.search(info)
                 if lag:
@@ -1438,7 +1677,8 @@ class Request(MutableMapping):
                     self.wait()
                     continue
 
-                raise APIMWException(class_name, info, **result["error"])
+                del result['error']['code']  # is added via class_name
+                raise APIMWException(class_name, **result['error'])
 
             # bugs 46535, 62126, 64494, 66619
             # maybe removed when it 46535 is solved
@@ -1451,6 +1691,39 @@ class Request(MutableMapping):
             if code == 'readapidenied' and self.site._loginstatus in (-3, -1):
                 self.site.login()
                 continue
+            if code == 'badtoken':
+                user_tokens = self.site.tokens._tokens[self.site.user()]
+                # all token values mapped to their type
+                tokens = dict((token, t_type)
+                              for t_type, token in user_tokens.items())
+                # determine which tokens are bad
+                invalid_param = {}
+                for name, param in self._params.items():
+                    if len(param) == 1 and param[0] in tokens:
+                        invalid_param[name] = tokens[param[0]]
+                # doesn't care about the cache so can directly load them
+                if invalid_param:
+                    pywikibot.log(
+                        u'Bad token error for {0}. Tokens for "{1}" used in '
+                        u'request; invalidated them.'.format(
+                            self.site.user(),
+                            '", "'.join(sorted(set(invalid_param.values())))))
+                    self.site.tokens.load_tokens(set(invalid_param.values()))
+                    # fix parameters; lets hope that it doesn't mistake actual
+                    # parameters as tokens
+                    for name, t_type in invalid_param.items():
+                        self[name] = self.site.tokens[t_type]
+                    continue
+                else:
+                    # otherwise couldn't find any … weird there is nothing what
+                    # can be done here because it doesn't know which parameters
+                    # to fix
+                    pywikibot.log(
+                        u'Bad token error for {0} but no parameter is using a '
+                        u'token. Current tokens: {1}'.format(
+                            self.site.user(),
+                            ', '.join('{0}: {1}'.format(*e)
+                                      for e in user_tokens.items())))
             # raise error
             try:
                 pywikibot.log(u"API Error: query=\n%s"
@@ -1458,7 +1731,7 @@ class Request(MutableMapping):
                 pywikibot.log(u"           response=\n%s"
                               % result)
 
-                raise APIError(code, info, **result["error"])
+                raise APIError(**result['error'])
             except TypeError:
                 raise RuntimeError(result)
 
@@ -1486,7 +1759,7 @@ class CachedRequest(Request):
         super(CachedRequest, self).__init__(*args, **kwargs)
         if not isinstance(expiry, datetime.timedelta):
             expiry = datetime.timedelta(expiry)
-        self.expiry = expiry
+        self.expiry = min(expiry, datetime.timedelta(config.API_config_expiry))
         self._data = None
         self._cachetime = None
 
@@ -2096,6 +2369,7 @@ class PageGenerator(QueryGenerator):
             version of each Page (default False)
 
         """
+        # If possible, use self.request after __init__ instead of appendParams
         def appendParams(params, key, value):
             if key in params:
                 params[key] += '|' + value
@@ -2110,9 +2384,15 @@ class PageGenerator(QueryGenerator):
         if not ('inprop' in kwargs and 'protection' in kwargs['inprop']):
             appendParams(kwargs, 'inprop', 'protection')
         appendParams(kwargs, 'iiprop', 'timestamp|user|comment|url|size|sha1|metadata')
-        self.props = kwargs['prop'].split('|')
         QueryGenerator.__init__(self, generator=generator, **kwargs)
         self.resultkey = "pages"  # element to look for in result
+
+        # TODO: Bug T91912 when using step > 50 with proofread, with queries
+        # returning Pages from Page ns.
+        if self.site.has_extension('ProofreadPage'):
+            self.request['prop'].append('proofread')
+
+        self.props = self.request['prop']
 
     def result(self, pagedata):
         """Convert page dict entry from api to Page object.
@@ -2137,10 +2417,7 @@ class CategoryPageGenerator(PageGenerator):
 
     """Like PageGenerator, but yields Category objects instead of Pages."""
 
-    def result(self, pagedata):
-        """Convert page dict entry from api to Page object."""
-        p = PageGenerator.result(self, pagedata)
-        return pywikibot.Category(p)
+    pass
 
 
 @deprecated("PageGenerator")
@@ -2148,13 +2425,7 @@ class ImagePageGenerator(PageGenerator):
 
     """Like PageGenerator, but yields FilePage objects instead of Pages."""
 
-    def result(self, pagedata):
-        """Convert page dict entry from api to Page object."""
-        p = PageGenerator.result(self, pagedata)
-        filepage = pywikibot.FilePage(p)
-        if 'imageinfo' in pagedata:
-            filepage._imageinfo = pagedata['imageinfo'][0]
-        return filepage
+    pass
 
 
 class PropertyGenerator(QueryGenerator):
@@ -2262,6 +2533,7 @@ class LoginManager(login.LoginManager):
                                   % diff.seconds)
                 time.sleep(diff.seconds)
         login_request = Request(site=self.site,
+                                use_get=False,
                                 action="login",
                                 lgname=self.username,
                                 lgpassword=self.password)
@@ -2317,6 +2589,11 @@ def update_page(page, pagedict, props=[]):
         raise AssertionError(
             "Page %s has neither 'pageid' nor 'missing' attribute" % pagedict['title'])
     page._contentmodel = pagedict.get('contentmodel')  # can be None
+    if (page._contentmodel and
+            page._contentmodel == 'proofread-page' and
+            'proofread' in pagedict):
+        page._quality = pagedict['proofread']['quality']
+        page._quality_text = pagedict['proofread']['quality_text']
     if 'info' in props:
         page._isredir = 'redirect' in pagedict
     if 'touched' in pagedict:
@@ -2346,9 +2623,7 @@ def update_page(page, pagedict, props=[]):
 
     if 'imageinfo' in pagedict:
         assert(isinstance(page, pywikibot.FilePage))
-        for file_rev in pagedict['imageinfo']:
-            file_revision = pywikibot.page.FileInfo(file_rev)
-            page._file_revisions[file_revision.timestamp] = file_revision
+        page._load_file_revisions(pagedict['imageinfo'])
 
     if "categoryinfo" in pagedict:
         page._catinfo = pagedict["categoryinfo"]

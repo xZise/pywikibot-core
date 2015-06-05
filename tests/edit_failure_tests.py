@@ -12,6 +12,8 @@ These tests use special code 'write = -1' for edit failures.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 import pywikibot
@@ -29,6 +31,7 @@ class TestSaveFailure(TestCase):
 
     """Test cases for edits which should fail to save."""
 
+    user = True
     write = -1
 
     family = 'wikipedia'
@@ -36,7 +39,7 @@ class TestSaveFailure(TestCase):
 
     def test_protected(self):
         """Test that protected titles raise the appropriate exception."""
-        if self.site._username[1]:
+        if self.site.has_group('sysop'):
             raise unittest.SkipTest('Testing failure of edit protected with a sysop account')
         page = pywikibot.Page(self.site, 'Wikipedia:Create a new page')
         self.assertRaises(LockedPage, page.save)
@@ -52,11 +55,21 @@ class TestSaveFailure(TestCase):
         page = pywikibot.Page(self.site, 'User:John Vandenberg/nobots')
         self.assertRaisesRegex(OtherPageSaveError, 'nobots', page.save)
 
+    def test_touch(self):
+        """Test that Page.touch() does not do a real edit."""
+        page = pywikibot.Page(self.site, 'User:Xqt/sandbox')
+        old_text = page.text
+        page.text += '\n*Add a new line to page'
+        page.touch()
+        new_text = page.get(force=True)
+        self.assertEqual(old_text, new_text)
+
 
 class TestActionFailure(TestCase):
 
     """Test cases for actions which should fail to save."""
 
+    user = True
     write = -1
 
     family = 'wikipedia'
@@ -89,6 +102,7 @@ class TestWikibaseSaveTest(WikibaseTestCase):
     family = 'wikidata'
     code = 'test'
 
+    user = True
     write = -1
 
     def test_itempage_save(self):

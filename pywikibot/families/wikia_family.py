@@ -1,5 +1,6 @@
 # -*- coding: utf-8  -*-
 """Family module for Wikia."""
+from __future__ import unicode_literals
 
 __version__ = '$Id$'
 
@@ -19,7 +20,7 @@ class Family(family.Family):
         self.name = u'wikia'
 
         self.langs = {
-            u'wikia': None,
+            'wikia': 'www.wikia.com',
         }
 
     def hostname(self, code):

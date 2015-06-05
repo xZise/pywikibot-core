@@ -29,7 +29,7 @@ and pagegenerator can be one of these:
 # Ported by Geoffrey "GEOFBOT" Mon for Google Code-In 2013
 # User:Sn1per
 #
-
+from __future__ import unicode_literals
 
 __version__ = '$Id$'
 
@@ -91,7 +91,7 @@ class CommonsLinkBot(Bot):
                                                        'commons_link%s-template-added'
                                                        % ('', '-cat')[catmode])
                             try:
-                                self.userPut(page, oldText, text, comment=comment)
+                                self.userPut(page, oldText, text, summary=comment)
                             except pywikibot.EditConflict:
                                 pywikibot.output(
                                     u'Skipping %s because of edit conflict'

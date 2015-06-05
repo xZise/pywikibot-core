@@ -4,13 +4,14 @@ user-*.py
 *.bak
 *.pyc
 *.pyo
-*.py~
+*.*~
 /.tox
 /*.egg
 /data*
 logs*
 *apicache*
 *pycache*
+/cache*
 .idea
 pywikibot.egg-info/
 pywikibot/families/

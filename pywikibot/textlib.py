@@ -11,6 +11,8 @@ and return a unicode string.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -30,6 +32,9 @@ import pywikibot
 from pywikibot import config2 as config
 from pywikibot.family import Family
 from pywikibot.tools import OrderedDict
+
+# cache for replaceExcept to avoid recompile or regexes each call
+_regex_cache = {}
 
 TEMP_REGEX = re.compile(
     r'{{(?:msg:)?(?P<name>[^{\|]+?)(?:\|(?P<params>[^{]+?(?:{[^{]+?}[^{]*?)?))?}}')
@@ -77,6 +82,94 @@ def unescape(s):
     return s
 
 
+def _create_default_regexes():
+    """Fill (and possibly overwrite) _regex_cache with default regexes."""
+    _regex_cache.update({
+        'comment':      re.compile(r'(?s)<!--.*?-->'),
+        # section headers
+        'header':       re.compile(r'\r?\n=+.+=+ *\r?\n'),
+        # preformatted text
+        'pre':          re.compile(r'(?ism)<pre>.*?</pre>'),
+        'source':       re.compile(r'(?is)<source .*?</source>'),
+        # inline references
+        'ref':          re.compile(r'(?ism)<ref[ >].*?</ref>'),
+        # lines that start with a space are shown in a monospace font and
+        # have whitespace preserved.
+        'startspace':   re.compile(r'(?m)^ (.*?)$'),
+        # tables often have whitespace that is used to improve wiki
+        # source code readability.
+        # TODO: handle nested tables.
+        'table':        re.compile(r'(?ims)^{\|.*?^\|}|<table>.*?</table>'),
+        'hyperlink':    compileLinkR(),
+        'gallery':      re.compile(r'(?is)<gallery.*?>.*?</gallery>'),
+        # this matches internal wikilinks, but also interwiki, categories, and
+        # images.
+        'link':         re.compile(r'\[\[[^\]\|]*(\|[^\]]*)?\]\]'),
+        # also finds links to foreign sites with preleading ":"
+        'interwiki':    (r'(?i)\[\[:?(%s)\s?:[^\]]*\]\][\s]*',
+                         lambda site: '|'.join(
+                             site.validLanguageLinks() +
+                             list(site.family.obsolete.keys()))),
+        # Wikibase property inclusions
+        'property':     re.compile(r'(?i)\{\{\s*#property:\s*p\d+\s*\}\}'),
+        # Module invocations (currently only Lua)
+        'invoke':       re.compile(r'(?i)\{\{\s*#invoke:.*?}\}'),
+        # categories
+        'category':     ('\[\[ *(?:%s)\s*:.*?\]\]',
+                         lambda site: '|'.join(site.namespaces[14])),
+        # files
+        'file':         ('\[\[ *(?:%s)\s*:.*?\]\]',
+                         lambda site: '|'.join(site.namespaces[6])),
+    })
+
+
+def _get_regexes(keys, site):
+    """Fetch compiled regexes."""
+    if site is None:
+        site = pywikibot.Site()
+
+    if not _regex_cache:
+        _create_default_regexes()
+
+    result = []
+    # 'dontTouchRegexes' exist to reduce git blame only.
+    dontTouchRegexes = result
+
+    for exc in keys:
+        if isinstance(exc, basestring):
+            # assume the string is a reference to a standard regex above,
+            # which may not yet have a site specific re compiled.
+            if exc in _regex_cache:
+                if type(_regex_cache[exc]) is tuple:
+                    if (exc, site) not in _regex_cache:
+                        re_text, re_var = _regex_cache[exc]
+                        _regex_cache[(exc, site)] = re.compile(
+                            re_text % re_var(site))
+
+                    result.append(_regex_cache[(exc, site)])
+                else:
+                    result.append(_regex_cache[exc])
+            elif exc == 'template':
+                # template is not supported by this method.
+                pass
+            else:
+                # nowiki, noinclude, includeonly, timeline, math ond other
+                # extensions
+                if exc not in _regex_cache:
+                    _regex_cache[exc] = re.compile(r'(?is)<%s>.*?</%s>'
+                                                    % (exc, exc))
+                result.append(_regex_cache[exc])
+            # handle alias
+            if exc == 'source':
+                dontTouchRegexes.append(re.compile(
+                    r'(?is)<syntaxhighlight .*?</syntaxhighlight>'))
+        else:
+            # assume it's a regular expression
+            dontTouchRegexes.append(exc)
+
+    return result
+
+
 def replaceExcept(text, old, new, exceptions, caseInsensitive=False,
                   allowoverlap=False, marker='', site=None):
     """
@@ -100,45 +193,6 @@ def replaceExcept(text, old, new, exceptions, caseInsensitive=False,
         if nothing is changed, it is added at the end
 
     """
-    if site is None:
-        site = pywikibot.Site()
-
-    exceptionRegexes = {
-        'comment':      re.compile(r'(?s)<!--.*?-->'),
-        # section headers
-        'header':       re.compile(r'\r?\n=+.+=+ *\r?\n'),
-        # preformatted text
-        'pre':          re.compile(r'(?ism)<pre>.*?</pre>'),
-        'source':       re.compile(r'(?is)<source .*?</source>'),
-        # inline references
-        'ref':          re.compile(r'(?ism)<ref[ >].*?</ref>'),
-        # lines that start with a space are shown in a monospace font and
-        # have whitespace preserved.
-        'startspace':   re.compile(r'(?m)^ (.*?)$'),
-        # tables often have whitespace that is used to improve wiki
-        # source code readability.
-        # TODO: handle nested tables.
-        'table':        re.compile(r'(?ims)^{\|.*?^\|}|<table>.*?</table>'),
-        'hyperlink':    compileLinkR(),
-        'gallery':      re.compile(r'(?is)<gallery.*?>.*?</gallery>'),
-        # this matches internal wikilinks, but also interwiki, categories, and
-        # images.
-        'link':         re.compile(r'\[\[[^\]\|]*(\|[^\]]*)?\]\]'),
-        # also finds links to foreign sites with preleading ":"
-        'interwiki':    re.compile(r'(?i)\[\[:?(%s)\s?:[^\]]*\]\][\s]*'
-                                   % '|'.join(site.validLanguageLinks() +
-                                              list(site.family.obsolete.keys()))),
-        # Wikibase property inclusions
-        'property':     re.compile(r'(?i)\{\{\s*#property:\s*p\d+\s*\}\}'),
-        # Module invocations (currently only Lua)
-        'invoke':       re.compile(r'(?i)\{\{\s*#invoke:.*?}\}'),
-        # categories
-        'category':     re.compile(u'\[\[ *(?:%s)\s*:.*?\]\]' % u'|'.join(site.namespace(14, all=True))),
-        # files
-        'file':         re.compile(u'\[\[ *(?:%s)\s*:.*?\]\]' % u'|'.join(site.namespace(6, all=True))),
-
-    }
-
     # if we got a string, compile it as a regular expression
     if isinstance(old, basestring):
         if caseInsensitive:
@@ -146,28 +200,13 @@ def replaceExcept(text, old, new, exceptions, caseInsensitive=False,
         else:
             old = re.compile(old)
 
-    dontTouchRegexes = []
-    except_templates = False
-    for exc in exceptions:
-        if isinstance(exc, basestring):
-            # assume it's a reference to the exceptionRegexes dictionary
-            # defined above.
-            if exc in exceptionRegexes:
-                dontTouchRegexes.append(exceptionRegexes[exc])
-            elif exc == 'template':
-                except_templates = True
-            else:
-                # nowiki, noinclude, includeonly, timeline, math ond other
-                # extensions
-                dontTouchRegexes.append(re.compile(r'(?is)<%s>.*?</%s>'
-                                                   % (exc, exc)))
-            # handle alias
-            if exc == 'source':
-                dontTouchRegexes.append(re.compile(
-                    r'(?is)<syntaxhighlight .*?</syntaxhighlight>'))
-        else:
-            # assume it's a regular expression
-            dontTouchRegexes.append(exc)
+    # early termination if not relevant
+    if not old.search(text):
+        return text + marker
+
+    dontTouchRegexes = _get_regexes(exceptions, site)
+
+    except_templates = 'template' in exceptions
 
     # mark templates
     # don't care about mw variables and parser functions
@@ -214,6 +253,8 @@ def replaceExcept(text, old, new, exceptions, caseInsensitive=False,
     index = 0
     markerpos = len(text)
     while True:
+        if index > len(text):
+            break
         match = old.search(text, index)
         if not match:
             # nothing left to replace
@@ -255,23 +296,26 @@ def replaceExcept(text, old, new, exceptions, caseInsensitive=False,
                 #  text = text[:match.start()] + replacement + text[match.end():]
 
                 # So we have to process the group references manually.
-                replacement = new
+                replacement = ''
 
-                groupR = re.compile(r'\\(?P<number>\d+)|\\g<(?P<name>.+?)>')
-                while True:
-                    groupMatch = groupR.search(replacement)
-                    if not groupMatch:
-                        break
-                    groupID = (groupMatch.group('name') or
-                               int(groupMatch.group('number')))
+                group_regex = re.compile(r'\\(\d+)|\\g<(.+?)>')
+                last = 0
+                for group_match in group_regex.finditer(new):
+                    group_id = group_match.group(1) or group_match.group(2)
                     try:
-                        replacement = (replacement[:groupMatch.start()] +
-                                       (match.group(groupID) or '') +
-                                       replacement[groupMatch.end():])
+                        group_id = int(group_id)
+                    except ValueError:
+                        pass
+                    try:
+                        replacement += new[last:group_match.start()]
+                        replacement += match.group(group_id) or ''
                     except IndexError:
-                        pywikibot.output('\nInvalid group reference: %s' % groupID)
+                        pywikibot.output('\nInvalid group reference: %s' % group_id)
                         pywikibot.output('Groups found:\n%s' % match.groups())
                         raise IndexError
+                    last = group_match.end()
+                replacement += new[last:]
+
             text = text[:match.start()] + replacement + text[match.end():]
 
             # continue the search on the remaining text
@@ -279,6 +323,9 @@ def replaceExcept(text, old, new, exceptions, caseInsensitive=False,
                 index = match.start() + 1
             else:
                 index = match.start() + len(replacement)
+            if not match.group():
+                # When the regex allows to match nothing, shift by one character
+                index += 1
             markerpos = match.start() + len(replacement)
     text = text[:markerpos] + marker + text[markerpos:]
 
@@ -621,11 +668,15 @@ def replaceLanguageLinks(oldtext, new, site=None, addOnly=False,
 def interwikiFormat(links, insite=None):
     """Convert interwiki link dict into a wikitext string.
 
-    'links' should be a dict with the Site objects as keys, and Page
-    or Link objects as values.
-
-    Return a unicode string that is formatted for inclusion in insite
-    (defaulting to the current site).
+    @param links: interwiki links to be formatted
+    @type links: dict with the Site objects as keys, and Page
+        or Link objects as values.
+    @param insite: site the interwiki links will be formatted for
+        (defaulting to the current site).
+    @type insite: BaseSite
+    @return: string including wiki links formatted for inclusion
+        in insite
+    @rtype: unicode
     """
     if insite is None:
         insite = pywikibot.Site()
@@ -641,7 +692,8 @@ def interwikiFormat(links, insite=None):
             link = title.replace('[[:', '[[')
             s.append(link)
         except AttributeError:
-            s.append(pywikibot.Site(code=site).linkto(links[site], othersite=insite))
+            s.append(pywikibot.Site(site, insite.family).linkto(
+                links[site], othersite=insite))
     if insite.lang in insite.family.interwiki_on_one_line:
         sep = u' '
     else:
@@ -793,14 +845,17 @@ def replaceCategoryInPlace(oldtext, oldcat, newcat, site=None):
         # an entire line, if the category is the only thing on that line (this
         # prevents blank lines left over in category lists following a removal.)
         text = replaceExcept(oldtext, categoryRN, '',
-                             ['nowiki', 'comment', 'math', 'pre', 'source'])
+                             ['nowiki', 'comment', 'math', 'pre', 'source'],
+                             site=site)
         text = replaceExcept(text, categoryR, '',
-                             ['nowiki', 'comment', 'math', 'pre', 'source'])
+                             ['nowiki', 'comment', 'math', 'pre', 'source'],
+                             site=site)
     else:
         text = replaceExcept(oldtext, categoryR,
                              '[[%s:%s\\2' % (site.namespace(14),
                                              newcat.title(withNamespace=False)),
-                             ['nowiki', 'comment', 'math', 'pre', 'source'])
+                             ['nowiki', 'comment', 'math', 'pre', 'source'],
+                             site=site)
     return text
 
 
@@ -1222,6 +1277,21 @@ def does_text_contain_section(pagetext, section):
     section = re.sub(r'\\?[ _]', '[ _]', section)
     m = re.search("=+[ ']*%s[ ']*=+" % section, pagetext)
     return bool(m)
+
+
+def reformat_ISBNs(text, match_func):
+    """Reformat ISBNs.
+
+    @param text: text containing ISBNs
+    @type text: str
+    @param match_func: function to reformat matched ISBNs
+    @type match_func: callable
+    @return: reformatted text
+    @rtype: str
+    """
+    isbnR = re.compile(r'(?<=ISBN )(?P<code>[\d\-]+[\dXx])')
+    text = isbnR.sub(match_func, text)
+    return text
 
 
 # ---------------------------------------

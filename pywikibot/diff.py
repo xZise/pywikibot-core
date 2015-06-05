@@ -5,22 +5,31 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 
 import difflib
+import math
 import sys
+
+from collections import Sequence
 if sys.version_info[0] > 2:
     from itertools import zip_longest
 else:
     from itertools import izip_longest as zip_longest
+
 try:
     from bs4 import BeautifulSoup
 except ImportError as bserror:
     BeautifulSoup = False
 
 import pywikibot
+from pywikibot.tools import chars
+
 from pywikibot.backports import format_range_unified  # introduced in 2.7.2
+from pywikibot.tools import deprecated_args
 
 
 class Hunk(object):
@@ -70,9 +79,14 @@ class Hunk(object):
 
     def get_header(self):
         """Provide header of unified diff."""
-        a_rng = format_range_unified(*self.a_rng)
-        b_rng = format_range_unified(*self.b_rng)
-        return '@@ -{0} +{1} @@\n'.format(a_rng, b_rng)
+        return self.get_header_text(self.a_rng, self.b_rng) + '\n'
+
+    @staticmethod
+    def get_header_text(a_rng, b_rng, affix='@@'):
+        """Provide header for any ranges."""
+        a_rng = format_range_unified(*a_rng)
+        b_rng = format_range_unified(*b_rng)
+        return '{0} -{1} +{2} {0}'.format(affix, a_rng, b_rng)
 
     def create_diff(self):
         """Generator of diff text for this hunk, without formatting."""
@@ -172,6 +186,35 @@ class Hunk(object):
                % (self.__class__.__name__, self.group)
 
 
+class _SuperHunk(Sequence):
+
+    def __init__(self, hunks):
+        self._hunks = hunks
+        self.a_rng = (self._hunks[0].a_rng[0], self._hunks[-1].a_rng[1])
+        self.b_rng = (self._hunks[0].b_rng[0], self._hunks[-1].b_rng[1])
+        self.pre_context = self._hunks[0].pre_context
+        self.post_context = self._hunks[0].post_context
+
+    def __getitem__(self, idx):
+        return self._hunks[idx]
+
+    def __len__(self):
+        return len(self._hunks)
+
+    def split(self):
+        return [_SuperHunk([hunk]) for hunk in self._hunks]
+
+    @property
+    def reviewed(self):
+        assert(len(set(hunk.reviewed for hunk in self._hunks)) == 1)
+        return self._hunks[0].reviewed
+
+    @reviewed.setter
+    def reviewed(self, reviewed):
+        for hunk in self._hunks:
+            hunk.reviewed = reviewed
+
+
 class PatchManager(object):
 
     """Apply patches to text_a to obtain a new text.
@@ -179,18 +222,23 @@ class PatchManager(object):
     If all hunks are approved, text_b will be obtained.
     """
 
-    def __init__(self, text_a, text_b, n=0, by_letter=False):
+    @deprecated_args(n='context')
+    def __init__(self, text_a, text_b, context=0, by_letter=False,
+                 replace_invisible=False):
         """Constructor.
 
         @param text_a: base text
         @type text_a: basestring
         @param text_b: target text
         @type text_b: basestring
-        @param n: line of context as defined in difflib.get_grouped_opcodes().
-        @type n: int
+        @param context: number of lines which are context
+        @type context: int
         @param by_letter: if text_a and text_b are single lines, comparison can be done
             letter by letter.
         @type by_letter: bool
+        @param replace_invisible: Replace invisible characters like U+200e with
+            the charnumber in brackets (e.g. <200e>).
+        @type replace_invisible: bool
         """
         if '\n' in text_a or '\n' in text_b:
             self.a = text_a.splitlines(1)
@@ -205,11 +253,25 @@ class PatchManager(object):
 
         # groups and hunk have same order (one hunk correspond to one group).
         s = difflib.SequenceMatcher(None, self.a, self.b)
-        self.groups = list(s.get_grouped_opcodes(n))
-        self.hunks = [Hunk(self.a, self.b, group) for group in self.groups]
+        self.groups = list(s.get_grouped_opcodes(0))
+        self.hunks = []
+        previous_hunk = None
+        for group in self.groups:
+            hunk = Hunk(self.a, self.b, group)
+            self.hunks.append(hunk)
+            hunk.pre_context = hunk.a_rng[0]
+            if previous_hunk:
+                hunk.pre_context -= previous_hunk.a_rng[1]
+                previous_hunk.post_context = hunk.pre_context
+            previous_hunk = hunk
+        if self.hunks:
+            self.hunks[-1].post_context = len(self.a) - self.hunks[-1].a_rng[1]
         # blocks are a superset of hunk, as include also parts not
         # included in any hunk.
         self.blocks = self.get_blocks()
+        self.context = context
+        self._super_hunks = self._generate_super_hunks()
+        self._replace_invisible = replace_invisible
 
     def get_blocks(self):
         """Return list with blocks of indexes which compose a and, where applicable, b.
@@ -244,58 +306,201 @@ class PatchManager(object):
 
     def print_hunks(self):
         """Print the headers and diff texts of all hunks to the output."""
-        for hunk in self.hunks:
-            pywikibot.output(hunk.header + hunk.diff_text)
+        if self.hunks:
+            pywikibot.output('\n'.join(self._generate_diff(super_hunk)
+                                       for super_hunk in self._super_hunks))
+
+    def _generate_super_hunks(self, hunks=None):
+        if hunks is None:
+            hunks = self.hunks
+        if self.context:
+            # Determine if two hunks are connected by self.context
+            super_hunk = []
+            super_hunks = [super_hunk]
+            for hunk in hunks:
+                # self.context * 2, because if self.context is 2 the hunks would be
+                # directly adjacent when 4 lines in between and for anything
+                # below 4 they share lines.
+                # not super_hunk == first hunk as any other super_hunk is
+                # created with one hunk
+                if (not super_hunk or
+                        hunk.pre_context <= self.context * 2):
+                    # previous hunk has shared/adjacent self.context lines
+                    super_hunk += [hunk]
+                else:
+                    super_hunk = [hunk]
+                    super_hunks += [super_hunk]
+        else:
+            super_hunks = [[hunk] for hunk in hunks]
+        return [_SuperHunk(sh) for sh in super_hunks]
+
+    def _get_context_range(self, super_hunk):
+        """Dynamically determine context range for a super hunk."""
+        return ((super_hunk.a_rng[0] - min(super_hunk.pre_context, self.context),
+                 super_hunk.a_rng[1] + min(super_hunk.post_context, self.context)),
+                (super_hunk.b_rng[0] - min(super_hunk.pre_context, self.context),
+                 super_hunk.b_rng[1] + min(super_hunk.post_context, self.context)))
+
+    def _generate_diff(self, hunks):
+        """Generate a diff text for the given hunks."""
+        def extend_context(start, end):
+            """Add context lines."""
+            return ''.join('  {0}\n'.format(line.rstrip())
+                           for line in self.a[start:end])
+
+        context_range = self._get_context_range(hunks)
+
+        output = ('\03{aqua}' +
+                  Hunk.get_header_text(*context_range) + '\03{default}\n' +
+                  extend_context(context_range[0][0], hunks[0].a_rng[0]))
+        previous_hunk = None
+        for hunk in hunks:
+            if previous_hunk:
+                output += extend_context(previous_hunk.a_rng[1], hunk.a_rng[0])
+            previous_hunk = hunk
+            output += hunk.diff_text
+        output += extend_context(hunks[-1].a_rng[1], context_range[0][1])
+        if self._replace_invisible:
+            output = chars.replace_invisible(output)
+        return output
 
     def review_hunks(self):
         """Review hunks."""
-        help_msg = ['y -> accept this hunk',
-                    'n -> do not accept this hunk',
-                    's -> do not accept this hunk and stop reviewing',
-                    'a -> accept this hunk and all other pending',
-                    'r -> review later',
-                    'h -> help',
-                    ]
+        def find_pending(start, end):
+            step = -1 if start > end else +1
+            for pending in range(start, end, step):
+                if super_hunks[pending].reviewed == Hunk.PENDING:
+                    return pending
 
-        question = 'Accept this hunk?'
-        answers = [('yes', 'y'), ('no', 'n'), ('stop', 's'), ('all', 'a'),
-                   ('review', 'r'), ('help', 'h')]
-        actions = {'y': Hunk.APPR,
-                   'n': Hunk.NOT_APPR,
-                   's': Hunk.NOT_APPR,
-                   'a': Hunk.APPR,
-                   'r': Hunk.PENDING,
-                   }
+        # TODO: Missing commands (compared to git --patch): edit and search
+        help_msg = {'y': 'accept this hunk',
+                    'n': 'do not accept this hunk',
+                    'q': 'do not accept this hunk and quit reviewing',
+                    'a': 'accept this hunk and all other pending',
+                    'd': 'do not apply this hunk or any of the later hunks in the file',
+                    'g': 'select a hunk to go to',
+                    'j': 'leave this hunk undecided, see next undecided hunk',
+                    'J': 'leave this hunk undecided, see next hunk',
+                    'k': 'leave this hunk undecided, see previous undecided hunk',
+                    'K': 'leave this hunk undecided, see previous hunk',
+                    's': 'split this hunk into smaller ones',
+                    '?': 'help',
+                    }
 
-        pending = [h for h in self.hunks if h.reviewed == h.PENDING]
+        super_hunks = self._generate_super_hunks(
+            h for h in self.hunks if h.reviewed == Hunk.PENDING)
+        position = 0
 
-        while pending:
+        while any(any(hunk.reviewed == Hunk.PENDING for hunk in super_hunk)
+                  for super_hunk in super_hunks):
 
-            hunk = pending.pop(0)
+            super_hunk = super_hunks[position]
 
-            pywikibot.output(hunk.header + hunk.diff_text)
-            choice = pywikibot.input_choice(question, answers, default='r',
-                                            automatic_quit=False)
+            next_pending = find_pending(position + 1, len(super_hunks))
+            prev_pending = find_pending(position - 1, -1)
 
-            if choice in actions.keys():
-                hunk.reviewed = actions[choice]
-            if choice == 's':
-                while pending:
-                    hunk = pending.pop(0)
-                    hunk.reviewed = hunk.NOT_APPR
-                break
-            elif choice == 'a':
-                while pending:
-                    hunk = pending.pop(0)
-                    hunk.reviewed = hunk.APPR
-                break
-            elif choice == 'h':
-                pywikibot.output(u'\03{purple}%s\03{default}' % u'\n'.join(help_msg))
-                pending.insert(0, hunk)
-            elif choice == 'r':
-                pending.append(hunk)
+            answers = ['y', 'n', 'q', 'a', 'd', 'g']
+            if next_pending is not None:
+                answers += ['j']
+            if position < len(super_hunks) - 1:
+                answers += ['J']
+            if prev_pending is not None:
+                answers += ['k']
+            if position > 0:
+                answers += ['K']
+            if len(super_hunk) > 1:
+                answers += ['s']
+            answers += ['?']
 
-        return
+            pywikibot.output(self._generate_diff(super_hunk))
+            choice = pywikibot.input('Accept this hunk [{0}]?'.format(
+                ','.join(answers)))
+            if choice not in answers:
+                choice = '?'
+
+            if choice == 'y' or choice == 'n':
+                super_hunk.reviewed = Hunk.APPR if choice == 'y' else Hunk.NOT_APPR
+                if next_pending is not None:
+                    position = next_pending
+                else:
+                    position = find_pending(0, position)
+            elif choice == 'q':
+                for super_hunk in super_hunks:
+                    for hunk in super_hunk:
+                        if hunk.reviewed == Hunk.PENDING:
+                            hunk.reviewed = Hunk.NOT_APPR
+            elif choice == 'a' or choice == 'd':
+                for super_hunk in super_hunks[position:]:
+                    for hunk in super_hunk:
+                        if hunk.reviewed == Hunk.PENDING:
+                            hunk.reviewed = Hunk.APPR if choice == 'a' else Hunk.NOT_APPR
+                position = find_pending(0, position)
+            elif choice == 'g':
+                hunk_list = []
+                rng_width = 18
+                for index, super_hunk in enumerate(super_hunks, start=1):
+                    if super_hunk.reviewed == Hunk.PENDING:
+                        status = ' '
+                    elif super_hunk.reviewed == Hunk.APPR:
+                        status = '+'
+                    elif super_hunk.reviewed == Hunk.NOT_APPR:
+                        status = '-'
+                    else:
+                        assert(False)
+                    if super_hunk[0].a_rng[1] - super_hunk[0].a_rng[0] > 0:
+                        mode = '-'
+                        first = self.a[super_hunk[0].a_rng[0]]
+                    else:
+                        mode = '+'
+                        first = self.b[super_hunk[0].b_rng[0]]
+                    hunk_list += [(status, index,
+                                   Hunk.get_header_text(
+                                   *self._get_context_range(super_hunk), affix=''),
+                                   mode, first)]
+                    rng_width = max(len(hunk_list[-1][2]), rng_width)
+                line_template = ('{0}{1} {2: >' +
+                                 str(int(math.log10(len(super_hunks)) + 1)) +
+                                 '}: {3: <' + str(rng_width) + '} {4}{5}')
+                # the last entry is the first changed line which usually ends
+                # with a \n (only the last may not, which is covered by the
+                # if-condition following this block)
+                hunk_list = ''.join(
+                    line_template.format(
+                        '*' if hunk_entry[1] == position + 1 else ' ', *hunk_entry)
+                    for hunk_entry in hunk_list)
+                if hunk_list.endswith('\n'):
+                    hunk_list = hunk_list[:-1]
+                pywikibot.output(hunk_list)
+                next_hunk = pywikibot.input('Go to which hunk?')
+                try:
+                    next_hunk_position = int(next_hunk) - 1
+                except ValueError:
+                    next_hunk_position = False
+                if (next_hunk_position is not False and
+                        0 <= next_hunk_position < len(super_hunks)):
+                    position = next_hunk_position
+                elif next_hunk:  # nothing entered is silently ignored
+                    pywikibot.error('Invalid hunk number "{0}"'.format(next_hunk))
+            elif choice == 'j':
+                position = next_pending
+            elif choice == 'J':
+                position += 1
+            elif choice == 'k':
+                position = prev_pending
+            elif choice == 'K':
+                position -= 1
+            elif choice == 's':
+                super_hunks = (super_hunks[:position] +
+                               super_hunks[position].split() +
+                               super_hunks[position + 1:])
+                pywikibot.output('Split into {0} hunks'.format(len(super_hunk._hunks)))
+            elif choice == '?':
+                pywikibot.output(
+                    '\03{purple}%s\03{default}' % '\n'.join(
+                        '{0} -> {1}'.format(answer, help_msg[answer])
+                        for answer in answers))
+            else:
+                assert(False)
 
     def apply(self):
         """Apply changes. If there are undecided changes, ask to review."""
@@ -332,21 +537,21 @@ def cherry_pick(oldtext, newtext, n=0, by_letter=False):
 
     """
     patch = PatchManager(oldtext, newtext, n=n, by_letter=by_letter)
-    pywikibot.output('\03{{lightpurple}}\n{:*^50}\03{{default}}\n'.format('  ALL CHANGES  '))
+    pywikibot.output('\03{{lightpurple}}\n{0:*^50}\03{{default}}\n'.format('  ALL CHANGES  '))
 
     for hunk in patch.hunks:
         pywikibot.output(hunk.diff_text)
-    pywikibot.output('\03{{lightpurple}}\n{:*^50}\03{{default}}\n'.format('  REVIEW CHANGES  '))
+    pywikibot.output('\03{{lightpurple}}\n{0:*^50}\03{{default}}\n'.format('  REVIEW CHANGES  '))
 
     text_list = patch.apply()
-    pywikibot.output('\03{{lightpurple}}\n{:*^50}\03{{default}}\n'.format('  APPROVED CHANGES  '))
+    pywikibot.output('\03{{lightpurple}}\n{0:*^50}\03{{default}}\n'.format('  APPROVED CHANGES  '))
 
     if any(hunk.reviewed == hunk.APPR for hunk in patch.hunks):
         for hunk in patch.hunks:
             if hunk.reviewed == hunk.APPR:
                 pywikibot.output(hunk.diff_text)
     else:
-        pywikibot.output('\03{{lightpurple}}{:^50}\03{{default}}'.format('None.'))
+        pywikibot.output('\03{{lightpurple}}{0:^50}\03{{default}}'.format('None.'))
 
     text = ''.join(text_list)
 

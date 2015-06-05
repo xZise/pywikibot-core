@@ -1,6 +1,5 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
-
 """
 This script transfers pages from a source wiki to a target wiki.
 
@@ -31,13 +30,14 @@ transferbot.py -v -family:toolserver -tofamily:wikitech -cat:"Query service" -pr
 transferbot.py -v -family:toolserver -tofamily:wikitech -page:"Template:Query service"
 
 """
-
 #
 # (C) Merlijn van Deen, 2014
 # (C) Pywikibot team, 2014
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -159,10 +159,10 @@ def main(*args):
         historytable = page.getVersionHistoryTable()
 
         pywikibot.log("Putting page text.")
-        targetpage.put(text, comment=summary)
+        targetpage.put(text, summary=summary)
 
         pywikibot.log("Putting edit history.")
-        edithistpage.put(historytable, comment=summary)
+        edithistpage.put(historytable, summary=summary)
 
 
 if __name__ == "__main__":

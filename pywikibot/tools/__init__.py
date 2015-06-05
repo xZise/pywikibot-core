@@ -5,12 +5,15 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
 __version__ = '$Id$'
 
+import bz2
 import collections
+import gzip
 import inspect
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -170,6 +173,37 @@ class DotReadableDict(UnicodeMixin):
         return repr(self.__dict__)
 
 
+class FrozenDict(dict):
+
+    """
+    Frozen dict, preventing write after initialisation.
+
+    Raises TypeError if write attempted.
+    """
+
+    def __init__(self, data=None, error=None):
+        """
+        Constructor.
+
+        @param data: mapping to freeze
+        @type data: mapping
+        @param error: error message
+        @type error: basestring
+        """
+        if data:
+            args = [data]
+        else:
+            args = []
+        super(FrozenDict, self).__init__(*args)
+        self._error = error or 'FrozenDict: not writable'
+
+    def update(self, *args, **kwargs):
+        """Prevent updates."""
+        raise TypeError(self._error)
+
+    __setitem__ = update
+
+
 def concat_options(message, line_length, options):
     """Concatenate options."""
     indent = len(message) + 2
@@ -241,12 +275,30 @@ class LazyRegex(object):
             raise AttributeError('%s.raw not set' % self.__class__.__name__)
 
 
+def first_lower(string):
+    """
+    Return a string with the first character uncapitalized.
+
+    Empty strings are supported. The original string is not changed.
+    """
+    return string[:1].lower() + string[1:]
+
+
+def first_upper(string):
+    """
+    Return a string with the first character capitalized.
+
+    Empty strings are supported. The original string is not changed.
+    """
+    return string[:1].upper() + string[1:]
+
+
 def normalize_username(username):
     """Normalize the username."""
     if not username:
         return None
     username = re.sub('[_ ]+', ' ', username).strip()
-    return username[0].upper() + username[1:]
+    return first_upper(username)
 
 
 class MediaWikiVersion(Version):
@@ -480,7 +532,8 @@ class ThreadList(list):
             time.sleep(2)
         super(ThreadList, self).append(thd)
         thd.start()
-        debug("thread started: %r" % thd, self._logger)
+        debug("thread %d ('%s') started" % (len(self), type(thd)),
+              self._logger)
 
     def stop_all(self):
         """Stop all threads the pool."""
@@ -535,9 +588,9 @@ def intersect_generators(genlist):
                 # TODO: evaluate if True and timeout is necessary.
                 item = t.queue.get(True, 0.1)
 
-                # Cache entry is a set of tuples (item, thread).
+                # Cache entry is a set of thread.
                 # Duplicates from same thread are not counted twice.
-                cache[item].add((item, t))
+                cache[item].add(t)
                 if len(cache[item]) == n_gen:
                     yield item
                     # Remove item from cache.
@@ -604,10 +657,18 @@ EMPTY_DEFAULT = EmptyDefault()
 
 class SelfCallMixin(object):
 
-    """Return self when called."""
+    """
+    Return self when called.
+
+    When '_own_desc' is defined it'll also issue a deprecation warning using
+    issue_deprecation_warning('Calling ' + _own_desc, 'it directly').
+    """
 
     def __call__(self):
         """Do nothing and just return itself."""
+        if hasattr(self, '_own_desc'):
+            issue_deprecation_warning('Calling {0}'.format(self._own_desc),
+                                      'it directly', 2)
         return self
 
 
@@ -639,6 +700,117 @@ class DequeGenerator(collections.deque):
     def __next__(self):
         """Python 3 iterator method."""
         return self.next()
+
+
+class ContextManagerWrapper(object):
+
+    """
+    Wraps an object in a context manager.
+
+    It is redirecting all access to the wrapped object and executes 'close' when
+    used as a context manager in with-statements. In such statements the value
+    set via 'as' is directly the wrapped object. For example:
+
+     wrapped = ContextManagerWrapper(an_object)
+     with wrapped as another_object:
+         assert(another_object is an_object)
+
+    It does not subclass the object though, so isinstance checks will fail
+    outside a with-statement.
+    """
+
+    def __init__(self, wrapped):
+        """Create a new wrapper."""
+        super(ContextManagerWrapper, self).__init__()
+        super(ContextManagerWrapper, self).__setattr__('_wrapped', wrapped)
+
+    def __enter__(self):
+        """Enter a context manager and use the wrapped object directly."""
+        return self._wrapped
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Call close on the wrapped object when exiting a context manager."""
+        self._wrapped.close()
+
+    def __getattr__(self, name):
+        """Get the attribute from the wrapped object."""
+        return getattr(self._wrapped, name)
+
+    def __setattr__(self, name, value):
+        """Set the attribute in the wrapped object."""
+        setattr(self._wrapped, name, value)
+
+
+def open_compressed(filename, use_extension=False):
+    """
+    Open a file and uncompress it if needed.
+
+    This function supports bzip2, gzip and 7zip as compression containers. It
+    uses the packages available in the standard library for bzip2 and gzip so
+    they are always available. 7zip is only available when a 7za program is
+    available.
+
+    The compression is selected via the file ending.
+
+    @param filename: The filename.
+    @type filename: str
+    @raises ValueError: When 7za is not available.
+    @raises OSError: When it's not a 7z archive but the file extension is 7z.
+        It is also raised by bz2 when its content is invalid. gzip does not
+        immediately raise that error but only on reading it.
+    @return: A file like object returning the uncompressed data in binary mode.
+        Before Python 2.7 it's wrapping the object returned by BZ2File and gzip
+        in a ContextManagerWrapper so it's advantages/disadvantages apply there.
+    @rtype: file like object
+    """
+    def wrap(wrapped):
+        """Wrap in a wrapper when this is below Python version 2.7."""
+        if sys.version_info < (2, 7):
+            return ContextManagerWrapper(wrapped)
+        else:
+            return wrapped
+
+    if use_extension:
+        # if '.' not in filename, it'll be 1 character long but otherwise
+        # contain the period
+        extension = filename[filename.rfind('.'):][1:]
+    else:
+        with open(filename, 'rb') as f:
+            magic_number = f.read(8)
+        if magic_number.startswith(b'BZh'):
+            extension = 'bz2'
+        elif magic_number.startswith(b'\x1F\x8B\x08'):
+            extension = 'gz'
+        elif magic_number.startswith(b"7z\xBC\xAF'\x1C"):
+            extension = '7z'
+        else:
+            extension = ''
+
+    if extension == 'bz2':
+        return wrap(bz2.BZ2File(filename))
+    elif extension == 'gz':
+        return wrap(gzip.open(filename))
+    elif extension == '7z':
+        try:
+            process = subprocess.Popen(['7za', 'e', '-bd', '-so', filename],
+                                       stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE,
+                                       bufsize=65535)
+        except OSError:
+            raise ValueError('7za is not installed and can not '
+                             'uncompress "{0}"'.format(filename))
+        else:
+            stderr = process.stderr.read()
+            process.stderr.close()
+            if b'Everything is Ok' not in stderr:
+                process.stdout.close()
+                # OSError is also raised when bz2 is invalid
+                raise OSError('Invalid 7z archive.')
+            else:
+                return process.stdout
+    else:
+        # assume it's an uncompressed XML file
+        return open(filename, 'rb')
 
 
 # Decorators

@@ -18,6 +18,8 @@ These parameters are supported to specify which pages titles to print:
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -103,7 +105,7 @@ parameterHelp = u"""\
                       renameuser, globalauth, gblrights, abusefilter, newusers
                   It uses the default number of pages 10.
                   Examples:
-                  -logevents:move gives pages from move log (should be redirects)
+                  -logevents:move gives pages from move log (usually redirects)
                   -logevents:delete,,20 gives 20 pages from deletion log
                   -logevents:protect,Usr gives pages from protect by user Usr
                   -logevents:patrol,Usr,20 gives 20 patroled pages by user Usr
@@ -373,8 +375,8 @@ class GeneratorFactory(object):
             gensList = self.gens[0]
             dupfiltergen = gensList
             if self.intersect:
-                pywikibot.input(u'Only one generator. '
-                                u'Param "-intersect" has no meaning or effect.')
+                pywikibot.warning(
+                    '"-intersect" ignored as only one generator is specified.')
         else:
             if self.intersect:
                 gensList = intersect_generators(self.gens)
@@ -2013,7 +2015,7 @@ def UntaggedPageGenerator(untaggedProject, limit=500, site=None):
     else:
         wiki = 'wikilang=%s&wikifam=.%s' % (lang, project)
     link = '%s&%s&max=%d&order=img_timestamp' % (URL, wiki, limit)
-    results = re.findall(REGEXP, http.request(site=None, uri=link))
+    results = re.findall(REGEXP, http.fetch(link))
     if not results:
         raise pywikibot.Error(
             u'Nothing found at %s! Try to use the tool by yourself to be sure '
@@ -2288,6 +2290,10 @@ def WikidataQueryPageGenerator(query, site=None):
     pywikibot.output(u'retrieved %d items' % data[u'status'][u'items'])
     for item in data[u'items']:
         page = pywikibot.ItemPage(repo, u'Q{0}'.format(item))
+        if isinstance(site, pywikibot.site.DataSite):
+            yield page
+            continue
+
         try:
             link = page.getSitelink(site)
         except pywikibot.NoPage:

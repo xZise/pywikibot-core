@@ -76,7 +76,6 @@ right parameter.
 * Add a report for the image tagged.
 
 """
-
 #
 # (C) Kyle/Orgullomoore, 2006-2007 (newimage.py)
 # (C) Siebrand Mazeland, 2007-2010
@@ -85,6 +84,8 @@ right parameter.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -96,6 +97,8 @@ import pywikibot
 
 from pywikibot import pagegenerators as pg
 from pywikibot import i18n
+
+from pywikibot.exceptions import NotEmailableError
 from pywikibot.family import Family
 from pywikibot.tools import deprecated
 
@@ -734,7 +737,7 @@ class checkImagesBot(object):
             pywikibot.output(self.commImage)
             try:
                 reportPageObject.put(self.newtext + "\n" + reportPageText,
-                                     comment=self.commImage)
+                                     summary=self.commImage)
             except pywikibot.LockedPage:
                 pywikibot.output(u'File is locked. Skipping.')
                 return
@@ -753,15 +756,15 @@ class checkImagesBot(object):
                               repme)
             return
         upBots = i18n.translate(self.site, uploadBots)
-        luser = pywikibot.url2link(nick, self.site, self.site)
+        user = pywikibot.User(self.site, nick)
+        luser = user.title(asUrl=True)
 
         if upBots:
             for upBot in upBots:
                 if upBot[0] == luser:
                     luser = self.uploadBotChangeFunction(reportPageText, upBot)
-        talk_page = pywikibot.Page(self.site,
-                                   u"%s:%s" % (self.site.namespace(3), luser))
-        self.talk_page = talk_page
+                    user = pywikibot.User(self.site, luser)
+        self.talk_page = user.getUserTalkPage()
         self.luser = luser
         return True
 
@@ -814,7 +817,7 @@ class checkImagesBot(object):
             newText = testoattuale + self.head + self.notification
 
         try:
-            self.talk_page.put(newText, comment=commentox, minorEdit=False)
+            self.talk_page.put(newText, summary=commentox, minorEdit=False)
         except pywikibot.LockedPage:
             pywikibot.output(u'Talk page blocked, skip.')
 
@@ -829,8 +832,8 @@ class checkImagesBot(object):
                                       % self.luser, emailText)
                 emailClass = pywikibot.User(self.site, self.luser)
                 try:
-                    emailClass.sendMail(emailSubj, text_to_send)
-                except pywikibot.UserActionRefuse:
+                    emailClass.send_email(emailSubj, text_to_send)
+                except NotEmailableError:
                     pywikibot.output("User is not mailable, aborted")
                     return
 
@@ -1164,7 +1167,7 @@ class checkImagesBot(object):
             if addings:
                 # Adding the name of the image in the report if not done already
                 rep_text = rep_text % image_to_report
-            another_page.put(text_get + rep_text, comment=com, force=True,
+            another_page.put(text_get + rep_text, summary=com, force=True,
                              minorEdit=False)
             pywikibot.output(u"...Reported...")
             reported = True
@@ -1289,15 +1292,11 @@ class checkImagesBot(object):
                 break
         if not self.license_found:
             for template in self.licenses_found:
-                try:
-                    template.pageAPInfo()
-                except pywikibot.IsRedirectPage:
+                if template.isRedirectPage():
                     template = template.getRedirectTarget()
                     result = self.miniTemplateCheck(template)
                     if result:
                         break
-                except pywikibot.NoPage:
-                    continue
 
     def smartDetection(self):
         """
@@ -1351,17 +1350,10 @@ class checkImagesBot(object):
             self.templateInList()
 
             if not self.license_found and self.allLicenses:
-                # If only iterlist = self.AllLicenses if I remove something
-                # from iterlist it will be remove from self.AllLicenses too
-                iterlist = list(self.allLicenses)
-
-                for template in iterlist:
-                    try:
-                        template.pageAPInfo()
-                    except pywikibot.IsRedirectPage:
-                        template = template.getRedirectTarget()
-                    except pywikibot.NoPage:
-                        self.allLicenses.remove(template)
+                self.allLicenses = [
+                    template.getRedirectTarget()
+                    if template.isRedirectPage() else template
+                    for template in self.allLicenses if template.exists()]
 
                 if self.allLicenses:
                     self.license_found = self.allLicenses[0].title()

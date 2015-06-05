@@ -5,6 +5,8 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 # Note: the intention is to develop this module (at some point) into a Bot
@@ -13,6 +15,7 @@ __version__ = '$Id$'
 
 # Note: all output goes thru python std library "logging" module
 
+import codecs
 import datetime
 import json
 import logging
@@ -20,6 +23,7 @@ import logging.handlers
 import os
 import re
 import sys
+import time
 import warnings
 import webbrowser
 
@@ -35,8 +39,9 @@ import pywikibot
 
 from pywikibot import backports
 from pywikibot import config
+from pywikibot import daemonize
 from pywikibot import version
-from pywikibot.tools import deprecated
+from pywikibot.tools import deprecated, deprecated_args
 
 if sys.version_info[0] > 2:
     unicode = str
@@ -237,15 +242,17 @@ def init_handlers(strm=None):
     warnings_logger = logging.getLogger("py.warnings")
     warnings_logger.setLevel(DEBUG)
 
-    if hasattr(logging, 'captureWarnings'):
-        logging.captureWarnings(True)  # introduced in Python >= 2.7
-    else:
-        backports.captureWarnings(True)
+    # If there are command line warnings options, do not override them
+    if not sys.warnoptions:
+        if hasattr(logging, 'captureWarnings'):
+            logging.captureWarnings(True)  # introduced in Python >= 2.7
+        else:
+            backports.captureWarnings(True)
 
-    if config.debug_log or 'deprecation' in config.log:
-        warnings.filterwarnings("always")
-    elif config.verbose_output:
-        warnings.filterwarnings("module")
+        if config.debug_log or 'deprecation' in config.log:
+            warnings.filterwarnings("always")
+        elif config.verbose_output:
+            warnings.filterwarnings("module")
 
     root_logger.handlers = []  # remove any old handlers
 
@@ -327,7 +334,7 @@ def writelogheader():
     all_modules = sys.modules.keys()
 
     # These are the main dependencies of pywikibot.
-    check_package_list = ['httplib2', 'mwparserfromhell']
+    check_package_list = ['requests', 'mwparserfromhell']
 
     # report all imported packages
     if config.verbose_output:
@@ -357,7 +364,9 @@ def writelogheader():
         ver = version.get_module_version(module)
         mtime = version.get_module_mtime(module)
         if filename and ver and mtime:
-            log(u'  {0} {1} {2}'.format(filename, ver[:7], mtime.isoformat(' ')))
+            # it's explicitly using str() to bypass unicode_literals in Python 2
+            # isoformat expects a char not a unicode in Python 2
+            log(u'  {0} {1} {2}'.format(filename, ver[:7], mtime.isoformat(str(' '))))
 
     if config.log_pywiki_repo_version:
         log(u'PYWIKI REPO VERSION: %s' % version.getversion_onlinerepo())
@@ -525,7 +534,7 @@ def exception(msg=None, decoder=None, newline=True, tb=False, **kwargs):
 # User input functions
 
 
-def input(question, password=False):
+def input(question, password=False, default='', force=False):
     """Ask the user a question, return the user's answer.
 
     @param question: a string that will be shown to the user. Don't add a
@@ -533,18 +542,23 @@ def input(question, password=False):
     @type question: unicode
     @param password: if True, hides the user's input (for password entry).
     @type password: bool
+    @param default: The default answer if none was entered. None to require
+        an answer.
+    @type default: basestring
+    @param force: Automatically use the default
+    @type force: bool
     @rtype: unicode
     """
     # make sure logging system has been initialized
     if not _handlers_initialized:
         init_handlers()
 
-    data = ui.input(question, password)
+    data = ui.input(question, password=password, default=default, force=force)
     return data
 
 
 def input_choice(question, answers, default=None, return_shortcut=True,
-                 automatic_quit=True):
+                 automatic_quit=True, force=False):
     """
     Ask the user the question and return one of the valid answers.
 
@@ -563,6 +577,8 @@ def input_choice(question, answers, default=None, return_shortcut=True,
     @param automatic_quit: Adds the option 'Quit' ('q') and throw a
             L{QuitKeyboardInterrupt} if selected.
     @type automatic_quit: bool
+    @param force: Automatically use the default
+    @type force: bool
     @return: The selected answer shortcut or index. Is -1 if the default is
         selected, it does not return the shortcut and the default is not a
         valid shortcut.
@@ -573,10 +589,10 @@ def input_choice(question, answers, default=None, return_shortcut=True,
         init_handlers()
 
     return ui.input_choice(question, answers, default, return_shortcut,
-                           automatic_quit)
+                           automatic_quit=automatic_quit, force=force)
 
 
-def input_yn(question, default=None, automatic_quit=True):
+def input_yn(question, default=None, automatic_quit=True, force=False):
     """
     Ask the user a yes/no question and returns the answer as a bool.
 
@@ -588,6 +604,8 @@ def input_yn(question, default=None, automatic_quit=True):
     @param automatic_quit: Adds the option 'Quit' ('q') and throw a
             L{QuitKeyboardInterrupt} if selected.
     @type automatic_quit: bool
+    @param force: Automatically use the default
+    @type force: bool
     @return: Return True if the user selected yes and False if the user
         selected no. If the default is not None it'll return True if default
         is True or 'y' and False if default is False or 'n'.
@@ -601,7 +619,7 @@ def input_yn(question, default=None, automatic_quit=True):
     assert default in ['y', 'Y', 'n', 'N', None]
 
     return input_choice(question, [('Yes', 'y'), ('No', 'n')], default,
-                        automatic_quit=automatic_quit) == 'y'
+                        automatic_quit=automatic_quit, force=force) == 'y'
 
 
 @deprecated('input_choice')
@@ -631,6 +649,30 @@ def inputChoice(question, answers, hotkeys, default=None):
     return ui.input_choice(question=question, options=zip(answers, hotkeys),
                            default=default, return_shortcut=True,
                            automatic_quit=False)
+
+
+def input_list_choice(question, answers, default=None,
+                      automatic_quit=True, force=False):
+    """
+    Ask the user the question and return one of the valid answers.
+
+    @param question: The question asked without trailing spaces.
+    @type question: basestring
+    @param answers: The valid answers each containing a full length answer.
+    @type answers: Iterable of basestring
+    @param default: The result if no answer was entered. It must not be in the
+        valid answers and can be disabled by setting it to None.
+    @type default: basestring
+    @param force: Automatically use the default
+    @type force: bool
+    @return: The selected answer.
+    @rtype: basestring
+    """
+    if not _handlers_initialized:
+        init_handlers()
+
+    return ui.input_list_choice(question, answers, default=default,
+                                force=force)
 
 
 # Command line parsing and help
@@ -687,6 +729,8 @@ def handle_args(args=None, do_help=True):
     for arg in args:
         if do_help is not False and arg == '-help':
             do_help = True
+        elif arg.startswith('-dir:'):
+            pass
         elif arg.startswith('-family:'):
             config.family = arg[len("-family:"):]
         elif arg.startswith('-lang:'):
@@ -751,12 +795,9 @@ def handle_args(args=None, do_help=True):
                 config.debug_log.append(component)
         elif arg in ('-verbose', '-v'):
             config.verbose_output += 1
-        elif arg == '-daemonize':
-            import daemonize
-            daemonize.daemonize()
-        elif arg.startswith('-daemonize:'):
-            import daemonize
-            daemonize.daemonize(redirect_std=arg[len('-daemonize:'):])
+        elif arg.startswith('-daemonize'):
+            redirect_std = arg[len('-daemonize:'):] if ':' in arg else None
+            daemonize.daemonize(redirect_std=redirect_std)
         else:
             # the argument depends on numerical config settings
             # e.g. -maxlag:
@@ -774,6 +815,7 @@ def handle_args(args=None, do_help=True):
         config.usernames[config.family][config.mylang] = username
 
     init_handlers()
+    writeToCommandLogFile()
 
     if config.verbose_output:
         # Please don't change the regular expression here unless you really
@@ -800,7 +842,7 @@ def handle_args(args=None, do_help=True):
     return nonGlobalArgs
 
 
-@deprecated
+@deprecated("handle_args")
 def handleArgs(*args):
     """DEPRECATED. Use handle_args()."""
     return handle_args(args)
@@ -833,8 +875,8 @@ Global arguments available for all bots:
 -user:xyz         Log in as user 'xyz' instead of the default username.
 
 -daemonize:xyz    Immediately return control to the terminal and redirect
-                  stdout and stderr to xyz (only use for bots that require
-                  no input from stdin).
+                  stdout and stderr to file xyz.
+                  (only use for bots that require no input from stdin).
 
 -help             Show this help text.
 
@@ -889,6 +931,30 @@ Global arguments available for all bots:
     pywikibot.stdout(globalHelp)
 
 
+def writeToCommandLogFile():
+    """
+    Save name of the called module along with all parameters to logs/commands.log.
+
+    This can be used by user later to track errors or report bugs.
+    """
+    modname = calledModuleName()
+    # put quotation marks around all parameters
+    args = [modname] + [u'"%s"' % s for s in pywikibot.argvu[1:]]
+    command_log_filename = config.datafilepath('logs', 'commands.log')
+    try:
+        command_log_file = codecs.open(command_log_filename, 'a', 'utf-8')
+    except IOError:
+        command_log_file = codecs.open(command_log_filename, 'w', 'utf-8')
+    # add a timestamp in ISO 8601 formulation
+    isoDate = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+    command_log_file.write('%s r%s Python %s '
+                           % (isoDate, version.getversiondict()['rev'],
+                              sys.version.split()[0]))
+    s = u' '.join(args)
+    command_log_file.write(s + os.linesep)
+    command_log_file.close()
+
+
 def open_webbrowser(page):
     """Open the web browser displaying the page and wait for input."""
     from pywikibot import i18n
@@ -937,9 +1003,13 @@ class Bot(object):
         if 'generator' in kwargs:
             self.generator = kwargs.pop('generator')
 
+        # TODO: add warning if site is specified and generator
+        # contains pages from a different site.
+        self._site = kwargs.pop('site', None)
+        self._sites = set([self._site] if self._site else [])
+
         self.setOptions(**kwargs)
-        self._site = None
-        self._sites = set()
+
         self._treat_counter = 0
         self._save_counter = 0
 
@@ -1025,6 +1095,7 @@ class Bot(object):
 
         return True
 
+    @deprecated_args(comment='summary')
     def userPut(self, page, oldtext, newtext, **kwargs):
         """
         Save a new revision of a page, with user confirmation as required.
@@ -1037,10 +1108,13 @@ class Bot(object):
 
         Keyword args used:
         * 'async' - passed to page.save
-        * 'comment' - passed to page.save
+        * 'summary' - passed to page.save
         * 'show_diff' - show changes between oldtext and newtext (enabled)
         * 'ignore_save_related_errors' - report and ignore (disabled)
         * 'ignore_server_errors' - report and ignore (disabled)
+
+        @return: whether the page was saved successfully
+        @rtype: bool
         """
         if oldtext == newtext:
             pywikibot.output(u'No changes were needed on %s'
@@ -1054,11 +1128,11 @@ class Bot(object):
         if show_diff:
             pywikibot.showDiff(oldtext, newtext)
 
-        if 'comment' in kwargs:
-            pywikibot.output(u'Comment: %s' % kwargs['comment'])
+        if 'summary' in kwargs:
+            pywikibot.output(u'Edit summary: %s' % kwargs['summary'])
 
         page.text = newtext
-        self._save_page(page, page.save, **kwargs)
+        return self._save_page(page, page.save, **kwargs)
 
     def _save_page(self, page, func, *args, **kwargs):
         """
@@ -1074,6 +1148,8 @@ class Bot(object):
         @kwarg ignore_save_related_errors: if True, errors related to
         page save will be reported and ignored (default: False)
         @kwtype ignore_save_related_errors: bool
+        @return: whether the page was saved successfully
+        @rtype: bool
         """
         if not self.user_confirm('Do you want to accept these changes?'):
             return
@@ -1110,6 +1186,9 @@ class Bot(object):
                 raise
             pywikibot.error(u'Server Error while processing %s: %s'
                             % (page.title(), e))
+        else:
+            return True
+        return False
 
     def quit(self):
         """Cleanup and quit processing."""
@@ -1125,6 +1204,7 @@ class Bot(object):
         """Site that the bot is using."""
         if not self._site:
             warning('Bot.site was not set before being retrieved.')
+            # TODO: peak at a page from the generator to determine the site
             self.site = pywikibot.Site()
             warning('Using the default site: %s' % self.site)
         return self._site
@@ -1224,6 +1304,7 @@ class CurrentPageBot(Bot):
         self.current_page = page
         self.treat_page()
 
+    @deprecated_args(comment='summary')
     def put_current(self, new_text, ignore_save_related_errors=None,
                     ignore_server_errors=None, **kwargs):
         """

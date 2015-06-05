@@ -19,6 +19,8 @@ The following parameters are supported:
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -120,7 +122,7 @@ class BlockreviewBot:
         # saveAdmin = saveProject = False
         talkComment = None
         for templates in userPage.templatesWithParams():
-            if templates[0] == unblock_tpl:
+            if templates[0].title() == unblock_tpl:
                 self.getInfo(user)
                 # Step 1
                 # a new template is set on blocked users talk page.
@@ -275,7 +277,7 @@ class BlockreviewBot:
                     page.text = text
                     try:
                         # Save the page
-                        page.save(comment=comment, minorEdit=minorEdit,
+                        page.save(summary=comment, minorEdit=minorEdit,
                                   botflag=botflag)
                     except pywikibot.LockedPage:
                         pywikibot.output(u"Page %s is locked; skipping."

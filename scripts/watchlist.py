@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
 Allows access to the bot account's watchlist.
@@ -21,6 +22,8 @@ Command line options:
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -61,7 +64,6 @@ def refresh(site, sysop=False):
     params = {
         'action': 'query',
         'list': 'watchlistraw',
-        'site': site,
         'wrlimit': config.special_page_limit,
     }
 
@@ -69,7 +71,7 @@ def refresh(site, sysop=False):
     # pywikibot.put_throttle() # It actually is a get, but a heavy one.
     watchlist = []
     while True:
-        req = CachedRequest(config.API_config_expiry, **params)
+        req = CachedRequest(config.API_config_expiry, site=site, **params)
         data = req.submit()
         if 'error' in data:
             raise RuntimeError('ERROR: %s' % data)

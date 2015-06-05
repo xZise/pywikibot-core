@@ -47,6 +47,10 @@ Options for "move" action:
  * -mvtogether  - Only move the pages/subcategories of a category, if the
                   target page (and talk page, if -allowsplit is not set)
                   doesn't exist.
+ * -keepsortkey - Use sortKey of the old category also for the new category.
+                  If not specified, sortKey is removed.
+                  An alternative method to keep sortKey is to use -inplace
+                  option.
 
 Options for "tidy" action:
  * -namespaces    Filter the arcitles in the specified namespaces. Separate
@@ -101,13 +105,15 @@ This will move all pages in the category US to the category United States.
 # (C) Daniel Herding, 2004
 # (C) Wikipedian, 2004-2008
 # (C) leogregianin, 2004-2008
-# (C) Cyde, 2006-2010
+# (C) Ben McIlwain (CydeWeys), 2006-2015
 # (C) Anreas J Schwab, 2007
-# (C) xqt, 2009-2014
-# (C) Pywikibot team, 2008-2014
+# (C) xqt, 2009-2015
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -374,7 +380,7 @@ class CategoryAddBot(Bot):
                                            {'newcat': catpl.title(withNamespace=False)})
             try:
                 self.userPut(self.current_page, old_text, text,
-                             comment=comment, minor=True, botflag=True)
+                             summary=comment, minor=True, botflag=True)
             except pywikibot.PageSaveRelatedError as error:
                 pywikibot.output(u'Page %s not saved: %s'
                                  % (self.current_page.title(asLink=True),
@@ -404,7 +410,8 @@ class CategoryMoveRobot(object):
                  inplace=False, move_oldcat=True, delete_oldcat=True,
                  title_regex=None, history=False, pagesonly=False,
                  deletion_comment=DELETION_COMMENT_AUTOMATIC,
-                 wikibase=True, allow_split=False, move_together=False):
+                 wikibase=True, allow_split=False, move_together=False,
+                 keep_sortkey=None):
         """Store all given parameters in the objects attributes.
 
         @param oldcat: The move source.
@@ -458,6 +465,7 @@ class CategoryMoveRobot(object):
         self.wikibase = wikibase and self.site.has_data_repository
         self.allow_split = allow_split
         self.move_together = move_together
+        self.keep_sortkey = keep_sortkey
 
         if not self.can_move_cats:
             repo = self.site.data_repository()
@@ -531,8 +539,10 @@ class CategoryMoveRobot(object):
             if self.can_move_cats:
                 if can_move_page:
                     oldcattitle = self.oldcat.title()
-                    self.oldcat.move(self.newcat.title(), reason=self.comment,
-                                     movetalkpage=can_move_talk)
+                    self.newcat = self.oldcat.move(self.newcat.title(),
+                                                   reason=self.comment,
+                                                   movetalkpage=can_move_talk)
+                    self._strip_cfd_templates()
                     self.oldcat = pywikibot.Category(self.oldcat.site,
                                                      oldcattitle)
             else:
@@ -586,7 +596,8 @@ class CategoryMoveRobot(object):
 
                 page.change_category(self.oldcat, self.newcat,
                                      comment=self.comment,
-                                     inPlace=self.inplace)
+                                     inPlace=self.inplace,
+                                     sortKey=self.keep_sortkey)
 
                 # Categories for templates can be included in <includeonly> section
                 # of Template:Page/doc subpage.
@@ -606,7 +617,8 @@ class CategoryMoveRobot(object):
                     doc_page.change_category(self.oldcat, self.newcat,
                                              comment=self.comment,
                                              inPlace=self.inplace,
-                                             include=['includeonly'])
+                                             include=['includeonly'],
+                                             sortKey=self.keep_sortkey)
 
     @staticmethod
     def check_move(name, old_page, new_page):
@@ -626,7 +638,12 @@ class CategoryMoveRobot(object):
         return move_possible
 
     def _movecat(self):
-        """Private function to move the category page.
+        """Private function to move the category page by copying its contents.
+
+        Note that this method of moving category pages by copying over the raw
+        text been deprecated by the addition of true category moving (analogous
+        to page moving) in MediaWiki, and so the raw text method is no longer
+        the default.
 
         Do not use this function from outside the class.
         """
@@ -638,17 +655,30 @@ class CategoryMoveRobot(object):
         template_vars = (self.oldcat.title(), authors)
         comment = i18n.twtranslate(self.site, 'category-renamed', template_vars)
         self.newcat.text = self.oldcat.text
-        # Replace stuff
+        self._strip_cfd_templates(comment)
+
+    def _strip_cfd_templates(self, comment=None):
+        """Private function to strip out CFD templates from the new category.
+
+        The new category is saved.
+
+        Do not use this function from outside the class.
+        """
+        # Remove all substed CFD templates
         REGEX = r"<!--BEGIN CFD TEMPLATE-->.*?<!--END CFD TEMPLATE-->"
         match = re.compile(REGEX,
                            re.IGNORECASE | re.MULTILINE | re.DOTALL)
         self.newcat.text = match.sub('', self.newcat.text)
+        # Remove all language-specified, non substed CFD templates
         site_templates = i18n.translate(self.site, cfd_templates) or ()
         for template_name in site_templates:
             match = re.compile(r"{{%s.*?}}" % template_name, re.IGNORECASE)
             self.newcat.text = match.sub('', self.newcat.text)
         # Remove leading whitespace
         self.newcat.text = self.newcat.text.lstrip()
+        if not comment:
+            comment = i18n.twtranslate(self.site,
+                                       'category-strip-cfd-templates')
         self.newcat.save(comment)
 
     def _movetalk(self):
@@ -785,7 +815,7 @@ class CategoryListifyRobot:
             pywikibot.output(u'Page %s already exists, aborting.'
                              % self.list.title())
         else:
-            self.list.put(listString, comment=self.editSummary)
+            self.list.put(listString, summary=self.editSummary)
 
 
 class CategoryTidyRobot(pywikibot.Bot):
@@ -899,7 +929,8 @@ class CategoryTidyRobot(pywikibot.Bot):
                 flag = True
             elif choice in ['j', 'J']:
                 newCatTitle = pywikibot.input(u'Please enter the category the '
-                                              u'article should be moved to:')
+                                              u'article should be moved to:',
+                                              default=None)  # require an answer
                 newCat = pywikibot.Category(pywikibot.Link('Category:' +
                                                            newCatTitle))
                 # recurse into chosen category
@@ -1073,6 +1104,7 @@ def main(*args):
     rebuild = False
     allow_split = False
     move_together = False
+    keep_sortkey = None
     depth = 5
 
     # Process global args and prepare generator args parser
@@ -1144,6 +1176,8 @@ def main(*args):
             withHistory = True
         elif arg.startswith('-depth:'):
             depth = int(arg[len('-depth:'):])
+        elif arg == '-keepsortkey':
+            keep_sortkey = True
         else:
             genFactory.handleArg(arg)
 
@@ -1206,7 +1240,8 @@ def main(*args):
                                 deletion_comment=deletion_comment,
                                 wikibase=wikibase,
                                 allow_split=allow_split,
-                                move_together=move_together)
+                                move_together=move_together,
+                                keep_sortkey=keep_sortkey)
     elif action == 'tidy':
         catTitle = pywikibot.input(u'Which category do you want to tidy up?')
         bot = CategoryTidyRobot(catTitle, catDB, genFactory.namespaces)

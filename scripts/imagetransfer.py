@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
 Script to copy images to Wikimedia Commons, or to another wiki.
@@ -30,6 +31,8 @@ used on a page reachable via interwiki links.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 import re
@@ -224,7 +227,7 @@ class ImageTransferBot:
                     sourceImagePage.put(sourceImagePage.get() + '\n\n' +
                                         nowCommonsTemplate[sourceSite.lang]
                                         % targetFilename,
-                                        comment=nowCommonsMessage[sourceSite.lang])
+                                        summary=nowCommonsMessage[sourceSite.lang])
 
     def showImageList(self, imagelist):
         for i in range(len(imagelist)):

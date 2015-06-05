@@ -54,6 +54,8 @@ Please fix these if you are capable and motivated:
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -206,6 +208,14 @@ class NowCommonsDeleteBot(Bot):
         else:
             return nowCommons['_default']
 
+    @property
+    def nc_templates(self):
+        """A set of now commons template Page instances."""
+        if not hasattr(self, '_nc_templates'):
+            self._nc_templates = set(pywikibot.Page(self.site, title, ns=10)
+                                     for title in self.ncTemplates())
+        return self._nc_templates
+
     def useHashGenerator(self):
         # https://toolserver.org/~multichill/nowcommons.php?language=it&page=2&filter=
         lang = self.site.lang
@@ -268,12 +278,9 @@ class NowCommonsDeleteBot(Bot):
         if self.getOption('use_hash'):
             gen = self.useHashGenerator()
         else:
-            nowCommonsTemplates = [pywikibot.Page(self.site, title,
-                                                  ns=10)
-                                   for title in self.ncTemplates()]
             gens = [t.getReferences(follow_redirects=True, namespaces=[6],
                                     onlyTemplateInclusion=True)
-                    for t in nowCommonsTemplates]
+                    for t in self.nc_templates]
             gen = pg.CombinedPageGenerator(gens)
             gen = pg.DuplicateFilterPageGenerator(gen)
             gen = pg.PreloadingGenerator(gen)
@@ -282,7 +289,7 @@ class NowCommonsDeleteBot(Bot):
     def findFilenameOnCommons(self, localImagePage):
         filenameOnCommons = None
         for templateName, params in localImagePage.templatesWithParams():
-            if templateName in self.ncTemplates():
+            if templateName in self.nc_templates:
                 if params == []:
                     filenameOnCommons = localImagePage.title(withNamespace=False)
                 elif self.site.lang in namespaceInTemplate:

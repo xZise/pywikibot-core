@@ -1,6 +1,5 @@
 #!/usr/bin/python
 # -*- coding: utf-8  -*-
-
 """
 This bot goes over multiple pages of a wiki, and edits them without changes.
 
@@ -13,14 +12,14 @@ This script understands various command-line arguments:
 
 -purge            Do not touch but purge the page
 
--redir            specifies that the bot should work on redirect pages;
-                  otherwise, they will be skipped.
 """
 #
-# (C) Pywikibot team, 2009-2014
+# (C) Pywikibot team, 2009-2015
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -35,39 +34,33 @@ class TouchBot(pywikibot.Bot):
     """Page touch bot."""
 
     def __init__(self, generator, **kwargs):
-        self.availableOptions.update({
-            'redir': False,  # include redirect pages
-            'purge': False,  # purge only
-        })
+        """Initialize a TouchBot instance with the options and generator."""
+        super(TouchBot, self).__init__(generator=generator, **kwargs)
 
-        super(TouchBot, self).__init__(**kwargs)
-        self.generator = generator
+    def treat(self, page):
+        """Touch the given page."""
+        try:
+            page.touch()
+        except pywikibot.NoPage:
+            pywikibot.error(u"Page %s does not exist."
+                            % page.title(asLink=True))
+        except pywikibot.LockedPage:
+            pywikibot.error(u"Page %s is locked."
+                            % page.title(asLink=True))
+        except pywikibot.PageNotSaved:
+            pywikibot.error(u"Page %s not saved."
+                            % page.title(asLink=True))
 
-    def run(self):
-        for page in self.generator:
-            if self.getOption('purge'):
-                pywikibot.output(u'Page %s%s purged'
-                                 % (page.title(asLink=True),
-                                    "" if page.purge() else " not"))
-                continue
-            try:
-                # get the page, and save it using the unmodified text.
-                # whether or not getting a redirect throws an exception
-                # depends on the variable self.touch_redirects.
-                page.get(get_redirect=self.getOption('redir'))
-                page.save("Pywikibot touch script")
-            except pywikibot.NoPage:
-                pywikibot.error(u"Page %s does not exist."
-                                % page.title(asLink=True))
-            except pywikibot.IsRedirectPage:
-                pywikibot.warning(u"Page %s is a redirect; skipping."
-                                  % page.title(asLink=True))
-            except pywikibot.LockedPage:
-                pywikibot.error(u"Page %s is locked."
-                                % page.title(asLink=True))
-            except pywikibot.PageNotSaved:
-                pywikibot.error(u"Page %s not saved."
-                                % page.title(asLink=True))
+
+class PurgeBot(pywikibot.Bot):
+
+    """Purge each page on the generator."""
+
+    def treat(self, page):
+        """Purge the given page."""
+        pywikibot.output(u'Page %s%s purged'
+                         % (page.title(asLink=True),
+                            "" if page.purge() else " not"))
 
 
 def main(*args):
@@ -86,16 +79,20 @@ def main(*args):
     local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
 
+    bot_class = TouchBot
     for arg in local_args:
-        if genFactory.handleArg(arg):
-            continue
-        if arg.startswith("-"):
+        if arg == '-purge':
+            bot_class = PurgeBot
+        elif arg == '-redir':
+            pywikibot.output(u'-redirect option is deprecated, '
+                             'do not use it anymore.')
+        elif not genFactory.handleArg(arg) and arg.startswith("-"):
             options[arg[1:].lower()] = True
 
     gen = genFactory.getCombinedGenerator()
     if gen:
         preloadingGen = pagegenerators.PreloadingGenerator(gen)
-        bot = TouchBot(preloadingGen, **options)
+        bot = bot_class(generator=preloadingGen, **options)
         pywikibot.Site().login()
         bot.run()
     else:

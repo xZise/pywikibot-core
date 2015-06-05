@@ -71,7 +71,7 @@ pwb
     python pwb.py tests/site_tests.py -v
 
 
-travis-ci
+Travis CI
 =========
 
 After changes are published into a github repository, tests may be run on
@@ -114,23 +114,47 @@ operations, you are responsible for your own passwords.
 It is strongly recommended that an untrusted bot account is created for
 travis tests, using a password that is not shared with trusted accounts.
 
+Appveyor CI
+===========
+
+After changes are published into a github repository, tests may be run on
+a Microsoft Windows box provided by ci.appveyor.com according to the
+configuration in .appveyor.yml .  To do this:
+
+1. create a github and appveyor account
+2. fork the main github repository
+3. create a project in ci.appveyor.com
+4. go to https://ci.appveyor.com/project/<username>/pywikibot-core/settings
+   and enter the custom configuration .yml filename: .appveyor.yml
+4. push changes into the forked git repository
+5. watch the build at https://ci.appveyor.com/<username>/pywikibot-core/history
+
+The 'user' tests are not yet enabled on appveyor builds.
+
+Environment variables
+=====================
+
 There are a set of 'edit failure' tests, which attempt to write to the wikis
 and **should** fail.  If there is a bug in pywikibot or MediaWiki, these
 tests **may** actually perform a write operation.
 
-These 'edit failure' tests are disabled by default for the 'wikimedia' builds,
-but are enabled by default on builds by any other github account.
+These 'edit failure' tests are disabled by default. On Travis they are enabled
+by default on builds by any other github account except 'wikimedia'.
 
-To disable 'edit failure' tests in travis, add PYWIKIBOT2_TEST_WRITE_FAIL=0
+To disable 'edit failure' tests, set PYWIKIBOT2_TEST_WRITE_FAIL=0
 
 There are also several other 'write' tests which also attempt to perform
 write operations successfully.  These **will** write to the wikis, and they
 should always only write to 'test' wikis.
 
-These 'write' tests are disabled in travis builds, and currently can not be
-run on travis as they require interaction using a terminal.
+These 'write' tests are disabled by default, and currently can not be
+run on travis or appveyor as they require interaction using a terminal. Also
+enabling them won't enable 'edit failure' tests.
 
-To enable 'write' tests in travis, add PYWIKIBOT2_TEST_WRITE=1
+To enable 'write' tests, set PYWIKIBOT2_TEST_WRITE=1
+
+Enabling only 'edit failure' tests or 'write' tests won't enable the other tests
+automatically.
 
 Contributing tests
 ==================

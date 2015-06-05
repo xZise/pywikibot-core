@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Family module for Wikivoyage."""
+from __future__ import unicode_literals
 
 __version__ = '$Id$'
 
@@ -17,13 +18,14 @@ class Family(family.WikimediaFamily):
         super(Family, self).__init__()
         self.name = 'wikivoyage'
         self.languages_by_size = [
-            'en', 'de', 'fr', 'it', 'pt', 'nl', 'pl', 'ru', 'es', 'vi', 'sv',
-            'zh', 'he', 'ro', 'uk', 'el', 'fa'
+            'en', 'de', 'fr', 'it', 'nl', 'pt', 'pl', 'ru', 'he', 'es', 'vi',
+            'sv', 'zh', 'el', 'ro', 'uk', 'fa',
         ]
 
         self.langs = dict([(lang, '%s.wikivoyage.org' % lang)
                            for lang in self.languages_by_size])
-        # Global bot allowed languages on https://meta.wikimedia.org/wiki/Bot_policy/Implementation#Current_implementation
+        # Global bot allowed languages on
+        # https://meta.wikimedia.org/wiki/Bot_policy/Implementation#Current_implementation
         self.cross_allowed = ['es', 'ru', ]
 
     def shared_data_repository(self, code, transcluded=False):

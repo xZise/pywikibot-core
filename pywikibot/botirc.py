@@ -7,10 +7,12 @@ http://python-irclib.sourceforge.net/
 """
 #
 # (C) Balasyum, 2008
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 # Note: the intention is to develop this module (at some point) into a Bot
@@ -20,7 +22,17 @@ __version__ = '$Id$'
 
 import re
 
-from ircbot import SingleServerIRCBot
+try:
+    from ircbot import SingleServerIRCBot
+except ImportError as e:
+    class SingleServerIRCBot(object):
+
+        """Fake SingleServerIRCBot."""
+
+        def __init__(*args, **kwargs):
+            """Report import exception."""
+            raise e
+
 
 _logger = "botirc"
 
@@ -51,7 +63,7 @@ class IRCBot(pywikibot.Bot, SingleServerIRCBot):
         self.site = site
         self.other_ns = re.compile(
             u'\x0314\\[\\[\x0307(%s)'
-            % u'|'.join(item.custom_name for item in site.namespaces().values()
+            % u'|'.join(item.custom_name for item in site.namespaces.values()
                         if item != 0))
         self.api_url = self.site.apipath()
         self.api_url += '?action=query&meta=siteinfo&siprop=statistics&format=xml'

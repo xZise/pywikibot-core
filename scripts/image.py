@@ -1,3 +1,4 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
 This script can be used to change one image to another or remove an image.
@@ -34,19 +35,24 @@ The image "Flag.svg" has been uploaded, making the old "Flag.jpg" obsolete:
 
 """
 #
-# (C) Pywikibot team, 2013-2014
+# (C) Pywikibot team, 2013-2015
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
-import pywikibot
-import replace
-from pywikibot import i18n, pagegenerators, Bot
 import re
 
+import pywikibot
 
-class ImageRobot(Bot):
+from pywikibot import i18n, pagegenerators, Bot
+
+from scripts.replace import ReplaceRobot as ReplaceBot
+
+
+class ImageRobot(ReplaceBot):
 
     """This bot will replace or remove all occurrences of an old image."""
 
@@ -110,25 +116,19 @@ class ImageRobot(Bot):
             'summary': None,
             'loose': False,
         })
-        super(ImageRobot, self).__init__(**kwargs)
 
-        self.generator = generator
-        self.site = pywikibot.Site()
+        Bot.__init__(self, generator=generator, **kwargs)
+
         self.old_image = old_image
         self.new_image = new_image
 
         if not self.getOption('summary'):
-            if self.new_image:
-                self.options['summary'] = i18n.translate(self.site, self.msg_replace,
-                                                         fallback=True) \
-                % (self.old_image, self.new_image)
-            else:
-                self.options['summary'] = i18n.translate(self.site, self.msg_remove,
-                                                         fallback=True) \
-                % self.old_image
+            self.options['summary'] = i18n.translate(
+                self.site, self.msg_replace,
+                (self.old_image, self.new_image) if self.new_image
+                else self.old_image,
+                fallback=True)
 
-    def run(self):
-        """Start the bot's action."""
         # regular expression to find the original template.
         # {{vfd}} does the same thing as {{Vfd}}, so both will be found.
         # The old syntax, {{msg:vfd}}, will also be found.
@@ -137,7 +137,8 @@ class ImageRobot(Bot):
 
         replacements = []
 
-        if self.site.namespaces[6].case == 'first-letter':
+        namespace = self.site.namespaces[6]
+        if namespace.case == 'first-letter':
             case = re.escape(self.old_image[0].upper() +
                              self.old_image[0].lower())
             escaped = '[' + case + ']' + re.escape(self.old_image[1:])
@@ -149,7 +150,7 @@ class ImageRobot(Bot):
         if not self.getOption('loose') or not self.new_image:
             image_regex = re.compile(
                 r'\[\[ *(?:%s)\s*:\s*%s *(?P<parameters>\|[^\n]+|) *\]\]'
-                % ('|'.join(self.site.namespace(6, all=True)), escaped))
+                % ('|'.join(namespace), escaped))
         else:
             image_regex = re.compile(r'' + escaped)
 
@@ -164,10 +165,9 @@ class ImageRobot(Bot):
         else:
             replacements.append((image_regex, ''))
 
-        replaceBot = replace.ReplaceRobot(self.generator, replacements,
-                                          acceptall=self.getOption('always'),
-                                          summary=self.getOption('summary'))
-        replaceBot.run()
+        super(ImageRobot, self).__init__(self.generator, replacements,
+                                         always=self.getOption('always'),
+                                         summary=self.getOption('summary'))
 
 
 def main(*args):

@@ -6,7 +6,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
 __version__ = '$Id$'
 
 import os
@@ -16,6 +16,7 @@ import codecs
 import pywikibot
 from pywikibot import i18n
 from pywikibot.data import api
+from pywikibot.tools import first_lower, first_upper
 
 if sys.version_info[0] > 2:
     xrange = range
@@ -266,7 +267,7 @@ class CaseChecker(object):
                 'pllimit': 'max',
             }
 
-            req = api.Request(**wlparams)
+            req = api.Request(site=self.site, **wlparams)
             data = req.submit()
             if len(data['query']['pageids']) == 1:
                 pageid = data['query']['pageids'][0]
@@ -805,10 +806,8 @@ class CaseChecker(object):
             if len(frmParts[i]) != len(toParts[i]):
                 raise ValueError(u'Splitting parts do not match word length')
             if len(frmParts[i]) > 0:
-                text = text.replace(frmParts[i][0].lower() + frmParts[i][1:],
-                                    toParts[i][0].lower() + toParts[i][1:])
-                text = text.replace(frmParts[i][0].upper() + frmParts[i][1:],
-                                    toParts[i][0].upper() + toParts[i][1:])
+                text = text.replace(first_lower(frmParts[i]), first_lower(toParts[i]))
+                text = text.replace(first_upper(frmParts[i]), first_upper(toParts[i]))
         return text
 
 

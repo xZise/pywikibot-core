@@ -27,6 +27,8 @@ The following parameters are supported:
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -103,7 +105,7 @@ class ArticleEditor(object):
             comment = i18n.twtranslate(pywikibot.Site(), 'editarticle-edit',
                                        {'description': changes})
             try:
-                self.page.put(new, comment=comment, minorEdit=False,
+                self.page.put(new, summary=comment, minorEdit=False,
                               watchArticle=self.options.watch)
             except pywikibot.EditConflict:
                 self.handle_edit_conflict(new)

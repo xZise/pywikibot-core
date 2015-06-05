@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
 Script to resolve double redirects, and to delete broken redirects.
@@ -15,11 +15,12 @@ where action can be one of these:
 double         Fix redirects which point to other redirects.
 do             Shortcut action command is "do".
 
-broken         Tries to fix broken redirect to the last moved target of the
-br             destination page. If this fails and -delete option is given
-               it deletes redirects where targets don't exist if bot has
-               admin rights otherwise it marks the page with a speedy deletion
-               template if available. Shortcut action command is "br".
+broken         Tries to fix redirect which point to nowhere by using the last
+br             moved target of the destination page. If this fails and the
+               -delete option is set, it either deletes the page or marks it for
+               deletion depending on whether the account has admin rights. It
+               will mark the redirect not for deletion if there is no speedy
+               deletion template available. Shortcut action command is "br".
 
 both           Both of the above. Retrieves redirect pages from live wiki,
                not from a special page.
@@ -60,7 +61,9 @@ and arguments can be:
 -total:n       The maximum count of redirects to work upon. If omitted, there
                is no limit.
 
--delete        Enables deletion of broken redirects.
+-delete        Prompt the user whether broken redirects should be deleted (or
+               marked for deletion if the account has no admin rights) instead
+               of just skipping them.
 
 -always        Don't prompt you for each replacement.
 
@@ -73,6 +76,8 @@ and arguments can be:
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -224,8 +229,8 @@ class RedirectGenerator:
                 where chain or loop detecton was halted, or None if unknown
         """
         for apiQ in self._next_redirect_group():
-            gen = pywikibot.data.api.Request(action="query", redirects="",
-                                             pageids=apiQ)
+            gen = pywikibot.data.api.Request(site=self.site, action='query',
+                                             redirects=True, pageids=apiQ)
             data = gen.submit()
             if 'error' in data:
                 raise RuntimeError("API query error: %s" % data)
@@ -454,7 +459,7 @@ class RedirectRobot(Bot):
                                                       asLink=True)})
                         content = redir_page.get(get_redirect=True)
                         redir_page.set_redirect_target(
-                            movedTarget, keep_section=True)
+                            movedTarget, keep_section=True, save=False)
                         pywikibot.showDiff(content, redir_page.text)
                         pywikibot.output(u'Summary - %s' % reason)
                         if self.user_confirm(
@@ -638,7 +643,7 @@ class RedirectRobot(Bot):
             except pywikibot.BadTitle:
                 pywikibot.output(u"Bad Title Error")
                 break
-            redir.set_redirect_target(targetPage, keep_section=True)
+            redir.set_redirect_target(targetPage, keep_section=True, save=False)
             summary = i18n.twtranslate(self.site, 'redirect-fix-double',
                                        {'to': targetPage.title(asLink=True)}
                                        )

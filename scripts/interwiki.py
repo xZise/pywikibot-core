@@ -342,6 +342,8 @@ that you have to break it off, use "-continue" next time.
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -353,8 +355,11 @@ import datetime
 import codecs
 import pickle
 import socket
+
 import pywikibot
+
 from pywikibot import config, i18n, pagegenerators, textlib, interwiki_graph, titletranslate
+from pywikibot.tools import first_upper
 
 if sys.version_info[0] > 2:
     unicode = str
@@ -771,7 +776,7 @@ class PageTree(object):
                 yield page
 
 
-class Subject(object):
+class Subject(interwiki_graph.Subject):
 
     u"""
     Class to follow the progress of a single 'subject'.
@@ -841,8 +846,8 @@ class Subject(object):
             if originPage:
                 originPage = StoredPage(originPage)
 
-        # Remember the "origin page"
-        self.originPage = originPage
+        super(Subject, self).__init__(originPage)
+
         self.repoPage = None
         # todo is a list of all pages that still need to be analyzed.
         # Mark the origin page as todo.
@@ -853,14 +858,6 @@ class Subject(object):
         # done is a list of all pages that have been analyzed and that
         # are known to belong to this subject.
         self.done = PageTree()
-        # foundIn is a dictionary where pages are keys and lists of
-        # pages are values. It stores where we found each page.
-        # As we haven't yet found a page that links to the origin page, we
-        # start with an empty list for it.
-        if originPage:
-            self.foundIn = {self.originPage: []}
-        else:
-            self.foundIn = {}
         # This is a list of all pages that are currently scheduled for
         # download.
         self.pending = PageTree()
@@ -1679,12 +1676,12 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
             frgnSiteDone = False
 
             for siteCode in lclSite.family.languages_by_size:
-                site = pywikibot.Site(siteCode)
+                site = pywikibot.Site(siteCode, lclSite.family)
                 if (not lclSiteDone and site == lclSite) or \
                    (not frgnSiteDone and site != lclSite and site in new):
                     if site == lclSite:
                         lclSiteDone = True   # even if we fail the update
-                    if site.family.name in config.usernames and site.lang in config.usernames[site.family.name]:
+                    if site.family.name in config.usernames and site.code in config.usernames[site.family.name]:
                         try:
                             if self.replaceLinks(new[site], new):
                                 updatedSites.append(site)
@@ -1781,7 +1778,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
 
                 # if we have an account for this site
                 if site.family.name in config.usernames and \
-                   site.lang in config.usernames[site.family.name] and \
+                   site.code in config.usernames[site.family.name] and \
                    smallWikiAllowed and \
                    not site.has_transcluded_data:
                     # Try to do the changes
@@ -1966,7 +1963,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
         # Allow for special case of a self-pointing interwiki link
         if removing and removing != [page.site]:
             self.problem(u'Found incorrect link to %s in %s'
-                         % (", ".join([x.lang for x in removing]), page),
+                         % (", ".join([x.code for x in removing]), page),
                          createneed=False)
             ask = True
         if globalvar.force or globalvar.cleanup:
@@ -2003,9 +2000,9 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
             while True:
                 try:
                     if globalvar.async:
-                        page.put_async(newtext, comment=mcomment)
+                        page.put_async(newtext, summary=mcomment)
                     else:
-                        page.put(newtext, comment=mcomment)
+                        page.put(newtext, summary=mcomment)
                 except pywikibot.LockedPage:
                     pywikibot.output(u'Page %s is locked. Skipping.' % page)
                     raise SaveError(u'Locked')
@@ -2044,7 +2041,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
             raise GiveUpOnPage(u'User asked us to give up')
         else:
             raise LinkMustBeRemoved(u'Found incorrect link to %s in %s'
-                                    % (", ".join([x.lang for x in removing]),
+                                    % (", ".join([x.code for x in removing]),
                                        page))
 
     def reportBacklinks(self, new, updatedSites):
@@ -2146,7 +2143,7 @@ class InterwikiBot(object):
         dumpfn = pywikibot.config.datafilepath(
             'data',
             'interwiki-dumps',
-            '%s-%s.pickle' % (site.family.name, site.lang)
+            '%s-%s.pickle' % (site.family.name, site.code)
         )
         if append:
             mode = 'appended'
@@ -2155,7 +2152,7 @@ class InterwikiBot(object):
         titles = [s.originPage.title() for s in self.subjects]
         with open(dumpfn, mode[0] + 'b') as f:
             pickle.dump(titles, f, protocol=config.pickle_protocol)
-        pywikibot.output(u'Dump %s (%s) %s.' % (site.lang, site.family.name, mode))
+        pywikibot.output(u'Dump %s (%s) %s.' % (site.code, site.family.name, mode))
         return dumpfn
 
     def generateMore(self, number):
@@ -2201,7 +2198,7 @@ class InterwikiBot(object):
                     if page.namespace() == 10:
                         loc = None
                         try:
-                            tmpl, loc = moved_links[page.site.lang]
+                            tmpl, loc = moved_links[page.site.code]
                             del tmpl
                         except KeyError:
                             pass
@@ -2212,8 +2209,10 @@ class InterwikiBot(object):
 
                 if self.generateUntil:
                     until = self.generateUntil
-                    if page.site.lang not in page.site.family.nocapitalize:
-                        until = until[0].upper() + until[1:]
+                    page_namespace = (
+                        page.site.namespaces[int(page.namespace())])
+                    if page_namespace.case == 'first-letter':
+                        until = first_upper(until)
                     if page.title(withNamespace=False) > until:
                         raise StopIteration
                 self.add(page, hints=globalvar.hints)
@@ -2379,7 +2378,7 @@ def compareLanguages(old, new, insite):
         fmt = lambda d, site: unicode(d[site])
     else:
         # Use short format, just the language code
-        fmt = lambda d, site: site.lang
+        fmt = lambda d, site: site.code
 
     mods = mcomment = u''
 
@@ -2409,7 +2408,7 @@ def compareLanguages(old, new, insite):
                       'modifying': ', '.join(fmt(new, x) for x in modifying),
                       'from': u'' if not useFrom else old[modifying[0]]}
 
-        mcomment += i18n.twtranslate(insite.lang, commentname, changes)
+        mcomment += i18n.twtranslate(insite, commentname, changes)
         mods = i18n.twtranslate('en', commentname, en_changes)
 
     return mods, mcomment, adding, removing, modifying
@@ -2418,13 +2417,13 @@ def compareLanguages(old, new, insite):
 def botMayEdit(page):
     tmpl = []
     try:
-        tmpl, loc = moved_links[page.site.lang]
+        tmpl, loc = moved_links[page.site.code]
     except KeyError:
         pass
     if not isinstance(tmpl, list):
         tmpl = [tmpl]
     try:
-        tmpl += ignoreTemplates[page.site.lang]
+        tmpl += ignoreTemplates[page.site.code]
     except KeyError:
         pass
     tmpl += ignoreTemplates['_default']
@@ -2567,7 +2566,7 @@ def main(*args):
         dumpFileName = pywikibot.config.datafilepath(
             'data',
             'interwiki-dumps',
-            u'%s-%s.pickle' % (site.family.name, site.lang)
+            u'%s-%s.pickle' % (site.family.name, site.code)
         )
         try:
             with open(dumpFileName, 'rb') as f:

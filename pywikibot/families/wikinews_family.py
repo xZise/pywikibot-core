@@ -1,5 +1,6 @@
 # -*- coding: utf-8  -*-
 """Family module for Wikinews."""
+from __future__ import unicode_literals
 
 from pywikibot import family
 
@@ -11,21 +12,33 @@ class Family(family.WikimediaFamily):
 
     """Family class for Wikinews."""
 
+    closed_wikis = [
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Hungarian_Wikinews
+        'hu',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Dutch_Wikinews
+        'nl',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Sindhi_Wikinews
+        'sd',
+        # https://meta.wikimedia.org/wiki/Proposals_for_closing_projects/Closure_of_Thai_Wikinews
+        'th',
+    ]
+
     def __init__(self):
         """Constructor."""
         super(Family, self).__init__()
         self.name = 'wikinews'
 
         self.languages_by_size = [
-            'sr', 'en', 'fr', 'pl', 'de', 'it', 'es', 'pt', 'ru', 'ca', 'zh',
-            'sv', 'ja', 'ta', 'el', 'cs', 'ar', 'uk', 'fa', 'fi', 'ro', 'tr',
-            'he', 'bg', 'sq', 'no', 'ko', 'eo', 'bs',
+            'sr', 'en', 'fr', 'de', 'pl', 'es', 'pt', 'ru', 'it', 'zh', 'ta',
+            'el', 'ca', 'cs', 'sv', 'ar', 'fa', 'ro', 'uk', 'tr', 'ja', 'sq',
+            'no', 'ko', 'eo', 'fi', 'bs', 'he', 'bg',
         ]
 
         self.langs = dict([(lang, '%s.wikinews.org' % lang)
                            for lang in self.languages_by_size])
 
-        # Global bot allowed languages on https://meta.wikimedia.org/wiki/Bot_policy/Implementation#Current_implementation
+        # Global bot allowed languages on
+        # https://meta.wikimedia.org/wiki/Bot_policy/Implementation#Current_implementation
         self.cross_allowed = ['ca', 'cs', 'en', 'fa', 'ko', ]
 
         # Which languages have a special order for putting interlanguage links,
@@ -41,17 +54,6 @@ class Family(family.WikimediaFamily):
             'he': ['en'],
             'hu': ['en'],
             'pl': self.alphabetic,
-        }
-
-        self.obsolete = {
-            'hu': None,  # https://bugzilla.wikimedia.org/show_bug.cgi?id=28342
-            'jp': 'ja',
-            'nb': 'no',
-            'nl': None,  # https://bugzilla.wikimedia.org/show_bug.cgi?id=20325
-            'sd': None,
-            'th': None,  # https://bugzilla.wikimedia.org/show_bug.cgi?id=28341
-            'zh-tw': 'zh',
-            'zh-cn': 'zh'
         }
 
     def shared_data_repository(self, code, transcluded=False):

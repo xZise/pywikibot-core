@@ -5,6 +5,8 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -26,8 +28,11 @@ from warnings import warn
 import pywikibot
 
 from pywikibot import config2 as config
-from pywikibot.tools import deprecated, deprecate_arg, issue_deprecation_warning
-from pywikibot.exceptions import Error, UnknownFamily, FamilyMaintenanceWarning
+from pywikibot.tools import (
+    deprecated, deprecated_args, issue_deprecation_warning,
+    FrozenDict,
+)
+from pywikibot.exceptions import UnknownFamily, FamilyMaintenanceWarning
 
 logger = logging.getLogger("pywiki.wiki.family")
 
@@ -152,6 +157,8 @@ class Family(object):
             'ca': u'[a-zàèéíòóúç·ïü]*',
             'cbk-zam': u'[a-záéíóúñ]*',
             'ce': u'[a-zабвгдеёжзийклмнопрстуфхцчшщъыьэюя]*',
+            'ckb': u'[ئابپتجچحخدرڕزژسشعغفڤقکگلڵمنوۆهھەیێ‌]*',
+            'co': u'[a-zàéèíîìóòúù]*',
             'crh': u'[a-zâçğıñöşüа-яё“»]*',
             'cs': u'[a-záčďéěíňóřšťúůýž]*',
             'csb': u'[a-zęóąśłżźćńĘÓĄŚŁŻŹĆŃ]*',
@@ -181,6 +188,7 @@ class Family(object):
             'gn': u'[a-záéíóúñ]*',
             'gu': u'[઀-૿]*',
             'he': u'[a-zא-ת]*',
+            'hi': u'[a-zऀ-ॣ०-꣠-ꣿ]*',
             'hr': u'[čšžćđßa-z]*',
             'hsb': u'[äöüßa-z]*',
             'ht': u'[a-zàèòÀÈÒ]*',
@@ -234,6 +242,7 @@ class Family(object):
             'ro': u'[a-zăâîşţșțĂÂÎŞŢȘȚ]*',
             'ru': u'[a-zабвгдеёжзийклмнопрстуфхцчшщъыьэюя]*',
             'rue': u'[a-zабвгґдеєжзиіїйклмнопрстуфхцчшщьєюяёъы“»]*',
+            'sa': u'[a-zऀ-ॣ०-꣠-ꣿ]*',
             'sah': u'[a-zабвгдеёжзийклмнопрстуфхцчшщъыьэюя]*',
             'scn': u'[a-zàéèíîìóòúù]*',
             'sg': u'[a-zàâçéèêîôûäëïöüùÇÉÂÊÎÔÛÄËÏÖÜÀÈÙ]*',
@@ -755,9 +764,14 @@ class Family(object):
 
         # Which language codes no longer exist and by which language code
         # should they be replaced. If for example the language with code xx:
-        # now should get code yy:, add {'xx':'yy'} to obsolete. If all
-        # links to language xx: should be removed, add {'xx': None}.
-        self.obsolete = {}
+        # now should get code yy:, add {'xx':'yy'} to obsolete.
+        if not hasattr(self, 'interwiki_replacements'):
+            self.interwiki_replacements = {}
+
+        # Codes that should be removed, usually because the site has been
+        # taken down.
+        if not hasattr(self, 'interwiki_removals'):
+            self.interwiki_removals = []
 
         # Language codes of the largest wikis. They should be roughly sorted
         # by size.
@@ -865,10 +879,13 @@ class Family(object):
             issue_deprecation_warning('nocapitalize',
                                       "APISite.siteinfo['case'] or "
                                       "Namespace.case == 'case-sensitive'", 2)
+        elif name == 'known_families':
+            issue_deprecation_warning('known_families',
+                                      'APISite.interwiki(prefix)', 2)
         return super(Family, self).__getattribute__(name)
 
     @staticmethod
-    @deprecate_arg('fatal', None)
+    @deprecated_args(fatal=None)
     def load(fam=None):
         """Import the named family.
 
@@ -1078,40 +1095,119 @@ class Family(object):
     def nicepath(self, code):
         return '/wiki/'
 
+    def _get_path_regex(self, code):
+        """
+        Return a regex matching a site URL path.
+
+        @return: regex string
+        @rtype: unicode
+        """
+        # The trailing slash after path(code) is optional.
+        return ('(?:%s?|%s)' %
+                (re.escape(self.path(code) + '/'),
+                 re.escape(self.nicepath(code))))
+
+    def _get_url_regex(self, code):
+        """
+        Return a regex matching a site URL.
+
+        Regex match group 1 is the domain.
+
+        Does not make use of ssl_hostname or ssl_pathprefix.
+
+        @return: regex string
+        @rtype: unicode
+        """
+        return (r'(?:\/\/|%s\:\/\/)(%s)%s' %
+                (self.protocol(code),
+                 re.escape(self.hostname(code)),
+                 self._get_path_regex(code)))
+
     def rcstream_host(self, code):
         raise NotImplementedError("This family does not support RCStream")
+
+    @deprecated_args(name='title')
+    def get_address(self, code, title):
+        return '%s?title=%s&redirect=no' % (self.path(code), title)
 
     def nice_get_address(self, code, title):
         return '%s%s' % (self.nicepath(code), title)
 
-    def _get_path_regex(self):
+    def _get_regex_all(self):
         """
-        Return a regex matching the path after the domain.
+        Return a regex matching any site.
 
-        It is using L{path} and L{nicepath} with code set to
-        'None'. If that returns a KeyError (L{scriptpath} probably
-        using the C{langs} dictionary) it retries it with the key from
-        C{langs} if it only contains one entry and throws an Error
-        otherwise. In that case the Family instance should overwrite this
-        method or supply code independent methods.
+        It is using Family methods with code set to 'None' initially.
+        That will raise KeyError if the Family methods use the code to
+        lookup the correct value in a dictionary such as C{langs}.
+        On KeyError, it retries it with each key from C{langs}.
 
-        @raise Error: If it's not possible to automatically get a code
-            independent regex.
+        @return: regex string
+        @rtype: unicode
         """
-        def _get_coded_path_regex(code):
-            return ('(?:' + re.escape(self.path(code) + '/') + '|' +
-                    re.escape(self.nicepath(code)) + ')')
+        if hasattr(self, '_regex_all'):
+            return self._regex_all
+
         try:
-            return _get_coded_path_regex(None)
+            self._regex_all = self._get_url_regex(None)
+            return self._regex_all
         except KeyError:
             # Probably automatically generated family
-            if len(self.langs) == 1:
-                return _get_coded_path_regex(next(iter(self.langs.keys())))
-            else:
-                raise Error('Pywikibot is unable to generate an automatic '
-                            'path regex for the family {0}. It is recommended '
-                            'to overwrite "_get_path_regex" in that '
-                            'family.'.format(self.name))
+            pass
+
+        # If there is only one code, use it.
+        if len(self.langs) == 1:
+            code = next(iter(self.langs.keys()))
+            self._regex_all = self._get_url_regex(code)
+            return self._regex_all
+
+        try:
+            protocol = self.protocol(None) + '\:\/\/'
+        except KeyError:
+            protocol = None
+
+        try:
+            hostname = re.escape(self.hostname(None))
+        except KeyError:
+            hostname = None
+
+        try:
+            path = self._get_path_regex(None)
+        except KeyError:
+            path = None
+
+        # If two or more of the three above varies, the regex cant be optimised
+        none_count = [protocol, hostname, path].count(None)
+
+        if none_count > 1:
+            self._regex_all = ('(?:%s)'
+                               % '|'.join(self._get_url_regex(code)
+                                          for code in self.langs.keys()))
+            return self._regex_all
+
+        if not protocol:
+            protocols = set(self.protocol(code) + '\:\/\/'
+                            for code in self.langs.keys())
+            protocol = '|'.join(protocols)
+
+        # Allow protocol neutral '//'
+        protocol = '(?:\/\/|%s)' % protocol
+
+        if not hostname:
+            hostnames = set(re.escape(self.hostname(code))
+                            for code in self.langs.keys())
+            hostname = '|'.join(hostnames)
+
+        # capture hostname
+        hostname = '(' + hostname + ')'
+
+        if not path:
+            regexes = set(self._get_path_regex(code)
+                          for code in self.langs.keys())
+            path = '(?:%s)' % '|'.join(regexes)
+
+        self._regex_all = protocol + hostname + path
+        return self._regex_all
 
     def from_url(self, url):
         """
@@ -1121,27 +1217,35 @@ class Family(object):
         L{Family.nice_get_address} or L{Family.path}. If the protocol doesn't
         match but is present in the interwikimap it'll log this.
 
-        It uses L{Family._get_path_regex} to generate a regex defining the path
-        after the domain.
+        It ignores $1 in the url, and anything that follows it.
 
         @return: The language code of the url. None if that url is not from
             this family.
         @rtype: str or None
+        @raises RuntimeError: Mismatch between Family langs dictionary and
+            URL regex.
         """
-        url_match = re.match(r'(?:(https?)://|//)?(.*){0}'
-                             '\$1'.format(self._get_path_regex()), url)
+        if '$1' in url:
+            url = url[:url.find('$1')]
+
+        url_match = re.match(self._get_regex_all(), url)
         if not url_match:
             return None
+
         for code, domain in self.langs.items():
-            if domain == url_match.group(2):
-                break
-        else:
-            return None
-        if url_match.group(1) and url_match.group(1) != self.protocol(code):
-            pywikibot.log('The entry in the interwikimap uses {0} but the '
-                          'family is configured to use {1}'.format(
-                url_match.group(1), self.protocol(code)))
-        return code
+            if domain is None:
+                warn('Family(%s): langs missing domain names' % self.name,
+                     FamilyMaintenanceWarning)
+            elif domain == url_match.group(1):
+                return code
+
+        # if domain was None, this will return the only possible code.
+        if len(self.langs) == 1:
+            return next(iter(self.langs))
+
+        raise RuntimeError(
+            'Family(%s): matched regex has not matched a domain in langs'
+            % self.name)
 
     def maximum_GET_length(self, code):
         return config.maximum_GET_length
@@ -1158,7 +1262,7 @@ class Family(object):
         Use L{pywikibot.tools.MediaWikiVersion} to compare version strings.
         """
         # Here we return the latest mw release for downloading
-        return '1.24.1'
+        return '1.25.1'
 
     def force_version(self, code):
         """
@@ -1280,10 +1384,75 @@ class Family(object):
         """
         return putText
 
+    @property
+    def obsolete(self):
+        """
+        Old codes that are not part of the family.
+
+        Interwiki replacements override removals for the same code.
+
+        @return: mapping of old codes to new codes (or None)
+        @rtype: dict
+        """
+        data = dict((code, None)
+                    for code in self.interwiki_removals)
+        data.update(self.interwiki_replacements)
+        return FrozenDict(data,
+                          'Family.obsolete not updatable; '
+                          'use Family.interwiki_removals '
+                          'and Family.interwiki_replacements')
+
+    @obsolete.setter
+    def obsolete(self, data):
+        """Split obsolete dict into constituent parts."""
+        self.interwiki_removals[:] = [old for (old, new) in data.items()
+                                      if new is None]
+        self.interwiki_replacements.clear()
+        self.interwiki_replacements.update((old, new)
+                                           for (old, new) in data.items()
+                                           if new is not None)
+
 
 class WikimediaFamily(Family):
 
-    """#Class for all wikimedia families."""
+    """Class for all wikimedia families."""
+
+    # Code mappings which are only an alias, and there is no 'old' wiki.
+    # For all except 'nl_nds', subdomains do exist as a redirect, but that
+    # should not be relied upon.
+    code_aliases = {
+        # Country aliases; see T87002
+        'dk': 'da',  # Wikipedia, Wikibooks and Wiktionary only.
+        'jp': 'ja',
+
+        # Language aliases
+        'nb': 'no',  # T86924
+
+        # Incomplete language code change. T86915
+        'minnan': 'zh-min-nan',
+        'nan': 'zh-min-nan',
+
+        # These two probably only apply to Wikipedia.
+        # Server not found for the other projects.
+        'zh-tw': 'zh',
+        'zh-cn': 'zh',
+
+        # miss-spelling
+        'nl_nds': 'nl-nds',
+    }
+
+    # Not open for edits; stewards can still edit.
+    closed_wikis = []
+    # Completely removed
+    removed_wikis = []
+
+    # Mappings which should be in effect, even for
+    # closed/removed wikis
+    interwiki_replacement_overrides = {
+        # Moldovan projects are closed, however
+        # Romanian was to be the replacement.
+        'mo': 'ro',
+    }
 
     def __init__(self):
         super(WikimediaFamily, self).__init__()
@@ -1296,6 +1465,16 @@ class WikimediaFamily(Family):
             'wikibooks', 'wikidata', 'wikinews', 'wikipedia', 'wikiquote',
             'wikisource', 'wikiversity', 'wiktionary',
         ]
+
+    @property
+    def interwiki_removals(self):
+        return frozenset(self.removed_wikis + self.closed_wikis)
+
+    @property
+    def interwiki_replacements(self):
+        rv = self.code_aliases.copy()
+        rv.update(self.interwiki_replacement_overrides)
+        return FrozenDict(rv)
 
     def shared_image_repository(self, code):
         return ('commons', 'commons')

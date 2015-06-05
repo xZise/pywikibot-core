@@ -5,6 +5,8 @@
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 
 import sys
@@ -13,15 +15,17 @@ from pywikibot import config
 from pywikibot import InvalidTitle
 import pywikibot.page
 
-from tests.aspects import unittest, TestCase, DefaultSiteTestCase
-from tests.utils import allowed_failure
+from tests.aspects import (
+    unittest, TestCase, DefaultSiteTestCase, SiteAttributeTestCase,
+)
+from tests.utils import expected_failure_if
 
 if sys.version_info[0] > 2:
     basestring = (str, )
     unicode = str
 
 
-class TestLinkObject(TestCase):
+class TestLinkObject(SiteAttributeTestCase):
 
     """Test cases for Link objects."""
 
@@ -49,15 +53,6 @@ class TestLinkObject(TestCase):
     }
 
     cached = True
-
-    @classmethod
-    def setUpClass(cls):
-        super(TestLinkObject, cls).setUpClass()
-        cls.enwiki = cls.get_site('enwiki')
-        cls.frwiki = cls.get_site('frwiki')
-        cls.itwikt = cls.get_site('itwikt')
-        cls.enws = cls.get_site('enws')
-        cls.itws = cls.get_site('itws')
 
     namespaces = {0: [u""],        # en.wikipedia.org namespaces for testing
                   1: [u"Talk:"],   # canonical form first, then others
@@ -492,16 +487,6 @@ class TestPageObject(DefaultSiteTestCase):
         mainpage_unpickled = pickle.loads(mainpage_str)
         self.assertEqual(mainpage, mainpage_unpickled)
 
-    def testRepr(self):
-        mainpage = self.get_mainpage()
-        s = repr(mainpage)
-        self.assertIsInstance(s, str)
-
-    def testReprUnicode(self):
-        page = pywikibot.Page(self.get_site(), u'Ō')
-        s = repr(page)
-        self.assertIsInstance(s, str)
-
     def test_redirect(self):
         """Test that the redirect option is set correctly."""
         site = self.get_site()
@@ -520,6 +505,44 @@ class TestPageObject(DefaultSiteTestCase):
         self.assertFalse(hasattr(page_copy, '_isredir'))
         page_copy.isDisambig()
         self.assertTrue(page_copy.isRedirectPage())
+
+
+class TestPageRepr(DefaultSiteTestCase):
+
+    """Test Page representation."""
+
+    cached = True
+
+    def test_mainpage_type(self):
+        u"""Test the return type of repr(Page(<main page>)) is str."""
+        mainpage = self.get_mainpage()
+        self.assertIsInstance(repr(mainpage), str)
+
+    def test_unicode_type(self):
+        """Test the return type of repr(Page(u'<non-ascii>')) is str."""
+        page = pywikibot.Page(self.get_site(), u'Ō')
+        self.assertIsInstance(repr(page), str)
+
+    @expected_failure_if(sys.version_info[0] > 2)
+    def test_unicode_value(self):
+        """Test repr(Page(u'<non-ascii>')) is represented simply as utf8."""
+        page = pywikibot.Page(self.get_site(), u'Ō')
+        self.assertEqual(repr(page), b'Page(\xc5\x8c)')
+
+    @unittest.skipIf(sys.version_info[0] > 2, 'Python 2 specific test')
+    def test_unicode_percent_r_failure(self):
+        """Test u'{x!r}'.format(Page(u'<non-ascii>')) raises exception on Python 2."""
+        # This raises an exception on Python 2, but passes on Python 3
+        page = pywikibot.Page(self.get_site(), u'Ō')
+        self.assertRaisesRegex(UnicodeDecodeError, '', unicode.format, u'{0!r}', page)
+
+    @unittest.skipIf(sys.version_info[0] < 3, 'Python 3+ specific test')
+    def test_unicode_value_py3(self):
+        """Test to capture actual Python 3 result pre unicode_literals."""
+        page = pywikibot.Page(self.get_site(), u'Ō')
+        self.assertEqual(repr(page), "Page(b'\\xc5\\x8c')")
+        self.assertEqual(u'%r' % page, "Page(b'\\xc5\\x8c')")
+        self.assertEqual(u'{0!r}'.format(page), "Page(b'\\xc5\\x8c')")
 
 
 class TestPageBotMayEdit(TestCase):
@@ -725,12 +748,10 @@ class TestPageUserAction(DefaultSiteTestCase):
         mainpage = self.get_mainpage()
         self.assertIsInstance(mainpage.purge(), bool)
 
-    @allowed_failure
     def test_watch(self):
         """Test Page.watch, with and without unwatch enabled."""
         # Note: this test uses the userpage, so that it is unwatched and
         # therefore is not listed by script_tests test_watchlist_simulate.
-        # FIXME: T77965: fails on ar.wp and test.wd, but not en.wp and fr.wikt
         userpage = self.get_userpage()
         rv = userpage.watch()
         self.assertIsInstance(rv, bool)

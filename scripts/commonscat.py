@@ -25,35 +25,30 @@ supported:
 For example to go through all categories:
 commonscat.py -start:Category:!
 """
-"""
-Commonscat bot:
-
-Take a page. Follow the interwiki's and look for the commonscat template
-*Found zero templates. Done.
-*Found one template. Add this template
-*Found more templates. Ask the user <- still have to implement this
-
-TODO:
-*Update interwiki's at commons
-*Collect all possibilities also if local wiki already has link.
-*Better support for other templates (translations) / redundant templates.
-*Check mode, only check pages which already have the template
-*More efficient like interwiki.py
-*Possibility to update other languages in the same run
-"""
-
-"""
-Porting notes:
-
-*Ported from compat to core
-*Replaced now-deprecated Page methods
-*Fixed way of finding interlanguage links in findCommonscatLink()
-*Removed unused and now possibly broken updateInterwiki() method
-
-Ported by Allen Guo <Guoguo12@gmail.com>
-November 2013
-"""
-
+# Commonscat bot:
+#
+# Take a page. Follow the interwiki's and look for the commonscat template
+# *Found zero templates. Done.
+# *Found one template. Add this template
+# *Found more templates. Ask the user <- still have to implement this
+#
+# TODO:
+# *Update interwiki's at commons
+# *Collect all possibilities also if local wiki already has link.
+# *Better support for other templates (translations) / redundant templates.
+# *Check mode, only check pages which already have the template
+# *More efficient like interwiki.py
+# *Possibility to update other languages in the same run
+#
+# Porting notes:
+#
+# *Ported from compat to core
+# *Replaced now-deprecated Page methods
+# *Fixed way of finding interlanguage links in findCommonscatLink()
+# *Removed unused and now possibly broken updateInterwiki() method
+#
+# Ported by Allen Guo <Guoguo12@gmail.com>
+# November 2013
 #
 # (C) Multichill, 2008-2009
 # (C) Xqt, 2009-2015
@@ -61,6 +56,8 @@ November 2013
 #
 # Distributed under the terms of the MIT license.
 #
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 
@@ -372,7 +369,7 @@ class CommonscatBot(Bot):
                                        'commonscat-msg_change',
                                        {'oldcat': oldcat, 'newcat': newcat})
 
-        self.userPut(page, page.text, newtext, comment=comment,
+        self.userPut(page, page.text, newtext, summary=comment,
                      ignore_save_related_errors=True)
 
     def findCommonscatLink(self, page=None):
@@ -479,7 +476,7 @@ class CommonscatBot(Bot):
             elif "Category redirect" in commonsPage.templates():
                 pywikibot.log(u"getCommonscat: The category is a category redirect")
                 for template in commonsPage.templatesWithParams():
-                    if (template[0] == "Category redirect" and
+                    if (template[0].title(withNamespace=False) == "Category redirect" and
                             len(template[1]) > 0):
                         return self.checkCommonscatLink(template[1][0])
             elif commonsPage.isDisambig():

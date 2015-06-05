@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
 __version__ = '$Id$'
 
 import os
@@ -15,7 +15,10 @@ from pywikibot import config
 
 from tests import _root_dir
 from tests.aspects import unittest, DefaultSiteTestCase, MetaTestCaseClass, PwbTestCase
-from tests.utils import allowed_failure, execute_pwb
+from tests.utils import allowed_failure, execute_pwb, add_metaclass
+
+if sys.version_info[0] > 2:
+    basestring = (str, )
 
 scripts_path = os.path.join(_root_dir, 'scripts')
 
@@ -31,6 +34,7 @@ script_deps = {
     'flickrripper': ['flickrapi'],
     'match_images': ['PIL.ImageTk'],
     'states_redirect': ['pycountry'],
+    'patrol': ['mwlib'],
 }
 
 if sys.version_info < (2, 7):
@@ -99,6 +103,7 @@ auto_run_script_list = [
     'catall',
     'category_redirect',
     'cfd',
+    'checkimages',
     'clean_sandbox',
     'disambredir',
     'imagerecat',
@@ -108,6 +113,7 @@ auto_run_script_list = [
     'revertbot',
     'noreferences',
     'nowcommons',
+    'patrol',
     'script_wui',
     'shell',
     'states_redirect',
@@ -137,9 +143,10 @@ no_args_expected_results = {
     'pagefromfile': 'Please enter the file name',
     'replace': 'Press Enter to use this automatic message',
     'script_wui': 'Pre-loading all relevant page contents',
-    'shell': 'Welcome to the',
+    'shell': ('>>> ', 'Welcome to the'),
     'spamremove': 'No spam site specified',
     'transferbot': 'Target site not different from source site',  # Bug 68662
+    'unusedfiles': ('Working on', None),
     'version': 'unicode test: ',
     'watchlist': 'Retrieving watchlist',
 
@@ -156,14 +163,15 @@ else:
     no_args_expected_results['replicate_wiki'] = 'error: too few arguments'
 
 
+enable_autorun_tests = (
+    os.environ.get('PYWIKIBOT2_TEST_AUTORUN', '0') == '1')
+
+
 def collector(loader=unittest.loader.defaultTestLoader):
     """Load the default tests."""
     # Note: Raising SkipTest during load_tests will
     # cause the loader to fallback to its own
     # discover() ordering of unit tests.
-
-    enable_autorun_tests = (
-        os.environ.get('PYWIKIBOT2_TEST_AUTORUN', '0') == '1')
 
     if deadlock_script_list:
         print('Skipping deadlock scripts:\n  %s'
@@ -215,6 +223,13 @@ class TestScriptMeta(MetaTestCaseClass):
     def __new__(cls, name, bases, dct):
         """Create the new class."""
         def test_execution(script_name, args=[], expected_results=None):
+            is_autorun = '-help' not in args and script_name in auto_run_script_list
+
+            def test_skip_script(self):
+                raise unittest.SkipTest(
+                    'Skipping execution of auto-run scripts (set '
+                    'PYWIKIBOT2_TEST_AUTORUN=1 to enable) "{0}"'.format(script_name))
+
             def testScript(self):
                 cmd = [script_name]
 
@@ -224,12 +239,17 @@ class TestScriptMeta(MetaTestCaseClass):
                 data_in = script_input.get(script_name)
 
                 timeout = 0
-                if '-help' not in args and script_name in auto_run_script_list:
+                if is_autorun:
                     timeout = 5
 
                 if expected_results and script_name in expected_results:
                     error = expected_results[script_name]
+                    if isinstance(error, basestring):
+                        stdout = None
+                    else:
+                        stdout, error = error
                 else:
+                    stdout = None
                     error = None
 
                 result = execute_pwb(cmd, data_in, timeout=timeout, error=error)
@@ -251,7 +271,7 @@ class TestScriptMeta(MetaTestCaseClass):
                     if error:
                         self.assertIn(error, result['stderr'])
 
-                        self.assertIn(result['exit_code'], [0, 1, 2, -9])
+                        exit_codes = [0, 1, 2, -9]
                     else:
                         if stderr_other == ['']:
                             stderr_other = None
@@ -259,10 +279,10 @@ class TestScriptMeta(MetaTestCaseClass):
                         self.assertIn('Global arguments available for all',
                                       result['stdout'])
 
-                        self.assertEqual(result['exit_code'], 0)
+                        exit_codes = [0]
                 else:
                     # auto-run
-                    self.assertIn(result['exit_code'], [0, -9])
+                    exit_codes = [0, -9]
 
                     if (not result['stdout'] and not result['stderr']):
                         print(' auto-run script unresponsive after %d seconds'
@@ -282,16 +302,20 @@ class TestScriptMeta(MetaTestCaseClass):
                 if 'Global arguments available for all' not in result['stdout']:
                     # Specifically look for deprecated
                     self.assertNotIn('deprecated', result['stdout'].lower())
-                    # But also complain if there is any stdout
-                    # but ignore shell.py emiting its '>>> ' prompt.
-                    if ((script_name == 'shell' and
-                            set(result['stdout']).issubset(set('> \n'))) or
-                            result['stdout'] == ''):
+                    if result['stdout'] == '':
                         result['stdout'] = None
-                    self.assertIsNone(result['stdout'])
+                    # But also complain if there is any stdout
+                    if stdout is not None and result['stdout'] is not None:
+                        self.assertIn(stdout, result['stdout'])
+                    else:
+                        self.assertIsNone(result['stdout'])
+
+                self.assertIn(result['exit_code'], exit_codes)
 
                 sys.stdout.flush()
 
+            if not enable_autorun_tests and is_autorun:
+                return test_skip_script
             return testScript
 
         for script_name in script_list:
@@ -304,6 +328,8 @@ class TestScriptMeta(MetaTestCaseClass):
                 test_name = 'test__' + script_name + '_help'
             else:
                 test_name = 'test_' + script_name + '_help'
+            # it's explicitly using str() because __name__ must be str
+            test_name = str(test_name)
             dct[test_name] = test_execution(script_name, ['-help'])
             if script_name in ['version',
                                'script_wui',      # Failing on travis-ci
@@ -324,20 +350,21 @@ class TestScriptMeta(MetaTestCaseClass):
                 test_name = 'test__' + script_name + '_simulate'
             else:
                 test_name = 'test_' + script_name + '_simulate'
+            # it's explicitly using str() because __name__ must be str
+            test_name = str(test_name)
             dct[test_name] = test_execution(script_name, ['-simulate'],
                                             no_args_expected_results)
             if script_name in ['catall',          # stdout user interaction
-                               'checkimages',     # bug 68613
                                'flickrripper',    # Requires a flickr api key
-                               'lonelypages',     # uses exit code 1
                                'script_wui',      # Error on any user except DrTrigonBot
                                'upload',          # raises custom ValueError
                                ] + failed_dep_script_list or (
-                    (config.family != 'wikipedia' and script_name == 'lonelypages') or
                     (config.family == 'wikipedia' and script_name == 'disambredir') or
-                    (config.family == 'wikipedia' and config.mylang != 'en' and script_name == 'misspelling')):
+                    (config.family != 'wikidata' and script_name == 'checkimages') or
+                    (config.family == 'wikipedia' and config.mylang != 'en' and script_name == 'misspelling')):  # T94681
                 dct[test_name] = unittest.expectedFailure(dct[test_name])
             elif script_name in ['watchlist',     # T77965
+                                 'lonelypages',   # uses exit code 1; T94680
                                  ]:
                 dct[test_name] = allowed_failure(dct[test_name])
             dct[test_name].__doc__ = \
@@ -359,6 +386,7 @@ class TestScriptMeta(MetaTestCaseClass):
         return super(TestScriptMeta, cls).__new__(cls, name, bases, dct)
 
 
+@add_metaclass
 class TestScript(DefaultSiteTestCase, PwbTestCase):
 
     """Test cases for scripts.
@@ -373,10 +401,6 @@ class TestScript(DefaultSiteTestCase, PwbTestCase):
 
     user = True
 
-
-if sys.version_info[0] > 2:
-    import six
-    TestScript = six.add_metaclass(TestScriptMeta)(TestScript)
 
 if __name__ == '__main__':
     try:

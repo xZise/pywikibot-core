@@ -1,9 +1,10 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """
 Program to batch create categories.
 
-The program expects a generator containing a list of page titles to be used as
-base.
+The program expects a generator of page titles to be used as
+suffix for creating new categories with a different base.
 
 The following command line parameters are supported:
 
@@ -23,7 +24,13 @@ create_categories.py
     -parent:"Cultural heritage monuments in Wallonia"
     -basename:"Cultural heritage monuments in"
 
+The page 'User:Multichill/Wallonia' on commons contains
+page links like [[Category:Hensies]], causing this script
+to create [[Category:Cultural heritage monuments in Hensies]].
+
 """
+from __future__ import unicode_literals
+
 __version__ = '$Id$'
 #
 # (C) Multichill, 2011
@@ -41,6 +48,7 @@ class CreateCategoriesBot(Bot):
     """Category creator bot."""
 
     def __init__(self, generator, parent, basename, **kwargs):
+        """Constructor."""
         super(CreateCategoriesBot, self).__init__(**kwargs)
         self.generator = generator
         self.parent = parent
@@ -60,7 +68,7 @@ class CreateCategoriesBot(Bot):
         if not newpage.exists():
             pywikibot.output(newpage.title())
             try:
-                self.userPut(newpage, '', newtext, comment=self.comment)
+                self.userPut(newpage, '', newtext, summary=self.comment)
             except pywikibot.EditConflict:
                 pywikibot.output(u'Skipping %s due to edit conflict' % newpage.title())
             except pywikibot.ServerError:
