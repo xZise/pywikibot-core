@@ -408,6 +408,49 @@ class TestFilterUnique(TestCase):
         self.assertRaises(StopIteration, next, deduper)
 
 
+class TestArgSpec(TestCase):
+
+    """Test getargspec and ArgSpec from tools."""
+
+    net = False
+
+    @staticmethod
+    def _method_test_args(a, b):
+        """Test method with two positional arguments."""
+        return (['a', 'b'], None, None, None)
+
+    @staticmethod
+    def _method_test_kwargs(a, b=42):
+        """Test method with one positional and one keyword argument."""
+        return (['a', 'b'], None, None, (42,))
+
+    @staticmethod
+    def _method_test_varargs(a, b, *var):
+        """Test method with two positional arguments and var args."""
+        return (['a', 'b'], 'var', None, None)
+
+    @staticmethod
+    def _method_test_varkwargs(a, b, **var):
+        """Test method with two positional arguments and var kwargs."""
+        return (['a', 'b'], None, 'var', None)
+
+    @staticmethod
+    def _method_test_vars(a, b, *args, **kwargs):
+        """Test method with two positional arguments and both var args."""
+        return (['a', 'b'], 'args', 'kwargs', None)
+
+    def test_argspec(self):
+        """Test the different methods."""
+        for m in dir(TestArgSpec):
+            if not m.startswith('_method_test_'):
+                continue
+            m = getattr(self, m)
+            # all expect at least a and b
+            expected = m(1, 2)
+            self.assertEqual(tools.getargspec(m), expected)
+            self.assertIsInstance(tools.getargspec(m), tools.ArgSpec)
+
+
 if __name__ == '__main__':
     try:
         unittest.main()

@@ -27,10 +27,41 @@ PY2 = (PYTHON_VERSION[0] == 2)
 
 if not PY2:
     import queue as Queue
+
     basestring = (str,)
     unicode = str
 else:
     import Queue
+
+
+if PYTHON_VERSION < (3, 3):
+    ArgSpec = inspect.ArgSpec
+    getargspec = inspect.getargspec
+else:
+    ArgSpec = collections.namedtuple('ArgSpec', ['args', 'varargs', 'keywords',
+                                                 'defaults'])
+
+    def getargspec(func):
+        """Python 3 implementation using inspect.signature."""
+        sig = inspect.signature(func)
+        args = []
+        defaults = []
+        varargs = None
+        kwargs = None
+        for p in sig.parameters.values():
+            if p.kind == inspect.Parameter.VAR_POSITIONAL:
+                varargs = p.name
+            elif p.kind == inspect.Parameter.VAR_KEYWORD:
+                kwargs = p.name
+            else:
+                args += [p.name]
+                if p.default != inspect.Parameter.empty:
+                    defaults += [p.default]
+        if defaults:
+            defaults = tuple(defaults)
+        else:
+            defaults = None
+        return ArgSpec(args, varargs, kwargs, defaults)
 
 
 def print_debug(msg, *args, **kwargs):
@@ -1287,7 +1318,7 @@ def remove_last_args(arg_names):
             """
             name = obj.__full_name__
             depth = get_wrapper_depth(wrapper) + 1
-            args, varargs, kwargs, _ = inspect.getargspec(wrapper.__wrapped__)
+            args, varargs, kwargs, _ = getargspec(wrapper.__wrapped__)
             if varargs is not None and kwargs is not None:
                 raise ValueError(u'{1} may not have * or ** args.'.format(
                     name))
