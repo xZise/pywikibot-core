@@ -2021,18 +2021,45 @@ class Page(BasePage):
                                  'if source is a Site.')
         super(Page, self).__init__(source, title, ns)
 
+    @property
+    def raw_extracted_templates(self):
+        """
+        Extract templates using L{textlib.extract_templates_and_params}.
+
+        Disabled parts and whitespace are stripped, except for
+        whitespace in anonymous positional arguments.
+
+        This value is cached.
+
+        @rtype: list of (str, OrderedDict)
+        """
+        if not hasattr(self, '_raw_extracted_templates'):
+            templates = textlib.extract_templates_and_params(
+                self.text, True, True)
+            self._raw_extracted_templates = templates
+
+        return self._raw_extracted_templates
+
     @deprecate_arg("get_redirect", None)
     def templatesWithParams(self):
         """Iterate templates used on this Page.
 
-        @return: a generator that yields a tuple for each use of a template
+        The templates are extracted by L{textlib.extract_templates_and_params},
+        with positional arguments placed first in order, and each named
+        argument appearing as 'name=value'.
+
+        All parameter keys and values for each template are stripped of
+        whitespace.
+
+        @return: a list of tuples with one tuple for each template invocation
             in the page, with the template Page as the first entry and a list of
             parameters as the second entry.
+        @rtype: list of (Page, list)
         """
         # WARNING: may not return all templates used in particularly
         # intricate cases such as template substitution
         titles = list(t.title() for t in self.templates())
-        templates = textlib.extract_templates_and_params(self.text)
+        templates = self.raw_extracted_templates
         # backwards-compatibility: convert the dict returned as the second
         # element into a list in the format used by old scripts
         result = []
