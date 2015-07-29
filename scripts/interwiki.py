@@ -370,6 +370,15 @@ docuReplacements = {
 }
 
 
+# Check that the version of Python is not affected by T102461
+_orig_title = 'Li̍t-sṳ́'
+if pywikibot.page.unicodedata.normalize('NFC', _orig_title) != _orig_title:
+    raise RuntimeError('This script should not be used on a Python version '
+                       'where the unicode normalization experiences a bug. '
+                       'See also: https://phabricator.wikimedia.org/T102461')
+del _orig_title
+
+
 class SaveError(pywikibot.Error):
 
     """An attempt to save a page with changed interwiki has failed."""
@@ -1912,11 +1921,7 @@ u'WARNING: %s is in namespace %i, but %s is in namespace %i. Follow it anyway?'
                 # put it to new means don't delete it
                 if (
                     not globalvar.cleanup or
-                    unicode(rmPage) not in globalvar.remove or
-                    (
-                        rmPage.site.sitename() == 'wikipedia:hi' and
-                        page.site.sitename() != 'wikipedia:de'  # work-arround for bug #3081100 (do not remove hi-pages)
-                    )
+                    unicode(rmPage) not in globalvar.remove
                 ):
                     new[rmsite] = rmPage
                     pywikibot.output(
