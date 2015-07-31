@@ -71,6 +71,20 @@ from pywikibot import textlib
 logger = logging.getLogger("pywiki.wiki.page")
 
 
+# Outside a class as it needs to be called while the class is "build"
+def _bool_watch(old_name, args, kwargs):
+    """Convert boolean watch value into string value."""
+    if args is None and kwargs is None:
+        # Static call when constructing signature
+        return False
+    elif kwargs[old_name] is True:
+        return old_name, 'watch'
+    elif kwargs[old_name] is False:
+        return old_name, 'unwatch'
+    else:
+        return old_name
+
+
 # Note: Link objects (defined later on) represent a wiki-page's title, while
 # Page objects (defined here) represent the page itself, including its contents.
 
@@ -1026,7 +1040,7 @@ class BasePage(UnicodeMixin, ComparableMixin):
         # no restricting template found
         return True
 
-    @deprecated_args(comment='summary', sysop=None)
+    @deprecated_args(comment='summary', sysop=None, watch=_bool_watch)
     def save(self, summary=None, watch=None, minor=True, botflag=None,
              force=False, async=False, callback=None,
              apply_cosmetic_changes=None, **kwargs):
@@ -1067,10 +1081,6 @@ class BasePage(UnicodeMixin, ComparableMixin):
         """
         if not summary:
             summary = config.default_edit_summary
-        if watch is True:
-            watch = 'watch'
-        elif watch is False:
-            watch = 'unwatch'
         if not force and not self.botMayEdit():
             raise pywikibot.OtherPageSaveError(
                 self, "Editing restricted by {{bots}} template")

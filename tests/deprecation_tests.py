@@ -112,9 +112,23 @@ def deprecated_func_arg2(foo=None):
     return foo
 
 
-@deprecated_args(bah='foo', silent=False, loud=True, old=None)
+@deprecated_args(bah='foo', silent=False, loud=None, old=True)
 def deprecated_func_arg3(foo=None):
     """Test deprecated_args with three drops and one rename."""
+    return foo
+
+
+def _str_int(old_name, args, kwargs):
+    """Return foo as new name and convert it into an int."""
+    if args is None and kwargs is None:
+        return 'foo'
+    else:
+        return 'foo', int(kwargs[old_name])
+
+
+@deprecated_args(bah='foo', str_int=_str_int)
+def deprecated_func_arg4(foo=None):
+    """Test deprecated_args with one rename and a callable replacement."""
     return foo
 
 
@@ -409,6 +423,20 @@ class DeprecatorTestCase(DeprecationTestCase):
         self.assertEqual(rv, 4)
         self.assertOneDeprecationParts(
             'old argument of ' + __name__ + '.deprecated_func_arg3')
+
+    def test_function_callable(self):
+        """Test a callable replacement in @deprecated_args."""
+        rv = deprecated_func_arg4()
+        self.assertEqual(rv, None)
+        self.assertNoDeprecation()
+
+        rv = deprecated_func_arg4(42)
+        self.assertEqual(rv, 42)
+        self.assertNoDeprecation()
+
+        rv = deprecated_func_arg4(str_int='42')
+        self.assertEqual(rv, 42)
+        self.assertOneDeprecation()
 
     def test_function_remove_last_args(self):
         """Test @remove_last_args on functions."""

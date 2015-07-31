@@ -1170,9 +1170,16 @@ def deprecated_args(**arg_pairs):
     """
     Decorator to declare multiple args deprecated.
 
-    @param arg_pairs: Each entry points to the new argument name. With True or
-        None it drops the value and prints a warning. If False it just drops
-        the value.
+    @param arg_pairs: Each entry points to the new argument name. If the new
+        arguments name is None the value is dropped with a warning. Otherwise
+        it needs to be a string or callable. The callable may return a sequence
+        or None or a string. If a sequence the first value will be the new
+        argument name and the second will be the new value instead of the
+        original value. The callable must accept three positional arguments:
+            the old name, the positional arguments, the keyword arguments
+        To fix the signature of the method it may be called with the latter two
+        arguments set to None. In that case it should only the new name (or
+        False if stays).
     """
     def decorator(obj):
         """Outer wrapper.
@@ -1201,8 +1208,33 @@ def deprecated_args(**arg_pairs):
                     'new_arg': new_arg,
                 }
                 if old_arg in __kw:
-                    if new_arg not in [True, False, None]:
-                        if new_arg in __kw:
+                    if callable(new_arg):
+                        new_arg = new_arg(old_arg, __args, __kw)
+                        if (not isinstance(new_arg, basestring) and
+                                isinstance(new_arg, collections.Sequence)):
+                            assert len(new_arg) == 2
+                            assert isinstance(new_arg[0], basestring)
+                            new_arg, new_value = new_arg
+                    elif new_arg is True:
+                        new_arg = None
+                    else:
+                        new_value = __kw[old_arg]
+
+                    if new_arg is not None and new_arg is not False:
+                        assert isinstance(new_arg, basestring)
+
+                        if new_arg == old_arg:
+                            # if the value didn't change it wasn't deprecated
+                            # (e.g. when the parameter name stays)
+                            if __kw[new_arg] != new_value:
+                                warn('{old_val!r} value in {old_arg} argument '
+                                     'of {name} is deprecated; use {new_val!r} '
+                                     'instead.'.format(old_val=__kw[new_arg],
+                                                       new_val=new_value,
+                                                       **output_args),
+                                     DeprecationWarning, depth)
+                                __kw[new_arg] = new_value
+                        elif new_arg in __kw:
                             warn(u"%(new_arg)s argument of %(name)s "
                                  u"replaces %(old_arg)s; cannot use both."
                                  % output_args,
@@ -1214,7 +1246,7 @@ def deprecated_args(**arg_pairs):
                                  u"is deprecated; use %(new_arg)s instead."
                                  % output_args,
                                  DeprecationWarning, depth)
-                            __kw[new_arg] = __kw[old_arg]
+                            __kw[new_arg] = new_value
                     else:
                         if new_arg is False:
                             cls = PendingDeprecationWarning
@@ -1238,6 +1270,11 @@ def deprecated_args(**arg_pairs):
             for param in wrapper.__signature__.parameters.values():
                 params[param.name] = param.replace()
             for old_arg, new_arg in arg_pairs.items():
+                if callable(new_arg):
+                    new_arg = new_arg(old_arg, None, None)
+                    if new_arg is False or new_arg == old_arg:
+                        # no namechange
+                        continue
                 params[old_arg] = inspect.Parameter(
                     old_arg, kind=inspect._POSITIONAL_OR_KEYWORD,
                     default='[deprecated name of ' + new_arg + ']'
