@@ -56,6 +56,8 @@ class TestWikiSiteDetection(TestCase):
         except Exception as e:
             print('failed on ' + url)
             self.errors[url] = e
+            import pywikibot.comms.http as H
+            print(H.fetch(url).content)
             return
         try:
             if result is None:

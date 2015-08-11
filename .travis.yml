@@ -4,10 +4,7 @@ language: python
 sudo: false
 
 python:
-  - '2.7'
-  - '3.3'
   - '3.4'
-  - '2.6'
 
 # OSX builds are not yet available
 os:
@@ -77,7 +74,7 @@ script:
         python setup.py nosetests --tests tests --verbosity=2 ;
       fi ;
     else
-      python setup.py test ;
+      python -m unittest -v tests.site_detect_tests.TestWikiSiteDetection.test_detect_site ;
     fi
 
 env:
@@ -90,24 +87,6 @@ env:
 
   matrix:
     - LANGUAGE=en FAMILY=wikipedia PYWIKIBOT2_TEST_PROD_ONLY=1
-    - LANGUAGE=zh FAMILY=wikisource PYSETUP_TEST_EXTRAS=1 PYWIKIBOT2_TEST_PROD_ONLY=1 PYWIKIBOT2_TEST_NO_RC=1
-
-matrix:
-  include:
-    - python: '2.7_with_system_site_packages'  # equivalent to virtualenv: system_site_packages: true
-      env: LANGUAGE=he FAMILY=wikivoyage SITE_ONLY=1
-    - python: '2.7'
-      env: LANGUAGE=wikia FAMILY=wikia PYWIKIBOT2_TEST_NO_RC=1
-    - python: '3.3'
-      env: LANGUAGE=en FAMILY=oraintest SITE_ONLY=1
-    - python: '3.3'
-      env: LANGUAGE=en FAMILY=musicbrainz SITE_ONLY=1
-    - python: '3.4'
-      env: LANGUAGE=test FAMILY=wikidata SITE_ONLY=1
-    - python: '3.4'
-      env: LANGUAGE=ar FAMILY=wiktionary PYWIKIBOT2_TEST_NO_RC=1
-    - python: '2.6'
-      env: LANGUAGE=wikidata FAMILY=wikidata SITE_ONLY=1
 
 notifications:
   email:
