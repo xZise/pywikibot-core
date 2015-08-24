@@ -133,6 +133,7 @@ class Family(family.WikimediaFamily):
                    u'CategoryRedirect',
                    u'Category redirect',
                    u'Catredirect',),
+            'sco': ('Category redirect',),
             'simple': (u'Category redirect',
                        u'Categoryredirect',
                        u'Catredirect',),
