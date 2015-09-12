@@ -145,6 +145,29 @@ class TestSiteObjectDeprecatedFunctions(DefaultSiteTestCase, DeprecationTestCase
         self.assertEqual(self.site.ns_index('MediaWiki'), 8)
         self.assertOneDeprecation()
 
+    def test_validLanguageLinks(self):
+        """Test that validLanguageLinks is subset of valid_language_prefixes."""
+        mysite = self.site
+        langs = self.site.languages()
+        for item in mysite.validLanguageLinks():
+            self.assertIn(item, langs)
+            self.assertIsNone(self.site.namespaces.lookup_name(item))
+        self.assertOneDeprecation()
+
+        if not self.site.language_prefixes():
+            raise unittest.SkipTest('{0} does not provide any language '
+                                    'interwiki prefixes'.format(self.site))
+
+        # The site's test codes aren't language prefixes
+        valid_lang_links = set(self.site.validLanguageLinks())
+        if hasattr(self.site.family, 'test_codes'):
+            valid_lang_links -= set(self.site.family.test_codes)
+        if self.site.family.name == 'wikisource':
+            valid_lang_links.discard('-')
+        self.assertGreaterEqual(self.site.valid_language_prefixes(),
+                                valid_lang_links)
+        self.assertOneDeprecation()
+
 
 class TestSiteDryDeprecatedFunctions(DefaultDrySiteTestCase, DeprecationTestCase):
 
@@ -300,9 +323,21 @@ class TestSiteObject(DefaultSiteTestCase):
         else:
             self.assertIsNone(ipf)
 
-        for item in mysite.validLanguageLinks():
-            self.assertIn(item, langs)
-            self.assertIsNone(self.site.namespaces.lookup_name(item))
+        if not self.site.language_prefixes():
+            raise unittest.SkipTest('{0} does not provide any language '
+                                    'interwiki prefixes'.format(self.site))
+
+        for lang in langs:
+            # The site's test codes aren't language prefixes
+            if (lang != self.site.family.name and
+                    (lang != '-' or self.site.family.name != 'wikisource') and
+                    lang not in getattr(self.site.family, 'test_codes', [])):
+                self.assertIn(lang, self.site.language_prefixes())
+
+        self.assertGreaterEqual(self.site.language_prefixes(),
+                                self.site.valid_language_prefixes())
+        self.assertFalse(self.site.valid_language_prefixes() &
+                         set(self.site.namespaces._namespace_names))
 
     def testNamespaceMethods(self):
         """Test cases for methods manipulating namespace names."""

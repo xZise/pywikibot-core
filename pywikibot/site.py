@@ -639,10 +639,12 @@ class _IWEntry(object):
 
     """An entry of the _InterwikiMap with a lazy loading site."""
 
-    def __init__(self, local, url):
+    def __init__(self, interwiki_data):
         self._site = None
-        self.local = local
-        self.url = url
+        self.prefix = interwiki_data['prefix']
+        self.local = 'local' in interwiki_data
+        self.url = interwiki_data['url']
+        self.language = interwiki_data.get('language')
 
     @property
     def site(self):
@@ -651,10 +653,16 @@ class _IWEntry(object):
                 self._site = pywikibot.Site(url=self.url)
             except Exception as e:
                 self._site = e
-        return self._site
+        if isinstance(self._site, BaseSite):
+            return self._site
+        elif isinstance(self._site, Exception):
+            raise self._site
+        else:
+            raise TypeError('%s is wrong type: %s'
+                            % (self.prefix, type(self._site)))
 
 
-class _InterwikiMap(object):
+class _InterwikiMap(Mapping):
 
     """A representation of the interwiki map of a site."""
 
@@ -674,7 +682,7 @@ class _InterwikiMap(object):
         # _iw_sites is a local cache to return a APISite instance depending
         # on the interwiki prefix of that site
         if self._map is None:
-            self._map = dict((iw['prefix'], _IWEntry('local' in iw, iw['url']))
+            self._map = dict((iw['prefix'], _IWEntry(iw))
                              for iw in self._site.siteinfo['interwikimap'])
         return self._map
 
@@ -682,13 +690,19 @@ class _InterwikiMap(object):
         """Return the site, locality and url for the requested prefix."""
         if prefix not in self._iw_sites:
             raise KeyError(u"'{0}' is not an interwiki prefix.".format(prefix))
-        if isinstance(self._iw_sites[prefix].site, BaseSite):
-            return self._iw_sites[prefix]
-        elif isinstance(self._iw_sites[prefix].site, Exception):
-            raise self._iw_sites[prefix].site
         else:
-            raise TypeError('_iw_sites[%s] is wrong type: %s'
-                            % (prefix, type(self._iw_sites[prefix].site)))
+            return self._iw_sites[prefix]
+
+    def get_checked(self, prefix):
+        entry = self[prefix]
+        entry.site  # raise exception if necessary
+        return entry
+
+    def __iter__(self):
+        return iter(self._iw_sites)
+
+    def __len__(self):
+        return len(self._iw_sites)
 
     def get_by_url(self, url):
         """Return a set of prefixes applying to the URL."""
@@ -909,10 +923,15 @@ class BaseSite(ComparableMixin):
         """Return list of all valid language codes for this site's Family."""
         return list(self.family.langs.keys())
 
+    @deprecated('valid_language_prefixes()')
     def validLanguageLinks(self):
         """Return list of language codes that can be used in interwiki links."""
         return [lang for lang in self.languages()
                 if self.namespaces.lookup_normalized_name(lang) is None]
+
+    def valid_language_prefixes(self):
+        """Return a set of langlink prefixes not hidden by namespaces."""
+        return self.language_prefixes() - set(self.namespaces._namespace_names)
 
     def _interwiki_urls(self):
         site_paths = [self.path()] * 3
@@ -966,7 +985,14 @@ class BaseSite(ComparableMixin):
             doesn't match any of the existing families.
         @raise KeyError: if the prefix is not an interwiki prefix.
         """
-        return self._interwikimap[prefix].local
+        return self._interwikimap.get_checked(prefix).local
+
+    def language_prefixes(self):
+        """Return all prefixes from the interwikimap which are lang links."""
+        prefixes = set(prefix for prefix, entry in self._interwikimap.items()
+                       if entry.language)
+        assert all(p.islower() for p in prefixes)
+        return prefixes
 
     @deprecated('APISite.namespaces.lookup_name')
     def ns_index(self, namespace):

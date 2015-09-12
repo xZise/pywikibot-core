@@ -164,9 +164,7 @@ def _create_default_regexes():
         'link':         re.compile(r'\[\[[^\]\|]*(\|[^\]]*)?\]\]'),
         # also finds links to foreign sites with preleading ":"
         'interwiki':    (r'(?i)\[\[:?(%s)\s?:[^\]]*\]\][\s]*',
-                         lambda site: '|'.join(
-                             site.validLanguageLinks() +
-                             list(site.family.obsolete.keys()))),
+                         lambda site: '|'.join(site.valid_language_prefixes())),
         # Wikibase property inclusions
         'property':     re.compile(r'(?i)\{\{\s*#property:\s*p\d+\s*\}\}'),
         # Module invocations (currently only Lua)
@@ -795,8 +793,7 @@ def removeLanguageLinks(text, site=None, marker=''):
         site = pywikibot.Site()
     # This regular expression will find every interwiki link, plus trailing
     # whitespace.
-    languages = '|'.join(site.validLanguageLinks() +
-                         list(site.family.obsolete.keys()))
+    languages = '|'.join(site.valid_language_prefixes())
     if not languages:
         return text
     interwikiR = re.compile(r'\[\[(%s)\s?:[^\[\]\n]*\]\][\s]*'
@@ -962,7 +959,7 @@ def interwikiSort(sites, insite=None):
     if putfirst:
         # In this case I might have to change the order
         firstsites = []
-        validlanglinks = insite.validLanguageLinks()
+        validlanglinks = insite.valid_language_prefixes()
         for code in putfirst:
             if code in validlanglinks:
                 site = insite.getSite(code=code)

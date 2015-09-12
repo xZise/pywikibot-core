@@ -31,7 +31,7 @@ import pywikibot
 
 from pywikibot import config
 from pywikibot.comms import threadedhttp
-from pywikibot.site import Namespace
+from pywikibot.site import Namespace, _IWEntry
 from pywikibot.data.api import CachedRequest
 from pywikibot.data.api import Request as _original_Request
 from pywikibot.tools import PYTHON_VERSION
@@ -349,6 +349,8 @@ class DrySite(pywikibot.site.APISite):
             extensions.append({'name': 'ProofreadPage'})
         self._siteinfo._cache['extensions'] = (extensions, True)
         self._msgcache = {'*': 'dummy entry', 'hello': 'world'}
+        self._interwikimap._map = {}
+        self._interwikimap._site = None  # prevent it from querying
 
     def _build_namespaces(self):
         return Namespace.builtin_namespaces(case=self.siteinfo['case'])
@@ -383,6 +385,14 @@ class DrySite(pywikibot.site.APISite):
         if bool(code or fam):
             return pywikibot.Site(code, fam, self.username(),
                                   interface=DryDataSite)
+
+    def add_IWEntry(self, prefix, local, target):
+        """Add an interwiki map entry to the internal mapping."""
+        self._interwikimap._map[prefix] = _IWEntry({'prefix': prefix,
+                                                    'url': 'invalid'})
+        self._interwikimap._map[prefix].local = local
+        self._interwikimap._map[prefix].language = local
+        self._interwikimap._map[prefix]._site = target
 
 
 class DryDataSite(DrySite, pywikibot.site.DataSite):

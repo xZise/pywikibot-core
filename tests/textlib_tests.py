@@ -23,7 +23,6 @@ import pywikibot
 import pywikibot.textlib as textlib
 
 from pywikibot import config, UnknownSite
-from pywikibot.site import _IWEntry
 from pywikibot.tools import OrderedDict
 
 from tests.aspects import unittest, TestCase, DefaultDrySiteTestCase
@@ -578,16 +577,10 @@ class TestReplaceLinks(TestCase):
         super(TestReplaceLinks, cls).setUpClass()
         # make APISite.interwiki work and prevent it from doing requests
         for site in cls.sites.values():
-            mapping = {}
             for iw in cls.sites.values():
-                mapping[iw['family']] = _IWEntry(True, 'invalid')
-                mapping[iw['family']]._site = iw['site']
-            mapping['bug'] = _IWEntry(False, 'invalid')
-            mapping['bug']._site = UnknownSite('Not a wiki')
-            mapping['en'] = _IWEntry(True, 'invalid')
-            mapping['en']._site = site['site']
-            site['site']._interwikimap._map = mapping
-            site['site']._interwikimap._site = None  # prevent it from loading
+                site['site'].add_IWEntry(iw['family'], True, iw['site'])
+            site['site'].add_IWEntry('bug', False, UnknownSite('Not a wiki'))
+            site['site'].add_IWEntry('en', True, site['site'])
         cls.wp_site = cls.get_site('wp')
 
     def test_replacements_function(self):
@@ -822,6 +815,12 @@ class TestReplaceExcept(DefaultDrySiteTestCase):
 
     """Test to verify the replacements with exceptions are done correctly."""
 
+    @classmethod
+    def setUpClass(cls):
+        """Add dummy es entry to the interwiki map."""
+        super(TestReplaceExcept, cls).setUpClass()
+        cls.site.add_IWEntry('es', True, UnknownSite('es test site'))
+
     def test_no_replace(self):
         """Test replacing when the old text does not match."""
         self.assertEqual(textlib.replaceExcept('12345678', 'x', 'y', [],
@@ -996,10 +995,6 @@ class TestReplaceExcept(DefaultDrySiteTestCase):
 
     def test_replace_tags_interwiki(self):
         """Test replacing not inside interwiki links."""
-        if 'es' not in self.site.family.langs or 'ey' in self.site.family.langs:
-            raise unittest.SkipTest('family %s doesnt have languages'
-                                    % self.site)
-
         self.assertEqual(textlib.replaceExcept('[[es:s]]', 's', 't',
                                                ['interwiki'], site=self.site),
                          '[[es:s]]')  # "es" is a valid interwiki code
