@@ -1321,10 +1321,7 @@ class Family(object):
         data = dict((code, None)
                     for code in self.interwiki_removals)
         data.update(self.interwiki_replacements)
-        return FrozenDict(data,
-                          'Family.obsolete not updatable; '
-                          'use Family.interwiki_removals '
-                          'and Family.interwiki_replacements')
+        return FrozenDict(data)
 
     @obsolete.setter
     def obsolete(self, data):

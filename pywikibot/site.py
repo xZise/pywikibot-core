@@ -27,7 +27,7 @@ import json
 import copy
 import mimetypes
 
-from collections import Iterable, Container, namedtuple, Mapping
+from collections import Iterable, Container, namedtuple
 from warnings import warn
 
 import pywikibot
@@ -37,7 +37,7 @@ from pywikibot.tools import (
     deprecated, deprecate_arg, deprecated_args, remove_last_args,
     redirect_func, issue_deprecation_warning,
     manage_wrapping, MediaWikiVersion, first_upper, normalize_username,
-    merge_unique_dicts,
+    merge_unique_dicts, FrozenDict,
 )
 from pywikibot.comms.http import get_authentication
 from pywikibot.tools.ip import is_IP
@@ -478,7 +478,7 @@ class Namespace(Iterable, ComparableMixin, UnicodeMixin):
         return NamespacesDict._resolve(identifiers, namespaces)
 
 
-class NamespacesDict(Mapping, SelfCallMixin):
+class NamespacesDict(FrozenDict, SelfCallMixin):
 
     """
     An immutable dictionary containing the Namespace instances.
@@ -491,16 +491,11 @@ class NamespacesDict(Mapping, SelfCallMixin):
 
     def __init__(self, namespaces):
         """Create new dict using the given namespaces."""
-        super(NamespacesDict, self).__init__()
-        self._namespaces = namespaces
+        super(NamespacesDict, self).__init__(namespaces)
         self._namespace_names = {}
-        for namespace in self._namespaces.values():
+        for namespace in self.values():
             for name in namespace:
                 self._namespace_names[name.lower()] = namespace
-
-    def __iter__(self):
-        """Iterate over all namespaces."""
-        return iter(self._namespaces)
 
     def __getitem__(self, key):
         """
@@ -510,9 +505,7 @@ class NamespacesDict(Mapping, SelfCallMixin):
         @type key: Namespace, int or str
         @rtype: Namespace
         """
-        if isinstance(key, (Namespace, int)):
-            return self._namespaces[key]
-        else:
+        if not isinstance(key, (Namespace, int)):
             namespace = self.lookup_name(key)
             if namespace:
                 return namespace
@@ -527,7 +520,7 @@ class NamespacesDict(Mapping, SelfCallMixin):
         @type key: Namespace, int or str
         @rtype: Namespace
         """
-        # lookup_name access _namespaces
+        # lookup_name access own data
         if attr.isupper():
             if attr == 'MAIN':
                 return self[0]
@@ -537,10 +530,6 @@ class NamespacesDict(Mapping, SelfCallMixin):
                 return namespace
 
         return self.__getattribute__(attr)
-
-    def __len__(self):
-        """Get the number of namespaces."""
-        return len(self._namespaces)
 
     def lookup_name(self, name):
         """
@@ -598,7 +587,7 @@ class NamespacesDict(Mapping, SelfCallMixin):
         @raises TypeError: a namespace identifier has an inappropriate
             type such as NoneType or bool
         """
-        return self._resolve(identifiers, self._namespaces)
+        return self._resolve(identifiers, self)
 
     # Temporary until Namespace.resolve can be removed
     @staticmethod
