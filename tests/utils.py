@@ -361,6 +361,18 @@ class DrySite(pywikibot.site.APISite):
         self._siteinfo._cache['extensions'] = (extensions, True)
         self._msgcache = {'*': 'dummy entry', 'hello': 'world'}
 
+    def _request_class(self, kwargs):
+        """Prevent it from returning a request class."""
+        raise TypeError('Tried to get Request class')
+
+    def _request(self, **kwargs):
+        """Prevent it from returning a Request instance."""
+        raise TypeError('Tried to create Request')
+
+    def _simple_request(self, **kwargs):
+        """Prevent it from returning a Request instance."""
+        raise TypeError('Tried to simply create Request')
+
     def _build_namespaces(self):
         return Namespace.builtin_namespaces(case=self.siteinfo['case'])
 
