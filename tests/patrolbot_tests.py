@@ -51,7 +51,7 @@ class TestPatrolBot(DefaultDrySiteTestCase):
                                             for i in range(1, 4)])
         self.assertIn('Prefixed', tuples)
         self.assertEqual(tuples['Prefixed'], ['Page 1', 'Page 2'])
-        self.assertRaises(Exception, self.bot.parse_page_tuples, '[[link]]')
+        self.assertEqual(self.bot.parse_page_tuples('[[link]]'), {})
 
     def test_in_list(self):
         """Test the method which returns whether a page is in the list."""
