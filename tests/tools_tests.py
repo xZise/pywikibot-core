@@ -555,7 +555,10 @@ class TestPythonArgSpec(TestArgSpec):
 
     """Test the same tests using Python's implementation."""
 
-    expected_class = inspect.ArgSpec
+    @property
+    def expected_class(self):
+        """Return expected class; will error on Python 3.6."""
+        return inspect.ArgSpec
 
     def getargspec(self, method):
         """Call inspect's getargspec function."""
