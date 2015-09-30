@@ -414,7 +414,7 @@ class CosmeticChangesToolkit:
     def translateAndCapitalizeNamespaces(self, text):
         """Use localized namespace names."""
         # arz uses english stylish codes
-        if self.site.sitename() == 'wikipedia:arz':
+        if self.site.sitename == 'wikipedia:arz':
             return text
         family = self.site.family
         # wiki links aren't parsed here.
@@ -564,7 +564,7 @@ class CosmeticChangesToolkit:
                         # TODO: Add a configuration variable for each site,
                         # which determines if the link target is written in
                         # uppercase
-                        if self.site.sitename() == 'wikipedia:de':
+                        if self.site.sitename == 'wikipedia:de':
                             titleWithSection = first_upper(titleWithSection)
                         newLink = "[[%s|%s]]" % (titleWithSection, label)
                     # re-add spaces that were pulled out of the link.
@@ -886,7 +886,7 @@ class CosmeticChangesToolkit:
 
     # Retrieved from "https://commons.wikimedia.org/wiki/Commons:Tools/pywiki_file_description_cleanup"
     def commonsfiledesc(self, text):
-        if self.site.sitename() != u'commons:commons' or self.namespace == 6:
+        if self.site.sitename != 'commons:commons' or self.namespace == 6:
             return
         # section headers to {{int:}} versions
         exceptions = ['comment', 'includeonly', 'math', 'noinclude', 'nowiki',
