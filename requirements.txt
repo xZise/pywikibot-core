@@ -42,7 +42,8 @@ argparse
 # If you see that on Python 2, change this to flickrapi==1.4.5
 # On Python 3, force pip to install requests 2.2.1, or remove flickrapi below.
 Pillow
-flickrapi
+flickrapi>=1.4.5,<2 ; python_version < '2.7'
+flickrapi ; python_version >= '2.7'
 
 # incomplete core component botirc
 irc

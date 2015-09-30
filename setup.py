@@ -49,8 +49,8 @@ script_deps = {
 # and will be first packaged for Fedora Core 21.
 # flickrapi 1.4.x does not run on Python 3, and setuptools can only
 # select flickrapi 2.x for Python 3 installs.
-script_deps['flickrripper.py'].append('flickrapi' if sys.version_info[0] > 2
-                                      else 'flickrapi>=1.4.5')
+script_deps['flickrripper.py'].append(
+    'flickrapi>=1.4.5,<2' if sys.version_info < (2, 7) else 'flickrapi')
 
 # lunatic-python is only available for Linux
 if sys.platform.startswith('linux'):
