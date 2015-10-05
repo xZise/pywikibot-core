@@ -169,19 +169,7 @@ class SiteDetectionTestCase(TestWikiSiteDetection):
 
     def test_detect_site(self):
         """Test detection of MediaWiki sites."""
-        self.assertSite('http://botwiki.sno.cc/wiki/$1')
         self.assertSite('http://guildwars.wikia.com/wiki/$1')
-        self.assertSite('http://www.hrwiki.org/index.php/$1')  # v 1.15
-        self.assertSite('http://www.proofwiki.org/wiki/$1')
-        self.assertSite(
-            'http://www.ck-wissen.de/ckwiki/index.php?title=$1')
-        self.assertSite('http://en.citizendium.org/wiki/$1')
-        self.assertSite(
-            'http://www.lojban.org/tiki/tiki-index.php?page=$1')
-        self.assertSite('http://www.wikichristian.org/index.php?title=$1')
-        self.assertSite('https://en.wikifur.com/wiki/$1')
-        self.assertSite('http://bluwiki.com/go/$1')
-        self.assertSite('http://kino.skripov.com/index.php/$1')
         self.assertAllPass()
 
     def test_wikisophia(self):

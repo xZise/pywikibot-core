@@ -62,6 +62,8 @@ class MWSite(object):
         self.fromurl = fromurl
 
         data = r.content
+        print(r.status)
+        print(data)
 
         wp = WikiHTMLPageParser(fromurl)
         wp.feed(data)
