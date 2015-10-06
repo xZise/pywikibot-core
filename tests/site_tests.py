@@ -2287,6 +2287,29 @@ class TestPagePreloading(DefaultSiteTestCase):
 
     """Test site.preloadpages()."""
 
+    def test_preload_order(self):
+        """Test that the order is the same as the provided order."""
+        mainpage = self.get_mainpage()
+        links = [page for page in self.site.pagelinks(mainpage, total=20)
+                 if page.exists()]
+        pages = list(self.site.preloadpages(links, groupsize=5))
+        self.assertEqual(pages, links)
+        for preloaded in pages:
+            self.assertIsNotNone(preloaded._latest_cached_revision())
+
+    def test_preload_order_duplicates(self):
+        """Test that the order is the same as the provided order."""
+        mainpage = self.get_mainpage()
+        page_links = [page for page in self.site.pagelinks(mainpage, total=10)
+                      if page.exists()]
+        links = [None] * len(page_links) * 2
+        links[::2] = page_links
+        links[1::2] = page_links
+        pages = list(self.site.preloadpages(links))
+        self.assertEqual(pages, links)
+        for preloaded in pages:
+            self.assertIsNotNone(preloaded._latest_cached_revision())
+
     def test_pageids(self):
         """Test basic preloading with pageids."""
         mysite = self.get_site()
@@ -2413,7 +2436,7 @@ class TestPagePreloading(DefaultSiteTestCase):
         # do not match any title in the pagelist.
         # However, APISite.sametitle now correctly links them.
         for page in links:
-            page._link._text += ' '
+            page._link = pywikibot.Link(page.title() + ' ', self.site)
 
         gen = mysite.preloadpages(links, groupsize=5)
         for page in gen:
@@ -2441,7 +2464,7 @@ class TestPagePreloading(DefaultSiteTestCase):
         # complain the returned titles do not match any title in the pagelist.
         # However, APISite.sametitle now correctly links them.
         for page in links:
-            page._link._text += ' '
+            page._link = pywikibot.Link(page.title() + ' ', self.site)
             del page._pageid
 
         gen = mysite.preloadpages(links, groupsize=5)
