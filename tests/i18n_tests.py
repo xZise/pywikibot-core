@@ -14,7 +14,10 @@ import pywikibot
 from pywikibot import i18n, bot, plural
 from pywikibot.tools import StringTypes
 
-from tests.aspects import unittest, TestCase, DefaultSiteTestCase, PwbTestCase
+from tests.aspects import (
+    unittest, TestCase, DefaultSiteTestCase, PwbTestCase,
+    AutoDeprecationTestCase,
+)
 
 
 class TestTranslate(TestCase):
@@ -184,7 +187,7 @@ class TestTWTranslate(TWNTestCaseBase):
                           'en', 'test-no-english')
 
 
-class TestTWNTranslate(TWNTestCaseBase):
+class TestTWNTranslate(TWNTestCaseBase, AutoDeprecationTestCase):
 
     """Test {{PLURAL:}} support."""
 
@@ -304,10 +307,10 @@ class TestTWNTranslate(TWNTestCaseBase):
 
     def testAllParametersExist(self):
         """Test that all parameters are required when using a dict."""
-        with self.assertRaisesRegex(KeyError, repr(u'line')):
+        with self.assertRaisesRegex(KeyError, repr(u'action')):
             # all parameters must be inside twntranslate
             i18n.twntranslate('de', 'test-multiple-plurals',
-                              {'line': 1, 'page': 1}) % {'action': u'Ändere'}
+                              {'line': 1, 'page': 1})
 
     def test_fallback_lang(self):
         """
