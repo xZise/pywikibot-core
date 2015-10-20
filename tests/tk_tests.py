@@ -5,16 +5,16 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
-
 import os
-import sys
+
+from pywikibot.tools import PY2
 
 if os.environ.get('PYWIKIBOT2_TEST_GUI', '0') == '1':
-    if sys.version_info[0] > 2:
+    if not PY2:
         import tkinter as Tkinter
     else:
         import Tkinter

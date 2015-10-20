@@ -107,7 +107,7 @@ pages:
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -118,12 +118,14 @@ from warnings import warn
 
 import pywikibot
 
-from pywikibot import i18n, pagegenerators, xmlreader, Bot
+from pywikibot import i18n, pagegenerators, Bot
 from pywikibot.exceptions import ArgumentDeprecationWarning
+from pywikibot.pagegenerators import XMLDumpPageGenerator
+
 from scripts.replace import ReplaceRobot as ReplaceBot
 
 
-class XmlDumpTemplatePageGenerator(object):
+class XmlDumpTemplatePageGenerator(XMLDumpPageGenerator):
 
     """
     Generator which yields Pages that transclude a template.
@@ -144,11 +146,7 @@ class XmlDumpTemplatePageGenerator(object):
         """
         self.templates = templates
         self.xmlfilename = xmlfilename
-
-    def __iter__(self):
-        """Yield page objects until the entire XML dump has been read."""
         mysite = pywikibot.Site()
-        dump = xmlreader.XmlDump(self.xmlfilename)
         # regular expression to find the original template.
         # {{vfd}} does the same thing as {{Vfd}}, so both will be found.
         # The old syntax, {{msg:vfd}}, will also be found.
@@ -164,10 +162,9 @@ class XmlDumpTemplatePageGenerator(object):
         templateRegex = re.compile(
             r'\{\{ *([mM][sS][gG]:)?(?:%s) *(?P<parameters>\|[^}]+|) *}}'
             % '|'.join(templatePatterns))
-        for entry in dump.parse():
-            if templateRegex.search(entry.text):
-                page = pywikibot.Page(mysite, entry.title)
-                yield page
+
+        super(XmlDumpTemplatePageGenerator, self).__init__(
+            xmlfilename, site=mysite, text_predicate=templateRegex.search)
 
 
 class TemplateRobot(ReplaceBot):
@@ -205,13 +202,13 @@ class TemplateRobot(ReplaceBot):
             site = self.site
 
             if self.getOption('remove'):
-                self.options['summary'] = i18n.twntranslate(
+                self.options['summary'] = i18n.twtranslate(
                     site, 'template-removing', params)
             elif self.getOption('subst'):
-                self.options['summary'] = i18n.twntranslate(
+                self.options['summary'] = i18n.twtranslate(
                     site, 'template-substituting', params)
             else:
-                self.options['summary'] = i18n.twntranslate(
+                self.options['summary'] = i18n.twtranslate(
                     site, 'template-changing', params)
 
         # regular expression to find the original template.

@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 __version__ = '$Id$'
 #
 import inspect
@@ -22,22 +22,30 @@ from collections import Mapping
 from types import ModuleType
 from warnings import warn
 
-if sys.version_info[0] > 2:
-    import six
+from pywikibot.tools import PY2
 
-    unicode = str
+if not PY2:
+    import six
 
 import pywikibot
 
 from pywikibot import config
 from pywikibot.comms import threadedhttp
 from pywikibot.site import Namespace
-from pywikibot.data.api import CachedRequest
+from pywikibot.data.api import CachedRequest, APIError
 from pywikibot.data.api import Request as _original_Request
-from pywikibot.tools import PYTHON_VERSION
+from pywikibot.tools import (
+    PYTHON_VERSION,
+    UnicodeType as unicode,
+)
 
 from tests import _pwb_py
 from tests import unittest  # noqa
+
+OSWIN32 = (sys.platform == 'win32')
+
+PYTHON_26_CRYPTO_WARN = ('Python 2.6 is no longer supported by the Python core '
+                         'team, please upgrade your Python.')
 
 
 class DrySiteNote(RuntimeWarning):
@@ -104,7 +112,7 @@ def allowed_failure_if(expect):
 
 def add_metaclass(cls):
     """Call six's add_metaclass with the site's __metaclass__ in Python 3."""
-    if sys.version_info[0] > 2:
+    if not PY2:
         return six.add_metaclass(cls.__metaclass__)(cls)
     else:
         assert cls.__metaclass__
@@ -222,11 +230,60 @@ class WarningSourceSkipContextManager(warnings.catch_warnings):
                     else:
                         skip_lines -= 1
 
+            # Avoid failures because cryptography is mentioning Python 2.6
+            # is outdated
+            if PYTHON_VERSION < (2, 7):
+                if (isinstance(entry, DeprecationWarning) and
+                        str(entry.message) == PYTHON_26_CRYPTO_WARN):
+                    return
+
             log.append(entry)
 
         log = super(WarningSourceSkipContextManager, self).__enter__()
         self._module.showwarning = detailed_show_warning
         return log
+
+
+class AssertAPIErrorContextManager(object):
+
+    """
+    Context manager to assert certain APIError exceptions.
+
+    This is build similar to the L{unittest.TestCase.assertError} implementation
+    which creates an context manager. It then calls L{handle} which either
+    returns this manager if no executing object given or calls the callable
+    object.
+    """
+
+    def __init__(self, code, info, msg, test_case):
+        """Create instance expecting the code and info."""
+        self.code = code
+        self.info = info
+        self.msg = msg
+        self.test_case = test_case
+
+    def __enter__(self):
+        """Enter this context manager and the unittest's context manager."""
+        self.cm = self.test_case.assertRaises(APIError, msg=self.msg)
+        self.cm.__enter__()
+        return self.cm
+
+    def __exit__(self, exc_type, exc_value, tb):
+        """Exit the context manager and assert code and optionally info."""
+        result = self.cm.__exit__(exc_type, exc_value, tb)
+        assert result is isinstance(exc_value, APIError)
+        if result:
+            self.test_case.assertEqual(exc_value.code, self.code)
+            if self.info:
+                self.test_case.assertEqual(exc_value.info, self.info)
+        return result
+
+    def handle(self, callable_obj, args, kwargs):
+        """Handle the callable object by returning itself or using itself."""
+        if callable_obj is None:
+            return self
+        with self:
+            callable_obj(*args, **kwargs)
 
 
 class DryParamInfo(dict):
@@ -243,16 +300,22 @@ class DryParamInfo(dict):
         self.prefixes = set()
 
     def fetch(self, modules, _init=False):
-        """Prevented method."""
-        raise Exception(u'DryParamInfo.fetch(%r, %r) prevented'
-                        % (modules, _init))
+        """Load dry data."""
+        return [self[mod] for mod in modules]
 
     def parameter(self, module, param_name):
         """Load dry data."""
         return self[module][param_name]
 
+    def __getitem__(self, name):
+        """Return dry data or a dummy parameter block."""
+        try:
+            return super(DryParamInfo, self).__getitem__(name)
+        except KeyError:
+            return {'name': name, 'limit': None}
 
-class DummySiteinfo():
+
+class DummySiteinfo(object):
 
     """Dummy class to use instead of L{pywikibot.site.Siteinfo}."""
 
@@ -348,16 +411,23 @@ class DrySite(pywikibot.site.APISite):
         if self.family.name == 'wikisource':
             extensions.append({'name': 'ProofreadPage'})
         self._siteinfo._cache['extensions'] = (extensions, True)
+        aliases = []
+        for alias in ('PrefixIndex', ):
+            # TODO: Not all follow that scheme (e.g. "BrokenRedirects")
+            aliases.append({'realname': alias.capitalize(), 'aliases': [alias]})
+        self._siteinfo._cache['specialpagealiases'] = (aliases, True)
         self._msgcache = {'*': 'dummy entry', 'hello': 'world'}
 
     def _build_namespaces(self):
-        return Namespace.builtin_namespaces(case=self.siteinfo['case'])
-
-    def __repr__(self):
-        """Override default so warnings and errors indicate test is dry."""
-        return "%s(%r, %r)" % (self.__class__.__name__,
-                               self.code,
-                               self.family.name)
+        ns_dict = Namespace.builtin_namespaces(case=self.siteinfo['case'])
+        if hasattr(self.family, 'authornamespaces'):
+            assert len(self.family.authornamespaces[self.code]) <= 1
+            if self.family.authornamespaces[self.code]:
+                author_ns = self.family.authornamespaces[self.code][0]
+                assert author_ns not in ns_dict
+                ns_dict[author_ns] = Namespace(
+                    author_ns, 'Author', case=self.siteinfo['case'])
+        return ns_dict
 
     @property
     def userinfo(self):
@@ -546,9 +616,16 @@ def execute(command, data_in=None, timeout=0, error=None):
     """
     Execute a command and capture outputs.
 
+    On Python 2.6 it adds an option to ignore the deprecation warning from
+    the cryptography package after the first entry of the command parameter.
+
     @param command: executable to run and arguments to use
     @type command: list of unicode
     """
+    if PYTHON_VERSION < (2, 7):
+        command.insert(
+            1, '-W ignore:{0}:DeprecationWarning'.format(PYTHON_26_CRYPTO_WARN))
+
     # Any environment variables added on Windows must be of type
     # str() on Python 2.
     env = os.environ.copy()
@@ -564,7 +641,7 @@ def execute(command, data_in=None, timeout=0, error=None):
 
     # sys.path may have been modified by the test runner to load dependencies.
     pythonpath = os.pathsep.join(sys.path)
-    if sys.platform == 'win32' and sys.version_info[0] < 3:
+    if OSWIN32 and PY2:
         pythonpath = str(pythonpath)
     env[str('PYTHONPATH')] = pythonpath
     env[str('PYTHONIOENCODING')] = str(config.console_encoding)
@@ -574,7 +651,7 @@ def execute(command, data_in=None, timeout=0, error=None):
         env[str('LC_ALL')] = str(pywikibot.config.userinterface_lang)
 
     # Set EDITOR to an executable that ignores all arguments and does nothing.
-    env[str('EDITOR')] = str('call' if sys.platform == 'win32' else 'true')
+    env[str('EDITOR')] = str('call' if OSWIN32 else 'true')
 
     options = {
         'stdout': subprocess.PIPE,
@@ -587,7 +664,7 @@ def execute(command, data_in=None, timeout=0, error=None):
         p = subprocess.Popen(command, env=env, **options)
     except TypeError as e:
         # Generate a more informative error
-        if sys.platform == 'win32' and sys.version_info[0] < 3:
+        if OSWIN32 and PY2:
             unicode_env = [(k, v) for k, v in os.environ.items()
                            if not isinstance(k, str) or
                            not isinstance(v, str)]

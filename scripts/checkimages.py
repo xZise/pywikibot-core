@@ -84,7 +84,7 @@ right parameter.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -155,25 +155,6 @@ txt_find = {
     'zh': [u'{{no source', u'{{unknown', u'{{No license'],
 }
 
-# Summary for when the will add the no source
-msg_comm = {
-    'ar': u'بوت: التعليم على ملف مرفوع حديثا غير موسوم',
-    'commons': u'Bot: Marking newly uploaded untagged file',
-    'de': u'Bot: Markiere mit {{[[Wikipedia:Dateiüberprüfung/Anleitung|DÜP]]}},'
-          u' da keine Lizenzvorlage gefunden — bitte nicht entfernen,'
-          u' Informationen bald auf der Benutzerdiskussion des Uploaders.',
-    'en': u'Bot: Marking newly uploaded untagged file',
-    'fa': u'ربات: حق تکثیر تصویر تازه بارگذاری شده نامعلوم است.',
-    'ga': u'Róbó: Ag márcáil comhad nua-uaslódáilte gan ceadúnas',
-    'hu': u'Robot: Frissen feltöltött licencsablon nélküli fájl megjelölése',
-    'it': u"Bot: Aggiungo unverified",
-    'ja': u'ロボットによる:著作権情報なしの画像をタグ',
-    'ko': u'로봇:라이선스 없음',
-    'ta': u'தானியங்கி:காப்புரிமை வழங்கப்படா படிமத்தை சுட்டுதல்',
-    'ur': u'روبالہ:نشان زدگی جدید زبراثقال شدہ املاف',
-    'zh': u'機器人:標示新上傳且未包含必要資訊的檔案',
-}
-
 # When the Bot find that the usertalk is empty is not pretty to put only the
 # no source without the welcome, isn't it?
 empty = {
@@ -192,23 +173,6 @@ empty = {
     'ta': u'{{welcome}}\n~~~~\n',
     'ur': u'{{خوش آمدید}}\n~~~~\n',
     'zh': u'{{subst:welcome|sign=~~~~}}',
-}
-
-# Summary that the bot use when it notify the problem with the image's license
-msg_comm2 = {
-    'ar': u'بوت: طلب معلومات المصدر.',
-    'commons': u'Bot: Requesting source information.',
-    'de': u'Bot: Benachrichtigung über Lizenzprobleme',
-    'en': u'Robot: Requesting source information.',
-    'fa': u'ربات: درخواست منبع تصویر',
-    'ga': u'Róbó: Ag iarraidh eolais foinse.',
-    'it': u"Bot: Notifico l'unverified",
-    'hu': u'Robot: Forrásinformáció kérése',
-    'ja': u'ロボットによる:著作権情報明記のお願い',
-    'ko': u'로봇:라이선스 정보 요청',
-    'ta': u'தானியங்கி:மூலம் வழங்கப்படா படிமத்தை சுட்டுதல்',
-    'ur': u'روبالہ:درخواست ماخذ تصویر',
-    'zh': u'機器人：告知用戶',
 }
 
 # if the file has an unknown extension it will be tagged with this template.
@@ -616,11 +580,11 @@ class checkImagesBot(object):
         hiddentemplatesRaw = i18n.translate(self.site, HiddenTemplate)
         self.hiddentemplates = set([pywikibot.Page(self.site, tmp)
                                     for tmp in hiddentemplatesRaw])
-        self.pageHidden = i18n.translate(self.site,
-                                              PageWithHiddenTemplates)
-        self.pageAllowed = i18n.translate(self.site,
-                                               PageWithAllowedTemplates)
-        self.comment = i18n.translate(self.site, msg_comm, fallback=True)
+        self.pageHidden = i18n.translate(self.site, PageWithHiddenTemplates)
+        self.pageAllowed = i18n.translate(self.site, PageWithAllowedTemplates)
+        self.comment = i18n.twtranslate(self.site.lang,
+                                        'checkimages-source-tag-comment',
+                                        fallback=False)
         # Adding the bot's nickname at the notification text if needed.
         self.bots = i18n.translate(self.site, bot_list)
         if self.bots:
@@ -776,7 +740,8 @@ class checkImagesBot(object):
 
     def put_mex_in_talk(self):
         """Function to put the warning in talk page of the uploader."""
-        commento2 = i18n.translate(self.site, msg_comm2, fallback=True)
+        commento2 = i18n.twtranslate(self.site.lang,
+                                     'checkimages-source-notice-comment')
         emailPageName = i18n.translate(self.site, emailPageWithText)
         emailSubj = i18n.translate(self.site, emailSubject)
         if self.notification2:
@@ -916,9 +881,6 @@ class checkImagesBot(object):
             return  # Image deleted, no hash found. Skip the image.
 
         site = pywikibot.Site('commons', 'commons')
-        regexOnCommons = (r"\[\[:File:%s\]\] is also on '''Commons''': "
-                          r"\[\[commons:File:.*?\]\](?: \(same name\))?$"
-                          % re.escape(self.imageName))
         commons_image_with_this_hash = next(iter(site.allimages(sha1=hash_found,
                                                                 total=1)), None)
         if commons_image_with_this_hash:
@@ -952,21 +914,16 @@ class checkImagesBot(object):
             # It's not only on commons but the image needs a check
             # the second usually is a url or something like that.
             # Compare the two in equal way, both url.
+            repme = (u"\n*[[:File:%s]] is also on '''Commons''': "
+                     u"[[commons:File:%s]]"
+                     % (self.imageName,
+                        commons_image_with_this_hash.title(
+                            withNamespace=False)))
             if (self.image.title(asUrl=True) ==
                     commons_image_with_this_hash.title(asUrl=True)):
-                repme = (u"\n*[[:File:%s]] is also on '''Commons''': "
-                         u"[[commons:File:%s]] (same name)"
-                         % (self.imageName,
-                            commons_image_with_this_hash.title(
-                                withNamespace=False)))
-            else:
-                repme = (u"\n*[[:File:%s]] is also on '''Commons''': "
-                         u"[[commons:File:%s]]"
-                         % (self.imageName,
-                            commons_image_with_this_hash.title(
-                                withNamespace=False)))
+                repme += " (same name)"
             self.report_image(self.imageName, self.rep_page, self.com, repme,
-                              addings=False, regex=regexOnCommons)
+                              addings=False)
         return True
 
     def checkImageDuplicated(self, duplicates_rollback):
@@ -975,12 +932,8 @@ class checkImagesBot(object):
         dupRegex = i18n.translate(self.site, duplicatesRegex)
         dupTalkHead = i18n.translate(self.site, duplicate_user_talk_head)
         dupTalkText = i18n.translate(self.site, duplicates_user_talk_text)
-        dupComment_talk = i18n.translate(self.site,
-                                              duplicates_comment_talk)
-        dupComment_image = i18n.translate(self.site,
-                                               duplicates_comment_image)
-        duplicateRegex = (r'\[\[:File:%s\]\] has the following duplicates'
-                          % re.escape(self.image.title(asUrl=True)))
+        dupComment_talk = i18n.translate(self.site, duplicates_comment_talk)
+        dupComment_image = i18n.translate(self.site, duplicates_comment_image)
         imagePage = pywikibot.FilePage(self.site, self.imageName)
         hash_found = imagePage.latest_file_info.sha1
         duplicates = list(self.site.allimages(sha1=hash_found))
@@ -1111,8 +1064,7 @@ class checkImagesBot(object):
                     repme += u"\n**[[:File:%s]]" % dup_page.title(asUrl=True)
 
                 result = self.report_image(self.imageName, self.rep_page,
-                                           self.com, repme, addings=False,
-                                           regex=duplicateRegex)
+                                           self.com, repme, addings=False)
                 if not result:
                     return True  # If Errors, exit (but continue the check)
 
@@ -1123,7 +1075,7 @@ class checkImagesBot(object):
         return True  # Ok - No problem. Let's continue the checking phase
 
     def report_image(self, image_to_report, rep_page=None, com=None,
-                     rep_text=None, addings=True, regex=None):
+                     rep_text=None, addings=True):
         """Report the files to the report page when needed."""
         if not rep_page:
             rep_page = self.rep_page
@@ -1135,9 +1087,6 @@ class checkImagesBot(object):
             rep_text = self.rep_text
 
         another_page = pywikibot.Page(self.site, rep_page)
-
-        if not regex:
-            regex = image_to_report
         try:
             text_get = another_page.get()
         except pywikibot.NoPage:
@@ -1159,12 +1108,13 @@ class checkImagesBot(object):
                 # or not)
                 return True
 
-        # The talk page includes "_" between the two names, in this way I
-        # replace them to " "
-        n = re.compile(regex, re.UNICODE | re.DOTALL)
-        y = n.findall(text_get)
-
-        if y:
+        # Skip if the message is already there.
+        # Don't care for differences inside brackets.
+        end = rep_text.find('(', max(0, rep_text.find(']]')))
+        if end < 0:
+            end = None
+        short_text = rep_text[:end].strip()
+        if short_text in text_get:
             pywikibot.output(u"%s is already in the report page."
                              % image_to_report)
             reported = False
@@ -1396,16 +1346,12 @@ class checkImagesBot(object):
                                         % self.imageName + \
                     "a ''fake license'', license detected: <nowiki>%s</nowiki>" \
                                         % self.license_found
-                regexFakeLicense = r"\* ?\[\[:File:%s\]\] seems to have " \
-                                   % (re.escape(self.imageName)) + \
-                    "a ''fake license'', license detected: <nowiki>%s</nowiki>$" \
-                                   % (re.escape(self.license_found))
                 printWithTimeZone(
                     u"%s seems to have a fake license: %s, reporting..."
                     % (self.imageName, self.license_found))
                 self.report_image(self.imageName,
                                   rep_text=rep_text_license_fake,
-                                  addings=False, regex=regexFakeLicense)
+                                  addings=False)
             elif self.license_found:
                 pywikibot.output(u"[[%s]] seems ok, license found: {{%s}}..."
                                  % (self.imageName, self.license_found))
@@ -1494,6 +1440,7 @@ class checkImagesBot(object):
                 return True
 
     def findAdditionalProblems(self):
+        """Extract additional settings from configuration page."""
         # In every tuple there's a setting configuration
         for tupla in self.settingsData:
             name = tupla[1]
@@ -1540,6 +1487,7 @@ class checkImagesBot(object):
                         continue
 
     def checkStep(self):
+        """Check a single file page."""
         # nothing = Defining an empty image description
         nothing = ['', ' ', '  ', '   ', '\n', '\n ', '\n  ', '\n\n', '\n \n',
                    ' \n', ' \n ', ' \n \n']

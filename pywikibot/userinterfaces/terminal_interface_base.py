@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -15,14 +15,16 @@ import math
 import re
 import sys
 
-from . import transliteration
 import pywikibot
+
 from pywikibot import config
+
 from pywikibot.bot import VERBOSE, INFO, STDOUT, INPUT, WARNING
-from pywikibot.tools import deprecated, PY2
 from pywikibot.bot_choice import (
     Option, OutputOption, StandardOption, ChoiceException, QuitKeyboardInterrupt,
 )
+from pywikibot.tools import deprecated, PY2
+from pywikibot.userinterfaces import transliteration
 
 transliterator = transliteration.transliterator(config.console_encoding)
 

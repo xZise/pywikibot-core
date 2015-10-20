@@ -5,25 +5,31 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
-
 import json
-import sys
 import os
+import re
+import sys
+
 from collections import Iterable, Mapping
 from datetime import datetime, timedelta
-import re
 
 import pywikibot
 
 from pywikibot import config
-from pywikibot import async_request, page_put_queue
 from pywikibot.comms import http
-from pywikibot.tools import MediaWikiVersion
 from pywikibot.data import api
+
+from pywikibot import async_request, page_put_queue
+from pywikibot.tools import (
+    MediaWikiVersion,
+    PY2,
+    StringTypes as basestring,
+    UnicodeType as unicode,
+)
 
 from tests.aspects import (
     unittest, TestCase, DeprecationTestCase,
@@ -35,12 +41,8 @@ from tests.aspects import (
     DefaultWikidataClientTestCase,
     AlteredDefaultSiteTestCase,
 )
-from tests.utils import allowed_failure, allowed_failure_if, entered_loop
 from tests.basepage_tests import BasePageLoadRevisionsCachingTestBase
-
-if sys.version_info[0] > 2:
-    basestring = (str, )
-    unicode = str
+from tests.utils import allowed_failure, allowed_failure_if, entered_loop
 
 
 class TokenTestBase(TestCaseBase):
@@ -104,6 +106,9 @@ class TestSiteObjectDeprecatedFunctions(DefaultSiteTestCase, DeprecationTestCase
 
     def test_siteinfo_normal_call(self):
         """Test calling the Siteinfo without setting dump."""
+        if MediaWikiVersion(self.site.version()) < MediaWikiVersion('1.16'):
+            raise unittest.SkipTest('requires v1.16+')
+
         old = self.site.siteinfo('general')
         self.assertIn('time', old)
         self.assertEqual(old, self.site.siteinfo['general'])
@@ -222,6 +227,11 @@ class TestSiteObject(DefaultSiteTestCase):
         mysite_pickled = pickle.loads(mysite_str)
         self.assertEqual(mysite, mysite_pickled)
 
+    def test_repr(self):
+        """Test __repr__."""
+        expect = 'Site("{0}", "{1}")'.format(self.code, self.family)
+        self.assertStringMethod(str.endswith, repr(self.site), expect)
+
     def testBaseMethods(self):
         """Test cases for BaseSite methods."""
         mysite = self.get_site()
@@ -233,9 +243,6 @@ class TestSiteObject(DefaultSiteTestCase):
         self.assertEqual(mysite.sitename(),
                          "%s:%s" % (self.family,
                                     self.code))
-        self.assertEqual(repr(mysite),
-                         'Site("%s", "%s")'
-                         % (self.code, self.family))
         self.assertIsInstance(mysite.linktrail(), basestring)
         self.assertIsInstance(mysite.redirect(), basestring)
         try:
@@ -302,6 +309,7 @@ class TestSiteObject(DefaultSiteTestCase):
 
         for item in mysite.validLanguageLinks():
             self.assertIn(item, langs)
+            self.assertIsNone(self.site.namespaces.lookup_name(item))
 
     def testNamespaceMethods(self):
         """Test cases for methods manipulating namespace names."""
@@ -479,8 +487,8 @@ class TestSiteGenerators(DefaultSiteTestCase):
             print('FAILURE wrt T92856:')
             print(u'Sym. difference: "{0}"'.format(
                   u'", "'.join(
-                  u'{0}@{1}'.format(link.namespace(), link.title(withNamespace=False))
-                  for link in namespace_links ^ links)))
+                      u'{0}@{1}'.format(link.namespace(), link.title(withNamespace=False))
+                      for link in namespace_links ^ links)))
         self.assertCountEqual(
             set(mysite.pagelinks(mainpage, namespaces=[0, 1])) - links, [])
         for target in mysite.preloadpages(mysite.pagelinks(mainpage,
@@ -820,6 +828,9 @@ class TestSiteGenerators(DefaultSiteTestCase):
 
     def test_protectedpages_create(self):
         """Test that protectedpages returns protected page titles."""
+        if MediaWikiVersion(self.site.version()) < MediaWikiVersion('1.15'):
+            raise unittest.SkipTest('requires v1.15+')
+
         pages = list(self.get_site().protectedpages(type='create', total=10))
         for page in pages:
             self.assertFalse(page.exists())
@@ -1061,7 +1072,8 @@ class TestLogPages(DefaultSiteTestCase, DeprecationTestCase):
             self.assertIsInstance(entry, tuple)
             self.assertIsInstance(entry[0], pywikibot.Page)
             self.assertIsInstance(entry[1], basestring)
-            self.assertIsInstance(entry[2], int)
+            self.assertIsInstance(
+                entry[2], long if PY2 and entry[2] > sys.maxint else int)  # noqa
             self.assertIsInstance(entry[3], basestring)
 
     def test_logpages_dump(self):
@@ -1231,6 +1243,33 @@ class TestUserRecentChanges(DefaultSiteTestCase):
             self.assertIsInstance(change, dict)
             if mysite.has_right('patrol'):
                 self.assertNotIn("patrolled", change)
+
+
+class TestUserWatchedPages(DefaultSiteTestCase):
+
+    """Test user watched pages."""
+
+    user = True
+
+    def test_watched_pages(self):
+        """Test the site.watched_pages() method."""
+        gen = self.site.watched_pages(total=5, force=False)
+        self.assertIsInstance(gen.request, api.CachedRequest)
+        for page in gen:
+            self.assertIsInstance(page, pywikibot.Page)
+        # repeat to use the cache
+        gen = self.site.watched_pages(total=5, force=False)
+        self.assertIsInstance(gen.request, api.CachedRequest)
+        for page in gen:
+            self.assertIsInstance(page, pywikibot.Page)
+
+    def test_watched_pages_uncached(self):
+        """Test the site.watched_pages() method uncached."""
+        gen = self.site.watched_pages(total=5, force=True)
+        self.assertIsInstance(gen.request, api.Request)
+        self.assertFalse(issubclass(gen.request_class, api.CachedRequest))
+        for page in gen:
+            self.assertIsInstance(page, pywikibot.Page)
 
 
 class SearchTestCase(DefaultSiteTestCase):
@@ -1973,10 +2012,17 @@ class TestSiteInfo(DefaultSiteTestCase):
         self.assertTrue(-12 * 60 <= mysite.siteinfo['timeoffset'] <= +14 * 60)
         self.assertEqual(mysite.siteinfo['timeoffset'] % 15, 0)
         self.assertRegex(mysite.siteinfo['timezone'], "([A-Z]{3,4}|[A-Z][a-z]+/[A-Z][a-z]+)")
+        self.assertIn(mysite.siteinfo['case'], ["first-letter", "case-sensitive"])
+
+    def test_siteinfo_v1_16(self):
+        """Test v.16+ siteinfo values."""
+        if MediaWikiVersion(self.site.version()) < MediaWikiVersion('1.16'):
+            raise unittest.SkipTest('requires v1.16+')
+
+        mysite = self.get_site()
         self.assertIsInstance(
             datetime.strptime(mysite.siteinfo['time'], '%Y-%m-%dT%H:%M:%SZ'),
             datetime)
-        self.assertIn(mysite.siteinfo['case'], ["first-letter", "case-sensitive"])
         self.assertEqual(re.findall("\$1", mysite.siteinfo['articlepath']), ["$1"])
 
     def test_properties_with_defaults(self):
@@ -2010,7 +2056,7 @@ class TestSiteInfo(DefaultSiteTestCase):
         self.assertNotIn(not_exists, mysite.siteinfo)
         self.assertEqual(len(mysite.siteinfo.get(not_exists)), 0)
         self.assertFalse(entered_loop(mysite.siteinfo.get(not_exists)))
-        if sys.version_info[0] == 2:
+        if PY2:
             self.assertFalse(entered_loop(mysite.siteinfo.get(not_exists).iteritems()))
             self.assertFalse(entered_loop(mysite.siteinfo.get(not_exists).itervalues()))
             self.assertFalse(entered_loop(mysite.siteinfo.get(not_exists).iterkeys()))
@@ -2753,6 +2799,7 @@ class TestObsoleteSite(TestCase):
     def test_removed_site(self):
         """Test Wikimedia offline site."""
         site = pywikibot.Site('ru-sib', 'wikipedia')
+        self.assertIsInstance(site, pywikibot.site.RemovedSite)
         self.assertEqual(site.code, 'ru-sib')
         self.assertIsInstance(site.obsolete, bool)
         self.assertTrue(site.obsolete)

@@ -5,12 +5,13 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
-import sys
-if sys.version_info[0] > 2:
+from pywikibot.tools import PY2
+
+if not PY2:
     from urllib.parse import urlparse
 else:
     from urlparse import urlparse
@@ -27,7 +28,7 @@ class TestInternetArchive(DeprecationTestCase):
 
     sites = {
         'archive.org': {
-            'hostname': 'web.archive.org',
+            'hostname': 'https://archive.org/wayback/available?url=invalid',
         },
     }
 

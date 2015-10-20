@@ -8,6 +8,7 @@ python:
   - '2.7'
   - '3.3'
   - '3.4'
+  - '3.5'
   - '2.6'
 
 # OSX builds do not yet support Python
@@ -49,7 +50,6 @@ script:
 
   - mkdir ~/.pywikibot
 
-  - if [[ "$FAMILY" == 'oraintest' ]]; then python pwb.py generate_family_file 'https://test.orain.org/' oraintest ; fi
   - python pwb.py generate_family_file 'https://wiki.musicbrainz.org/' musicbrainz
   - if [[ $FAMILY == 'wpbeta' ]]; then
       python -m generate_family_file 'http://'$LANGUAGE'.wikipedia.beta.wmflabs.org/' 'wpbeta' 'n' ;
@@ -91,13 +91,16 @@ script:
       nosetests --version ;
       if [[ "$SITE_ONLY" == "1" ]]; then
         echo "Running site tests only code ${LANGUAGE} on family ${FAMILY}" ;
-        python setup.py nosetests --tests tests --verbosity=2 -a "family=$FAMILY,code=$LANGUAGE" ;
+        python setup.py nosetests --tests tests --verbosity=2 -a "family=$FAMILY,code=$LANGUAGE" --with-coverage --cover-package=. ;
       else
-        python setup.py nosetests --tests tests --verbosity=2 ;
+        python setup.py nosetests --tests tests --verbosity=2 --with-coverage --cover-package=. ;
       fi ;
     else
-      python setup.py test ;
+      coverage run setup.py test ;
     fi
+
+after_success:
+    codecov
 
 env:
   global:
@@ -123,8 +126,6 @@ matrix:
       env: LANGUAGE=en FAMILY=wsbeta SITE_ONLY=1
     - python: '2.7'
       env: LANGUAGE=wikia FAMILY=wikia PYWIKIBOT2_TEST_NO_RC=1
-    - python: '3.3'
-      env: LANGUAGE=en FAMILY=oraintest SITE_ONLY=1 OAUTH_DOMAIN="test.orain.org"
     - python: '3.3'
       env: LANGUAGE=en FAMILY=musicbrainz SITE_ONLY=1
     - python: '3.4'

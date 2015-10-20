@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -15,10 +15,14 @@ import types
 import pywikibot.data.api as api
 import pywikibot.family
 import pywikibot.login
-import pywikibot.site
 import pywikibot.page
+import pywikibot.site
 
-from pywikibot.tools import MediaWikiVersion, PY2
+from pywikibot.tools import (
+    MediaWikiVersion,
+    PY2,
+    UnicodeType,
+)
 
 from tests.aspects import (
     unittest,
@@ -30,7 +34,6 @@ from tests.utils import allowed_failure, FakeLoginManager, PatchedHttp
 
 if not PY2:
     from urllib.parse import unquote_to_bytes
-    unicode = str
 else:
     from urllib import unquote_plus as unquote_to_bytes
 
@@ -73,7 +76,7 @@ class TestAPIMWException(DefaultSiteTestCase):
             for param, value in self.assert_parameters.items():
                 self.assertIn(param, parameters)
                 if value is not None:
-                    if isinstance(value, unicode):
+                    if isinstance(value, UnicodeType):
                         value = value.split('|')
                     self.assertLessEqual(set(value), parameters[param])
         return self.data
@@ -468,6 +471,19 @@ class TestOtherSubmodule(TestCase):
         self.assertFalse(other_modules & pi.modules)
 
 
+class TestParaminfoModules(DefaultSiteTestCase):
+
+    """Test loading all paraminfo modules."""
+
+    def test_action_modules(self):
+        """Test loading all action modules."""
+        self.site._paraminfo.fetch(self.site._paraminfo.action_modules)
+
+    def test_query_modules(self):
+        """Test loading all query modules."""
+        self.site._paraminfo.fetch(self.site._paraminfo.query_modules)
+
+
 class TestOptionSet(TestCase):
 
     """OptionSet class test class."""
@@ -580,6 +596,7 @@ class TestDryPageGenerator(TestCase):
         # Add custom_name for this site namespace, to match the live site.
         if 'Wikipedia' not in self.site.namespaces:
             self.site.namespaces[4].custom_name = 'Wikipedia'
+            self.site.namespaces._namespace_names['wikipedia'] = self.site.namespaces[4]
 
     def test_results(self):
         """Test that PageGenerator yields pages with expected attributes."""

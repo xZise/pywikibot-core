@@ -13,7 +13,7 @@ XmlEntry objects which can be used by other bots.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -23,7 +23,7 @@ import re
 from xml.etree.cElementTree import iterparse
 import xml.sax
 
-from pywikibot.tools import open_compressed
+from pywikibot.tools import open_archive
 
 
 def parseRestrictions(restrictions):
@@ -49,7 +49,7 @@ def parseRestrictions(restrictions):
     return editRestriction, moveRestriction
 
 
-class XmlEntry:
+class XmlEntry(object):
 
     """Represent a page."""
 
@@ -118,7 +118,7 @@ class XmlDump(object):
 
     def parse(self):
         """Generator using cElementTree iterparse function."""
-        with open_compressed(self.filename) as source:
+        with open_archive(self.filename) as source:
             # iterparse's event must be a str but they are unicode with
             # unicode_literals in Python 2
             context = iterparse(source, events=(str('start'), str('end'),

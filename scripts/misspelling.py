@@ -26,15 +26,17 @@ Command line options:
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
 
 import pywikibot
+
 from pywikibot import i18n, pagegenerators
 from pywikibot.tools import PY2
-from solve_disambiguation import DisambiguationRobot
+
+from scripts.solve_disambiguation import DisambiguationRobot
 
 if not PY2:
     basestring = (str, )

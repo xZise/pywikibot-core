@@ -5,14 +5,13 @@
 # (C) Pywikibot team, 2009-2015
 #
 # Distributed under the terms of the MIT license.
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
 import calendar
 import datetime
 import json
-import os
 import sys
 
 from distutils.version import LooseVersion
@@ -25,7 +24,7 @@ from pywikibot.pagegenerators import (
     PreloadingGenerator,
 )
 
-from tests import _data_dir
+from tests import join_data_path
 from tests.aspects import (
     unittest,
     TestCase,
@@ -275,7 +274,7 @@ class TestTextfilePageGenerator(DefaultSiteTestCase):
     )
 
     def test_brackets(self):
-        filename = os.path.join(_data_dir, 'pagelist-brackets.txt')
+        filename = join_data_path('pagelist-brackets.txt')
         site = self.get_site()
         titles = list(pagegenerators.TextfilePageGenerator(filename, site))
         self.assertEqual(len(titles), len(self.expected_titles))
@@ -285,7 +284,7 @@ class TestTextfilePageGenerator(DefaultSiteTestCase):
         self.assertPageTitlesEqual(titles, expected_titles)
 
     def test_lines(self):
-        filename = os.path.join(_data_dir, 'pagelist-lines.txt')
+        filename = join_data_path('pagelist-lines.txt')
         site = self.get_site()
         titles = list(pagegenerators.TextfilePageGenerator(filename, site))
         self.assertEqual(len(titles), len(self.expected_titles))
@@ -593,6 +592,7 @@ class TestFactoryGenerator(DefaultSiteTestCase):
     def test_regexfilter_default(self):
         gf = pagegenerators.GeneratorFactory()
         # Matches titles with the same two or more continous characters
+        self.assertTrue(gf.handleArg('-start'))
         self.assertTrue(gf.handleArg('-titleregex:(.)\\1+'))
         gf.handleArg('-limit:10')
         gen = gf.getCombinedGenerator()
@@ -604,39 +604,39 @@ class TestFactoryGenerator(DefaultSiteTestCase):
             self.assertRegex(page.title().lower(), '(.)\\1+')
 
     def test_regexfilter_ns_after(self):
-        """Bug: T85389: -ns after -titleregex is ignored with a warning."""
         gf = pagegenerators.GeneratorFactory()
+        self.assertTrue(gf.handleArg('-start'))
         self.assertTrue(gf.handleArg('-titleregex:.*'))
         gf.handleArg('-ns:1')
         gf.handleArg('-limit:10')
         gen = gf.getCombinedGenerator()
         pages = list(gen)
-        self.assertGreater(len(pages), 0)
         self.assertLessEqual(len(pages), 10)
-        self.assertPagesInNamespaces(pages, 0)
+        self.assertPagesInNamespaces(pages, 1)
 
-    def test_regexfilter_ns_first(self):
+    def test_regexfilter_ns_before(self):
         gf = pagegenerators.GeneratorFactory()
-        # Workaround for Bug: T85389
-        # Give -ns before -titleregex (as for -newpages)
+        self.assertTrue(gf.handleArg('-start'))
         gf.handleArg('-ns:1')
         self.assertTrue(gf.handleArg('-titleregex:.*'))
         gf.handleArg('-limit:10')
         gen = gf.getCombinedGenerator()
         self.assertIsNotNone(gen)
         pages = list(gen)
-        self.assertGreater(len(pages), 0)
         self.assertLessEqual(len(pages), 10)
         self.assertPagesInNamespaces(pages, 1)
 
-    def test_regexfilter_two_ns_first(self):
+    def test_allpages_with_two_ns(self):
+        """Test that allpages fails with two ns as parameter."""
         gf = pagegenerators.GeneratorFactory()
+        self.assertTrue(gf.handleArg('-start'))
         gf.handleArg('-ns:3,1')
-        self.assertRaisesRegex(
+        # allpages only accepts a single namespace, and will raise a
+        # TypeError if self.namespaces contains more than one namespace.
+        self.assertRaises(
             TypeError,
             'allpages module does not support multiple namespaces',
-            gf.handleArg,
-            '-titleregex:.*')
+            gf.getCombinedGenerator)
 
     def test_prefixing_default(self):
         gf = pagegenerators.GeneratorFactory()
@@ -828,8 +828,8 @@ class TestLogeventsFactoryGenerator(DefaultSiteTestCase,
         self.assertTrue(all(isinstance(item, pywikibot.Page) for item in pages))
 
 
-class PageGeneratorIntersectTestCase(DefaultSiteTestCase,
-                                     GeneratorIntersectTestCase):
+class PageGeneratorIntersectTestCase(GeneratorIntersectTestCase,
+                                     RecentChangesTestCase):
 
     """Page intersect_generators test cases."""
 
@@ -846,7 +846,8 @@ class PageGeneratorIntersectTestCase(DefaultSiteTestCase,
              pagegenerators.RecentChangesPageGenerator(site=site, total=200)])
 
 
-class EnglishWikipediaPageGeneratorIntersectTestCase(GeneratorIntersectTestCase):
+class EnWikipediaPageGeneratorIntersectTestCase(GeneratorIntersectTestCase,
+                                                RecentChangesTestCase):
 
     """Page intersect_generators test cases."""
 

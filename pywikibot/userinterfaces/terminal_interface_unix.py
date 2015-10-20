@@ -5,12 +5,13 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
 import sys
-from . import terminal_interface_base
+
+from pywikibot.userinterfaces import terminal_interface_base
 
 unixColors = {
     'default':     chr(27) + '[0m',     # Unix end tag to switch back to default

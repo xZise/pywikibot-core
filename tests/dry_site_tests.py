@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -99,6 +99,30 @@ class TestDrySite(DefaultDrySiteTestCase):
         self.assertEqual('Foo', user_agent(x, format_string='Foo {username}'))
         self.assertEqual('Foo (' + x.family.name + ':' + x.code + ')',
                          user_agent(x, format_string='Foo ({script_comments})'))
+
+
+class TestSetAction(DeprecationTestCase):
+
+    """Test the deprecated setAction function."""
+
+    net = False
+
+    def setUp(self):
+        """Backup the original configuration."""
+        super(TestSetAction, self).setUp()
+        self._old_config = pywikibot.config.default_edit_summary
+
+    def tearDown(self):
+        """Restore the original configuration."""
+        pywikibot.config.default_edit_summary = self._old_config
+        super(TestSetAction, self).tearDown()
+
+    def test_set_action(self):
+        """Test deprecated setAction function."""
+        pywikibot.setAction('{0}X{0}'.format(self._old_config))
+        self.assertOneDeprecation(self.INSTEAD)
+        self.assertEqual(pywikibot.config.default_edit_summary,
+                         '{0}X{0}'.format(self._old_config))
 
 
 class TestMustBe(DebugOnlyTestCase):

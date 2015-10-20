@@ -57,7 +57,7 @@ subdirectory.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -148,6 +148,10 @@ def main(*args):
         pywikibot.bot.suggest_help(unknown_parameters=unknown_args)
         return False
 
+    if password is not None:
+        pywikibot.warning('The -pass argument is not implemented yet. See: '
+                          'https://phabricator.wikimedia.org/T102477')
+
     if logall:
         if sysop and not oauth:
             namedict = config.sysopnames
@@ -169,12 +173,14 @@ def main(*args):
                     site.login(sysop)
                 user = site.user()
                 if user:
-                    pywikibot.output(u"Logged in on %(site)s as %(user)s." % locals())
+                    pywikibot.output(
+                        'Logged in on {0} as {1}.'.format(site, user))
                 else:
                     if logout:
-                        pywikibot.output(u"Logged out of %(site)s." % locals())
+                        pywikibot.output('Logged out of {0}.'.format(site))
                     else:
-                        pywikibot.output(u"Not logged in on %(site)s." % locals())
+                        pywikibot.output(
+                            'Not logged in on {0}.'.format(site))
             except SiteDefinitionError:
                 pywikibot.output(u'%s.%s is not a valid site, please remove it'
                                  u' from your config' % (lang, familyName))

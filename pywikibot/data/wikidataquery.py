@@ -4,7 +4,7 @@
 # (C) Pywikibot team, 2013
 #
 # Distributed under the terms of the MIT license.
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 import json
 import sys
@@ -34,7 +34,7 @@ def listify(x):
     return x if isinstance(x, list) else [x]
 
 
-class QuerySet():
+class QuerySet(object):
 
     """
     A QuerySet represents a set of queries or other query sets.
@@ -116,7 +116,7 @@ class QuerySet():
         return u"QuerySet(%s)" % self
 
 
-class Query():
+class Query(object):
 
     """
     A query is a single query for the WikidataQuery API.
@@ -232,7 +232,7 @@ class Query():
 
         Sub-classes must override this method.
 
-        @raise NotImplementedError: Always raised by this abstract method
+        @raises NotImplementedError: Always raised by this abstract method
         """
         raise NotImplementedError
 
@@ -458,7 +458,7 @@ def fromClaim(claim):
                         % claim.type)
 
 
-class WikidataQuery():
+class WikidataQuery(object):
 
     """
     An interface to the WikidataQuery API.

@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -959,7 +959,7 @@ class TestInvalidInterwikiLinks(WikimediaDefaultSiteTestCase):
         self.assertRaisesRegex(
             Error,
             'bugzilla:1337 is not a local page on wikipedia:en, and the '
-            'interwiki prefix bugzilla is not supported by PyWikiBot!',
+            'interwiki prefix bugzilla is not supported by Pywikibot!',
             link.parse)
 
     def test_other_wiki_prefix(self):
@@ -968,7 +968,7 @@ class TestInvalidInterwikiLinks(WikimediaDefaultSiteTestCase):
         self.assertRaisesRegex(
             Error,
             'bulba:this-will-never-work is not a local page on wikipedia:en, '
-            'and the interwiki prefix bulba is not supported by PyWikiBot!',
+            'and the interwiki prefix bulba is not supported by Pywikibot!',
             link.parse)
 
 

@@ -57,16 +57,18 @@ For example to go through all categories:
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
 
 import re
 
-from add_text import add_text
 import pywikibot
+
 from pywikibot import i18n, pagegenerators, Bot
+
+from scripts.add_text import add_text
 
 docuReplacements = {
     '&params;': pagegenerators.parameterHelp

@@ -5,15 +5,15 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
-from pywikibot.family import Family, SingleSiteFamily
-from pywikibot.exceptions import UnknownFamily
-from pywikibot.tools import PY2
-
 import pywikibot.site
+
+from pywikibot.exceptions import UnknownFamily
+from pywikibot.family import Family, SingleSiteFamily
+from pywikibot.tools import StringTypes as basestring
 
 from tests.aspects import (
     unittest,
@@ -22,9 +22,6 @@ from tests.aspects import (
     PatchingTestCase,
 )
 from tests.utils import DrySite
-
-if not PY2:
-    basestring = (str, )
 
 
 class TestFamily(TestCase):
@@ -51,7 +48,7 @@ class TestFamily(TestCase):
             self.assertEqual(f.name, name)
             self.assertIsInstance(f.languages_by_size, list)
             self.assertGreaterEqual(set(f.langs), set(f.languages_by_size))
-            if len(f.langs) > 6 and f.name != 'wikimediachapter':
+            if len(f.langs) > 2 and f.name not in ['wikimediachapter', 'vikidia']:
                 self.assertNotEqual(f.languages_by_size, [])
             if isinstance(f, SingleSiteFamily):
                 self.assertIsNotNone(f.code)

@@ -95,7 +95,7 @@ Syntax examples:
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -108,6 +108,7 @@ import threading
 import time
 import sys
 
+from functools import partial
 from warnings import warn
 
 try:
@@ -116,7 +117,13 @@ except ImportError as e:
     memento_client = e
 
 import pywikibot
-from pywikibot import i18n, config, pagegenerators, textlib, xmlreader, weblib
+
+from pywikibot import i18n, config, pagegenerators, textlib, weblib
+from pywikibot.bot import ExistingPageBot, SingleSiteBot
+from pywikibot.pagegenerators import (
+    XMLDumpPageGenerator as _XMLDumpPageGenerator,
+)
+from pywikibot.tools.formatter import color_format
 
 # TODO: Convert to httlib2
 if sys.version_info[0] > 2:
@@ -178,7 +185,19 @@ def _get_closest_memento_url(url, when=None, timegate_uri=None):
         mc.timegate_uri = timegate_uri
 
     memento_info = mc.get_memento_info(url, when)
-    return memento_info.get('mementos').get('closest').get('uri')[0]
+    mementos = memento_info.get('mementos')
+    if not mementos:
+        raise Exception(
+            'mementos not found for {0} via {1}'.format(url, timegate_uri))
+    if 'closest' not in mementos:
+        raise Exception(
+            'closest memento not found for {0} via {1}'.format(
+                url, timegate_uri))
+    if 'uri' not in mementos['closest']:
+        raise Exception(
+            'closest memento uri not found for {0} via {1}'.format(
+                url, timegate_uri))
+    return mementos['closest']['uri'][0]
 
 
 def get_archive_url(url):
@@ -232,48 +251,8 @@ def weblinksIn(text, withoutBracketed=False, onlyBracketed=False):
             yield m.group('urlb')
 
 
-class XmlDumpPageGenerator:
-
-    """Xml generator that yiels pages containing a web link."""
-
-    def __init__(self, xmlFilename, xmlStart, namespaces):
-        self.xmlStart = xmlStart
-        self.namespaces = namespaces
-        self.skipping = bool(xmlStart)
-        self.site = pywikibot.Site()
-
-        dump = xmlreader.XmlDump(xmlFilename)
-        self.parser = dump.parse()
-
-    def __iter__(self):
-        return self
-
-    def next(self):
-        try:
-            for entry in self.parser:
-                if self.skipping:
-                    if entry.title != self.xmlStart:
-                        continue
-                    self.skipping = False
-                page = pywikibot.Page(self.site, entry.title)
-                if self.namespaces:
-                    if page.namespace() not in self.namespaces:
-                        continue
-                found = False
-                for url in weblinksIn(entry.text):
-                    found = True
-                if found:
-                    return page
-        except KeyboardInterrupt:
-            try:
-                if not self.skipping:
-                    pywikibot.output(
-                        u'To resume, use "-xmlstart:%s" on the command line.'
-                        % entry.title)
-            except NameError:
-                pass
-
-    __next__ = next
+XmlDumpPageGenerator = partial(
+    _XMLDumpPageGenerator, text_predicate=weblinksIn)
 
 
 class NotAnURLError(BaseException):
@@ -585,7 +564,7 @@ class LinkCheckThread(threading.Thread):
             self.history.setLinkDead(self.url, message, self.page, self.day)
 
 
-class History:
+class History(object):
 
     """
     Store previously found dead links.
@@ -609,9 +588,12 @@ class History:
 
     """
 
-    def __init__(self, reportThread):
+    def __init__(self, reportThread, site=None):
         self.reportThread = reportThread
-        self.site = pywikibot.Site()
+        if not site:
+            self.site = pywikibot.Site()
+        else:
+            self.site = site
         self.semaphore = threading.Semaphore()
         self.datfilename = pywikibot.config.datafilepath(
             'deadlinks', 'deadlinks-%s-%s.dat' % (self.site.family.name, self.site.code))
@@ -752,16 +734,16 @@ class DeadLinkReportThread(threading.Thread):
                 (url, errorReport, containingPage, archiveURL) = self.queue[0]
                 self.queue = self.queue[1:]
                 talkPage = containingPage.toggleTalkPage()
-                pywikibot.output(
-                    u'\03{lightaqua}** Reporting dead link on %s...\03{default}'
-                    % talkPage.title(asLink=True))
+                pywikibot.output(color_format(
+                    '{lightaqua}** Reporting dead link on {0}...{default}',
+                    talkPage.title(asLink=True)))
                 try:
                     content = talkPage.get() + "\n\n"
                     if url in content:
-                        pywikibot.output(
-                            u'\03{lightaqua}** Dead link seems to have already '
-                            u'been reported on %s\03{default}'
-                            % talkPage.title(asLink=True))
+                        pywikibot.output(color_format(
+                            '{lightaqua}** Dead link seems to have already '
+                            'been reported on {0}{default}',
+                            talkPage.title(asLink=True)))
                         self.semaphore.release()
                         continue
                 except (pywikibot.NoPage, pywikibot.IsRedirectPage):
@@ -800,15 +782,15 @@ class DeadLinkReportThread(threading.Thread):
                 try:
                     talkPage.put(content, comment)
                 except pywikibot.SpamfilterError as error:
-                    pywikibot.output(
-                        u'\03{lightaqua}** SpamfilterError while trying to '
-                        u'change %s: %s\03{default}'
-                        % (talkPage.title(asLink=True), error.url))
+                    pywikibot.output(color_format(
+                        '{lightaqua}** SpamfilterError while trying to '
+                        'change {0}: {1}{default}',
+                        talkPage.title(asLink=True), error.url))
 
                 self.semaphore.release()
 
 
-class WeblinkCheckerRobot:
+class WeblinkCheckerRobot(SingleSiteBot, ExistingPageBot):
 
     """
     Bot which will search for dead weblinks.
@@ -816,8 +798,11 @@ class WeblinkCheckerRobot:
     It uses several LinkCheckThreads at once to process pages from generator.
     """
 
-    def __init__(self, generator, HTTPignore=None, day=7):
-        self.generator = generator
+    def __init__(self, generator, HTTPignore=None, day=7, site=True):
+        """Constructor."""
+        super(WeblinkCheckerRobot, self).__init__(
+            generator=generator, site=site)
+
         if config.report_dead_links_on_talk:
             pywikibot.log("Starting talk page thread")
             reportThread = DeadLinkReportThread()
@@ -826,23 +811,17 @@ class WeblinkCheckerRobot:
             reportThread.start()
         else:
             reportThread = None
-        self.history = History(reportThread)
+        self.history = History(reportThread, site=self.site)
         if HTTPignore is None:
             self.HTTPignore = []
         else:
             self.HTTPignore = HTTPignore
         self.day = day
 
-    def run(self):
-        for page in self.generator:
-            self.checkLinksIn(page)
-
-    def checkLinksIn(self, page):
-        try:
-            text = page.get()
-        except pywikibot.NoPage:
-            pywikibot.output(u'%s does not exist.' % page.title())
-            return
+    def treat_page(self):
+        """Process one page."""
+        page = self.current_page
+        text = page.get()
         for url in weblinksIn(text):
             ignoreUrl = False
             for ignoreR in ignorelist:

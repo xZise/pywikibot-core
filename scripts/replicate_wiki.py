@@ -42,7 +42,7 @@ destination_wiki  destination wiki(s)
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -68,7 +68,7 @@ def multiple_replace(text, word_dict):
     return text
 
 
-class SyncSites:
+class SyncSites(object):
 
     """Work is done in here."""
 

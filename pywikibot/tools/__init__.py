@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 __version__ = '$Id$'
 
 import bz2
@@ -27,20 +27,48 @@ PY2 = (PYTHON_VERSION[0] == 2)
 
 if not PY2:
     import queue as Queue
-    basestring = (str,)
-    unicode = str
+
+    StringTypes = basestring = (str,)
+    UnicodeType = unicode = str
 else:
     import Queue
 
+    StringTypes = types.StringTypes
+    UnicodeType = types.UnicodeType
 
-def print_debug(msg, *args, **kwargs):
-    """Simple debug routine."""
-    print(msg)
+from pywikibot.logging import debug
 
 
-# This variable uses the builtin print function.
-# pywikibot updates it to use logging in bot.init_handlers()
-debug = print_debug
+if PYTHON_VERSION < (3, 5):
+    # although deprecated in 3 completely no message was emitted until 3.5
+    ArgSpec = inspect.ArgSpec
+    getargspec = inspect.getargspec
+else:
+    ArgSpec = collections.namedtuple('ArgSpec', ['args', 'varargs', 'keywords',
+                                                 'defaults'])
+
+    def getargspec(func):
+        """Python 3 implementation using inspect.signature."""
+        sig = inspect.signature(func)
+        args = []
+        defaults = []
+        varargs = None
+        kwargs = None
+        for p in sig.parameters.values():
+            if p.kind == inspect.Parameter.VAR_POSITIONAL:
+                varargs = p.name
+            elif p.kind == inspect.Parameter.VAR_KEYWORD:
+                kwargs = p.name
+            else:
+                args += [p.name]
+                if p.default != inspect.Parameter.empty:
+                    defaults += [p.default]
+        if defaults:
+            defaults = tuple(defaults)
+        else:
+            defaults = None
+        return ArgSpec(args, varargs, kwargs, defaults)
+
 
 _logger = 'tools'
 
@@ -386,6 +414,7 @@ class MediaWikiVersion(Version):
     Two versions are equal if their normal version and dev version are equal. A
     version is greater if the normal version or dev version is greater. For
     example:
+
         1.24 < 1.24.1 < 1.25wmf1 < 1.25alpha < 1.25beta1 < 1.25beta2
         < 1.25-rc-1 < 1.25-rc.2 < 1.25
 
@@ -393,7 +422,7 @@ class MediaWikiVersion(Version):
     """
 
     MEDIAWIKI_VERSION = re.compile(
-        r'^(\d+(?:\.\d+)+)(wmf(\d+)|alpha|beta(\d+)|-?rc\.?(\d+)|.*)?$')
+        r'^(\d+(?:\.\d+)+)(-?wmf\.?(\d+)|alpha|beta(\d+)|-?rc\.?(\d+)|.*)?$')
 
     @classmethod
     def from_generator(cls, generator):
@@ -421,10 +450,10 @@ class MediaWikiVersion(Version):
         elif version_match.group(2) == 'alpha':
             self._dev_version = (1, )
         else:
-            assert 'wmf' not in version_match.group(2)
-            assert 'alpha' not in version_match.group(2)
-            assert 'beta' not in version_match.group(2)
-            assert 'rc' not in version_match.group(2)
+            for handled in ('wmf', 'alpha', 'beta', 'rc'):
+                # if any of those pops up here our parser has failed
+                assert handled not in version_match.group(2), \
+                    'Found "{0}" in "{1}"'.format(handled, version_match.group(2))
             if version_match.group(2):
                 debug('Additional unused version part '
                       '"{0}"'.format(version_match.group(2)),
@@ -757,9 +786,12 @@ def filter_unique(iterable, container=None, key=None, add=None):
             add = container_setitem
 
     for item in iterable:
-        if (key(item) if key else item) not in container:
-            add(item)
-            yield item
+        try:
+            if (key(item) if key else item) not in container:
+                add(item)
+                yield item
+        except StopIteration:
+            return
 
 
 class CombinedError(KeyError, IndexError):
@@ -825,24 +857,27 @@ class SelfCallString(SelfCallMixin, str):
     """Unicode string with SelfCallMixin."""
 
 
-class DequeGenerator(collections.deque):
+class IteratorNextMixin(collections.Iterator):
+
+    """Backwards compatibility for Iterators."""
+
+    if PY2:
+
+        def next(self):
+            """Python 2 next."""
+            return self.__next__()
+
+
+class DequeGenerator(IteratorNextMixin, collections.deque):
 
     """A generator that allows items to be added during generating."""
 
-    def __iter__(self):
-        """Return the object which will be iterated."""
-        return self
-
-    def next(self):
+    def __next__(self):
         """Python 3 iterator method."""
         if len(self):
             return self.popleft()
         else:
             raise StopIteration
-
-    def __next__(self):
-        """Python 3 iterator method."""
-        return self.next()
 
 
 class ContextManagerWrapper(object):
@@ -854,9 +889,12 @@ class ContextManagerWrapper(object):
     used as a context manager in with-statements. In such statements the value
     set via 'as' is directly the wrapped object. For example:
 
-     wrapped = ContextManagerWrapper(an_object)
-     with wrapped as another_object:
-         assert(another_object is an_object)
+    >>> class Wrapper(object):
+    ...     def close(self): pass
+    >>> an_object = Wrapper()
+    >>> wrapped = ContextManagerWrapper(an_object)
+    >>> with wrapped as another_object:
+    ...      assert another_object is an_object
 
     It does not subclass the object though, so isinstance checks will fail
     outside a with-statement.
@@ -884,23 +922,32 @@ class ContextManagerWrapper(object):
         setattr(self._wrapped, name, value)
 
 
-def open_compressed(filename, use_extension=False):
+def open_archive(filename, mode='rb', use_extension=True):
     """
     Open a file and uncompress it if needed.
 
     This function supports bzip2, gzip and 7zip as compression containers. It
     uses the packages available in the standard library for bzip2 and gzip so
     they are always available. 7zip is only available when a 7za program is
-    available.
+    available and only supports reading from it.
 
     The compression is either selected via the magic number or file ending.
 
     @param filename: The filename.
     @type filename: str
     @param use_extension: Use the file extension instead of the magic number
-        to determine the type of compression (default False).
+        to determine the type of compression (default True). Must be True when
+        writing or appending.
     @type use_extension: bool
-    @raises ValueError: When 7za is not available.
+    @param mode: The mode in which the file should be opened. It may either be
+        'r', 'rb', 'a', 'ab', 'w' or 'wb'. All modes open the file in binary
+        mode. It defaults to 'rb'.
+    @type mode: string
+    @raises ValueError: When 7za is not available or the opening mode is unknown
+        or it tries to write a 7z archive.
+    @raises FileNotFoundError: When the filename doesn't exist and it tries
+        to read from it or it tries to determine the compression algorithm (or
+        IOError on Python 2).
     @raises OSError: When it's not a 7z archive but the file extension is 7z.
         It is also raised by bz2 when its content is invalid. gzip does not
         immediately raise that error but only on reading it.
@@ -916,11 +963,18 @@ def open_compressed(filename, use_extension=False):
         else:
             return wrapped
 
+    if mode in ('r', 'a', 'w'):
+        mode += 'b'
+    elif mode not in ('rb', 'ab', 'wb'):
+        raise ValueError('Invalid mode: "{0}"'.format(mode))
+
     if use_extension:
         # if '.' not in filename, it'll be 1 character long but otherwise
         # contain the period
         extension = filename[filename.rfind('.'):][1:]
     else:
+        if mode != 'rb':
+            raise ValueError('Magic number detection only when reading')
         with open(filename, 'rb') as f:
             magic_number = f.read(8)
         if magic_number.startswith(b'BZh'):
@@ -933,10 +987,13 @@ def open_compressed(filename, use_extension=False):
             extension = ''
 
     if extension == 'bz2':
-        return wrap(bz2.BZ2File(filename), 1)
+        return wrap(bz2.BZ2File(filename, mode), 1)
     elif extension == 'gz':
-        return wrap(gzip.open(filename), 0)
+        return wrap(gzip.open(filename, mode), 0)
     elif extension == '7z':
+        if mode != 'rb':
+            raise NotImplementedError('It is not possible to write a 7z file.')
+
         try:
             process = subprocess.Popen(['7za', 'e', '-bd', '-so', filename],
                                        stdout=subprocess.PIPE,
@@ -955,7 +1012,7 @@ def open_compressed(filename, use_extension=False):
             else:
                 return process.stdout
     else:
-        # assume it's an uncompressed XML file
+        # assume it's an uncompressed file
         return open(filename, 'rb')
 
 
@@ -1304,7 +1361,7 @@ def remove_last_args(arg_names):
     original function requests one and arg_names contain one name will result
     in an error, because the function got called with 2 parameters.
 
-    The decorated function may not use *args or **kwargs.
+    The decorated function may not use C{*args} or C{**kwargs}.
 
     @param arg_names: The names of all arguments.
     @type arg_names: iterable; for the most explanatory message it should
@@ -1330,9 +1387,9 @@ def remove_last_args(arg_names):
             """
             name = obj.__full_name__
             depth = get_wrapper_depth(wrapper) + 1
-            args, varargs, kwargs, _ = inspect.getargspec(wrapper.__wrapped__)
+            args, varargs, kwargs, _ = getargspec(wrapper.__wrapped__)
             if varargs is not None and kwargs is not None:
-                raise ValueError(u'{1} may not have * or ** args.'.format(
+                raise ValueError('{0} may not have * or ** args.'.format(
                     name))
             deprecated = set(__kw) & set(arg_names)
             if len(__args) > len(args):
@@ -1429,7 +1486,7 @@ class ModuleDeprecationWrapper(types.ModuleType):
             module = sys.modules[module]
         super(ModuleDeprecationWrapper, self).__setattr__('_deprecated', {})
         super(ModuleDeprecationWrapper, self).__setattr__('_module', module)
-        super(ModuleDeprecationWrapper, self).__setattr__('__doc__', module.__doc__)
+        self.__dict__.update(module.__dict__)
 
         if __debug__:
             sys.modules[module.__name__] = self
@@ -1448,6 +1505,8 @@ class ModuleDeprecationWrapper(types.ModuleType):
         @type replacement: any
         @param replacement_name: The name of the new replaced value. Required
             if C{replacement} is not None and it has no __name__ attribute.
+            If it contains a '.', it will be interpreted as a Python dotted
+            object name, and evaluated when the deprecated object is needed.
         @type replacement_name: str
         @param warning_message: The warning to display, with positional
             variables: {0} = module, {1} = attribute name, {2} = replacement.
@@ -1484,6 +1543,7 @@ class ModuleDeprecationWrapper(types.ModuleType):
 
     def __setattr__(self, attr, value):
         """Set the value of the wrapped module."""
+        self.__dict__[attr] = value
         setattr(self._module, attr, value)
 
     def __getattr__(self, attr):
@@ -1495,4 +1555,24 @@ class ModuleDeprecationWrapper(types.ModuleType):
                  DeprecationWarning, 2)
             if self._deprecated[attr][1]:
                 return self._deprecated[attr][1]
+            elif '.' in self._deprecated[attr][0]:
+                try:
+                    package_name = self._deprecated[attr][0].split('.', 1)[0]
+                    module = __import__(package_name)
+                    context = {package_name: module}
+                    replacement = eval(self._deprecated[attr][0], context)
+                    self._deprecated[attr] = (
+                        self._deprecated[attr][0],
+                        replacement,
+                        self._deprecated[attr][2]
+                    )
+                    return replacement
+                except Exception:
+                    pass
         return getattr(self._module, attr)
+
+
+@deprecated('open_archive()')
+def open_compressed(filename, use_extension=False):
+    """DEPRECATED: Open a file and uncompress it if needed."""
+    return open_archive(filename, use_extension=use_extension)

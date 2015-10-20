@@ -10,12 +10,13 @@ groups of wikis on the same topic in different languages.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
 
 import datetime
+import hashlib
 import itertools
 import os
 import re
@@ -37,6 +38,7 @@ from pywikibot.tools import (
     redirect_func, issue_deprecation_warning,
     manage_wrapping, MediaWikiVersion, first_upper, normalize_username,
     merge_unique_dicts,
+    PY2,
 )
 from pywikibot.comms.http import get_authentication
 from pywikibot.tools.ip import is_IP
@@ -492,6 +494,10 @@ class NamespacesDict(Mapping, SelfCallMixin):
         """Create new dict using the given namespaces."""
         super(NamespacesDict, self).__init__()
         self._namespaces = namespaces
+        self._namespace_names = {}
+        for namespace in self._namespaces.values():
+            for name in namespace:
+                self._namespace_names[name.lower()] = namespace
 
     def __iter__(self):
         """Iterate over all namespaces."""
@@ -545,7 +551,22 @@ class NamespacesDict(Mapping, SelfCallMixin):
         @type name: basestring
         @return: Namespace or None
         """
-        return self._lookup_name(name, self._namespaces)
+        name = Namespace.normalize_name(name)
+        if name is False:
+            return None
+        return self.lookup_normalized_name(name.lower())
+
+    def lookup_normalized_name(self, name):
+        """
+        Find the Namespace for a name also checking aliases.
+
+        The name has to be normalized and must be lower case.
+
+        @param name: Name of the namespace.
+        @type name: basestring
+        @return: Namespace or None
+        """
+        return self._namespace_names.get(name)
 
     # Temporary until Namespace.lookup_name can be removed
     @staticmethod
@@ -880,7 +901,8 @@ class BaseSite(ComparableMixin):
 
     def __repr__(self):
         """Return internal representation."""
-        return 'Site("%s", "%s")' % (self.code, self.family.name)
+        return '{0}("{1}", "{2}")'.format(
+            self.__class__.__name__, self.code, self.family)
 
     def __hash__(self):
         """Return hashable key."""
@@ -892,9 +914,8 @@ class BaseSite(ComparableMixin):
 
     def validLanguageLinks(self):
         """Return list of language codes that can be used in interwiki links."""
-        nsnames = [name for name in self.namespaces.values()]
         return [lang for lang in self.languages()
-                if first_upper(lang) not in nsnames]
+                if self.namespaces.lookup_normalized_name(lang) is None]
 
     def _interwiki_urls(self):
         site_paths = [self.path()] * 3
@@ -907,9 +928,9 @@ class BaseSite(ComparableMixin):
         """
         Return the site for a corresponding interwiki prefix.
 
-        @raise SiteDefinitionError: if the url given in the interwiki table
+        @raises SiteDefinitionError: if the url given in the interwiki table
             doesn't match any of the existing families.
-        @raise KeyError: if the prefix is not an interwiki prefix.
+        @raises KeyError: if the prefix is not an interwiki prefix.
         """
         return self._interwikimap[prefix].site
 
@@ -925,7 +946,7 @@ class BaseSite(ComparableMixin):
         @type site: L{BaseSite}
         @return: The interwiki prefixes
         @rtype: list (guaranteed to be not empty)
-        @raise KeyError: if there is no interwiki prefix for that site.
+        @raises KeyError: if there is no interwiki prefix for that site.
         """
         assert site is not None, 'Site must not be None'
         prefixes = set()
@@ -944,9 +965,9 @@ class BaseSite(ComparableMixin):
         link. So if that link also contains an interwiki link it does follow
         it as long as it's a local link.
 
-        @raise SiteDefinitionError: if the url given in the interwiki table
+        @raises SiteDefinitionError: if the url given in the interwiki table
             doesn't match any of the existing families.
-        @raise KeyError: if the prefix is not an interwiki prefix.
+        @raises KeyError: if the prefix is not an interwiki prefix.
         """
         return self._interwikimap[prefix].local
 
@@ -1089,7 +1110,7 @@ class BaseSite(ComparableMixin):
         # arbitrary stuff, then a wikilink. The wikilink may contain
         # a label, although this is not useful.
         return re.compile(r'\s*#%(pattern)s\s*:?\s*\[\[(.+?)(?:\|.*?)?\]\]'
-                          % locals(),
+                          % {'pattern': pattern},
                           re.IGNORECASE | re.UNICODE | re.DOTALL)
 
     def sametitle(self, title1, title2):
@@ -1550,7 +1571,7 @@ class Siteinfo(Container):
         @type expiry: int/float (days), L{datetime.timedelta}, False (never)
         @return: The gathered property
         @rtype: various
-        @raise KeyError: If the key is not a valid siteinfo property and the
+        @raises KeyError: If the key is not a valid siteinfo property and the
             get_default option is set to False.
         @see: L{_get_siteinfo}
         """
@@ -1712,6 +1733,15 @@ class TokenWallet(object):
         return self._tokens.__repr__()
 
 
+class RemovedSite(BaseSite):
+
+    """Site removed from a family."""
+
+    def __init__(self, code, fam, user=None, sysop=None):
+        """Constructor."""
+        super(RemovedSite, self).__init__(code, fam, user, sysop)
+
+
 class NonMWAPISite(BaseSite):
 
     """API interface to non MediaWiki sites."""
@@ -1856,13 +1886,16 @@ class APISite(BaseSite):
         # This checks expiry in kwargs and not kwargs['parameters'] so it won't
         # create a CachedRequest when there is an expiry in an API parameter
         # and kwargs here are actually in parameters mode.
-        if 'expiry' in kwargs:
+        if 'expiry' in kwargs and kwargs['expiry'] is not None:
             return api.CachedRequest
         else:
             return api.Request
 
     def _request(self, **kwargs):
         """Create a request by forwarding all parameters directly."""
+        if 'expiry' in kwargs and kwargs['expiry'] is None:
+            del kwargs['expiry']
+
         return self._request_class(kwargs)(site=self, **kwargs)
 
     def _simple_request(self, **kwargs):
@@ -1993,7 +2026,7 @@ class APISite(BaseSite):
 
         Also logs out of the global account if linked to the user.
 
-        @raise APIError: Logout is not available when OAuth enabled.
+        @raises APIError: Logout is not available when OAuth enabled.
         """
         if self.is_oauth_token_available():
             pywikibot.warning('Using OAuth suppresses logout function')
@@ -2312,32 +2345,37 @@ class APISite(BaseSite):
     def list_to_text(self, args):
         """Convert a list of strings into human-readable text.
 
-        The MediaWiki message 'and' is used as separator
+        The MediaWiki messages 'and' and 'word-separator' are used as separator
         between the last two arguments.
-        If present, other arguments are joined using a comma.
+        If more than two arguments are given, other arguments are
+        joined using MediaWiki message 'comma-separator'.
 
         @param args: text to be expanded
-        @type args: iterable
+        @type args: iterable of unicode
 
         @return: unicode
         """
+        NEEDED_MW_MESSAGES = ('and', 'comma-separator', 'word-separator')
         if not args:
             return u''
+        if PY2 and any(isinstance(arg, str) for arg in args):
+            issue_deprecation_warning('arg of type str', 'type unicode', 2)
+
         args = [unicode(e) for e in args]
-        msgs = {
-            'and': ',',
-            'comma-separator': ', ',
-            'word-separator': ' '
-        }
         try:
-            self.mediawiki_messages(list(msgs.keys()))
+            msgs = self.mediawiki_messages(NEEDED_MW_MESSAGES)
         except KeyError:
-            pass
-        for msg in msgs:
-            try:
-                msgs[msg] = self.mediawiki_message(msg)
-            except KeyError:
-                pass
+            raise NotImplementedError(
+                'MediaWiki messages missing: {0}'.format(NEEDED_MW_MESSAGES))
+
+        if MediaWikiVersion(self.version()) < MediaWikiVersion('1.16'):
+            for key, value in msgs.items():
+                if key == 'and' and value == ',&#32;and':
+                    # v1.14 defined and as ',&#32;and'; fixed in v1.15
+                    msgs['and'] = ' and'
+                else:
+                    msgs[key] = pywikibot.html2unicode(value)
+
         concat = msgs['and'] + msgs['word-separator']
         return msgs['comma-separator'].join(args[:-2] + [concat.join(args[-2:])])
 
@@ -2880,10 +2918,10 @@ class APISite(BaseSite):
         @return: redirect target of page
         @rtype: BasePage
 
-        @raise IsNotRedirectPage: page is not a redirect
-        @raise RuntimeError: no redirects found
-        @raise CircularRedirect: page is a circular redirect
-        @raise InterwikiRedirectPage: the redirect target is
+        @raises IsNotRedirectPage: page is not a redirect
+        @raises RuntimeError: no redirects found
+        @raises CircularRedirect: page is a circular redirect
+        @raises InterwikiRedirectPage: the redirect target is
             on another site
         """
         if not self.page_isredirect(page):
@@ -2895,7 +2933,6 @@ class APISite(BaseSite):
         query = self._simple_request(
             action='query',
             prop='info',
-            inprop=['protection', 'talkid', 'subjectid'],
             titles=title,
             redirects=True)
         result = query.submit()
@@ -2964,7 +3001,7 @@ class APISite(BaseSite):
         return page._redirtarget
 
     def preloadpages(self, pagelist, groupsize=50, templates=False,
-                     langlinks=False):
+                     langlinks=False, pageprops=False):
         """Return a generator to a list of preloaded pages.
 
         Note that [at least in current implementation] pages may be iterated
@@ -2987,6 +3024,8 @@ class APISite(BaseSite):
                 props += '|templates'
             if langlinks:
                 props += '|langlinks'
+            if pageprops:
+                props += '|pageprops'
             rvgen = api.PropertyGenerator(props, site=self)
             rvgen.set_maximum_items(-1)  # suppress use of "rvlimit" parameter
             if len(pageids) == len(sublist):
@@ -3509,7 +3548,7 @@ class APISite(BaseSite):
                     excluded_namespaces.add(14)
 
                 if namespaces:
-                    if excluded_namespaces.intersect(namespaces):
+                    if excluded_namespaces.intersection(namespaces):
                         raise ValueError(
                             'incompatible namespaces %r and member_type %r'
                             % (namespaces, member_type))
@@ -3636,13 +3675,15 @@ class APISite(BaseSite):
                 raise ValueError(
                     "loadrevisions: endid > startid with rvdir=False")
 
-        if self.has_extension('ProofreadPage'):
-            rvargs = {'type_arg': 'info|revisions|proofread'}
-        else:
-            rvargs = {'type_arg': 'info|revisions'}
+        rvargs = {'type_arg': 'info|revisions'}
 
+        rvargs['rvprop'] = ['ids', 'timestamp', 'flags', 'comment', 'user']
+        if MediaWikiVersion(self.version()) >= MediaWikiVersion('1.21'):
+            rvargs['rvprop'].append('contentmodel')
+        if MediaWikiVersion(self.version()) >= MediaWikiVersion('1.19'):
+            rvargs['rvprop'].append('sha1')
         if getText:
-            rvargs[u"rvprop"] = u"ids|flags|timestamp|user|comment|content|sha1"
+            rvargs['rvprop'].append('content')
             if section is not None:
                 rvargs[u"rvsection"] = unicode(section)
         if rollback:
@@ -3692,6 +3733,16 @@ class APISite(BaseSite):
             if "missing" in pagedata:
                 raise NoPage(page)
             api.update_page(page, pagedata, rvgen.props)
+
+    # TODO: expand support to other parameters of action=parse?
+    def get_parsed_page(self, page):
+        """Retrieve parsed text of the page using action=parse."""
+        req = self._simple_request(action='parse', page=page)
+        data = req.submit()
+        assert 'parse' in data, "API parse response lacks 'parse' key"
+        assert 'text' in data['parse'], "API parse response lacks 'text' key"
+        parsed_text = data['parse']['text']['*']
+        return parsed_text
 
     def pagelanglinks(self, page, step=None, total=None,
                       include_obsolete=False):
@@ -4001,8 +4052,8 @@ class APISite(BaseSite):
 
         Note that logevents only logs user blocks, while this method
         iterates all blocks including IP ranges.  The iterator yields dicts
-        containing keys corresponding to the block properties (see
-        https://www.mediawiki.org/wiki/API:Query_-_Lists for documentation).
+        containing keys corresponding to the block properties
+        (see L{https://www.mediawiki.org/wiki/API:Blocks}).
 
         @param starttime: start iterating at this Timestamp
         @param endtime: stop iterating at this Timestamp
@@ -4465,7 +4516,7 @@ class APISite(BaseSite):
                                 step=step, total=total)
         if get_text:
             drgen.request['drprop'] = (drgen.request['drprop'] +
-                                       "|content|token")
+                                       ['content', 'token'])
         if start is not None:
             drgen.request["drstart"] = start
         if end is not None:
@@ -4663,7 +4714,7 @@ class APISite(BaseSite):
         elif watch:
             pywikibot.warning(
                 u"editpage: Invalid watch value '%(watch)s' ignored."
-                % locals())
+                % {'watch': watch})
         req = self._simple_request(**params)
         while True:
             try:
@@ -5198,9 +5249,13 @@ class APISite(BaseSite):
         @param expiry: The length or date/time when the block expires. If
             'never', 'infinite', 'indefinite' it never does. If the value is
             given as a basestring it's parsed by php's strtotime function:
-                http://php.net/manual/en/function.strtotime.php
+
+                L{http://php.net/manual/en/function.strtotime.php}
+
             The relative format is described there:
-                http://php.net/manual/en/datetime.formats.relative.php
+
+                L{http://php.net/manual/en/datetime.formats.relative.php}
+
             It is recommended to not use a basestring if possible to be
             independent of the API.
         @type expiry: Timestamp/datetime (absolute),
@@ -5369,10 +5424,20 @@ class APISite(BaseSite):
                     raise
                 return self._uploaddisabled
 
+    def stash_info(self, file_key, props=False):
+        """Get the stash info for a given file key."""
+        if not props:
+            props = False
+        req = self._simple_request(
+            action='query', prop='stashimageinfo', siifilekey=file_key,
+            siiprop=props)
+        return req.submit()['query']['stashimageinfo'][0]
+
     @deprecate_arg('imagepage', 'filepage')
     def upload(self, filepage, source_filename=None, source_url=None,
                comment=None, text=None, watch=False, ignore_warnings=False,
-               chunk_size=0, _file_key=None, _offset=0, report_success=None):
+               chunk_size=0, _file_key=None, _offset=0, _verify_stash=None,
+               report_success=None):
         """Upload a file to the wiki.
 
         Either source_filename or source_url, but not both, must be provided.
@@ -5407,8 +5472,15 @@ class APISite(BaseSite):
         @type _file_key: str or None
         @param _offset: When file_key is not None this can be an integer to
             continue a previously canceled chunked upload. If False it treats
-            that as a finished upload. By default starts at 0.
+            that as a finished upload. If True it requests the stash info from
+            the server to determine the offset. By default starts at 0.
         @type _offset: int or bool
+        @param _verify_stash: Requests the SHA1 and file size uploaded and
+            compares it to the local file. Also verifies that _offset is
+            matching the file size if the _offset is an int. If _offset is False
+            if verifies that the file size match with the local file. If None
+            it'll verifies the stash when a file key and offset is given.
+        @type _verify_stash: bool or None
         @param report_success: If the upload was successful it'll print a
             success message and if ignore_warnings is set to False it'll
             raise an UploadWarning if a warning occurred. If it's None (default)
@@ -5423,7 +5495,7 @@ class APISite(BaseSite):
                 api.UploadWarning(
                     warning,
                     upload_warnings.get(warning, '%(msg)s') % {'msg': data},
-                    _file_key, response.get('offset', 0))
+                    _file_key, response['offset'])
                 for warning, data in response['warnings'].items()]
 
         upload_warnings = {
@@ -5479,7 +5551,76 @@ class APISite(BaseSite):
         token = self.tokens['edit']
         result = None
         file_page_title = filepage.title(withNamespace=False)
-        if _file_key and _offset is False:
+        file_size = None
+        offset = _offset
+        # make sure file actually exists
+        if source_filename:
+            if os.path.isfile(source_filename):
+                file_size = os.path.getsize(source_filename)
+            elif offset is not False:
+                raise ValueError("File '%s' does not exist."
+                                 % source_filename)
+
+        if source_filename and _file_key:
+            assert offset is False or file_size is not None
+            if _verify_stash is None:
+                _verify_stash = True
+            if (offset is not False and offset is not True and
+                    offset > file_size):
+                raise ValueError(
+                    'For the file key "{0}" the offset was set to {1} '
+                    'while the file is only {2} bytes large.'.format(
+                        _file_key, offset, file_size))
+
+        if _verify_stash or offset is True:
+            if not _file_key:
+                raise ValueError('Without a file key it cannot request the '
+                                 'stash information')
+            if not source_filename:
+                raise ValueError('Can request stash information only when '
+                                 'using a file name.')
+            props = ['size']
+            if _verify_stash:
+                props += ['sha1']
+            stash_info = self.stash_info(_file_key, props)
+            if offset is True:
+                offset = stash_info['size']
+            elif offset is False:
+                if file_size != stash_info['size']:
+                    raise ValueError(
+                        'For the file key "{0}" the server reported a size {1} '
+                        'while the file size is {2}'.format(
+                            _file_key, stash_info['size'], file_size))
+            elif offset is not False and offset != stash_info['size']:
+                raise ValueError(
+                    'For the file key "{0}" the server reported a size {1} '
+                    'while the offset was {2}'.format(
+                        _file_key, stash_info['size'], offset))
+
+            if _verify_stash:
+                # The SHA1 was also requested so calculate and compare it
+                assert 'sha1' in stash_info, \
+                    'sha1 not in stash info: {0}'.format(stash_info)
+                sha1 = hashlib.sha1()
+                bytes_to_read = offset
+                with open(source_filename, 'rb') as f:
+                    while bytes_to_read > 0:
+                        read_bytes = f.read(min(bytes_to_read, 1 << 20))
+                        assert read_bytes  # make sure we actually read bytes
+                        bytes_to_read -= len(read_bytes)
+                        sha1.update(read_bytes)
+                sha1 = sha1.hexdigest()
+                if sha1 != stash_info['sha1']:
+                    raise ValueError(
+                        'The SHA1 of {0} bytes of the stashed "{1}" is {2} '
+                        'while the local file is {3}'.format(
+                            offset, _file_key, stash_info['sha1'], sha1))
+
+        assert offset is not True
+        if _file_key and file_size is None:
+            assert offset is False
+
+        if _file_key and offset is False or offset == file_size:
             pywikibot.log('Reused already upload file using '
                           'filekey "{0}"'.format(_file_key))
             # TODO: Use sessionkey instead of filekey if necessary
@@ -5491,10 +5632,6 @@ class APISite(BaseSite):
             # TODO: Dummy value to allow also Unicode names, see bug 73661
             mime_filename = 'FAKE-NAME'
             # upload local file
-            # make sure file actually exists
-            if not os.path.isfile(source_filename):
-                raise ValueError("File '%s' does not exist."
-                                 % source_filename)
             throttle = True
             filesize = os.path.getsize(source_filename)
             chunked_upload = (chunk_size > 0 and chunk_size < filesize and
@@ -5505,7 +5642,6 @@ class APISite(BaseSite):
                         'action': 'upload', 'token': token, 'text': text,
                         'filename': file_page_title, 'comment': comment})
                 if chunked_upload:
-                    offset = _offset
                     if offset > 0:
                         pywikibot.log('Continuing upload from byte '
                                       '{0}'.format(offset))
@@ -5535,13 +5671,16 @@ class APISite(BaseSite):
                             if error.code == u'uploaddisabled':
                                 self._uploaddisabled = True
                             raise error
+                        _file_key = data['filekey']
                         if 'warnings' in data and not ignore_all_warnings:
                             if callable(ignore_warnings):
+                                if 'offset' not in data:
+                                    data['offset'] = True
                                 if ignore_warnings(create_warnings_list(data)):
                                     # Future warnings of this run can be ignored
                                     ignore_warnings = True
                                     ignore_all_warnings = True
-                                    offset = result.get('offset', 0)
+                                    offset = data['offset']
                                     continue
                                 else:
                                     return False
@@ -5549,7 +5688,6 @@ class APISite(BaseSite):
                             if 'offset' not in result:
                                 result['offset'] = 0
                             break
-                        _file_key = data['filekey']
                         throttle = False
                         if 'offset' in data:
                             new_offset = int(data['offset'])
@@ -5568,13 +5706,16 @@ class APISite(BaseSite):
                             final_request['filekey'] = _file_key
                             break
                 else:  # not chunked upload
-                    file_contents = f.read()
-                    filetype = (mimetypes.guess_type(source_filename)[0] or
-                                'application/octet-stream')
-                    final_request.mime_params = {
-                        'file': (file_contents, filetype.split('/'),
-                                 {'filename': mime_filename})
-                    }
+                    if _file_key:
+                        final_request['filekey'] = _file_key
+                    else:
+                        file_contents = f.read()
+                        filetype = (mimetypes.guess_type(source_filename)[0] or
+                                    'application/octet-stream')
+                        final_request.mime_params = {
+                            'file': (file_contents, filetype.split('/'),
+                                     {'filename': mime_filename})
+                        }
         else:
             # upload by URL
             if "upload_by_url" not in self.userinfo["rights"]:
@@ -5609,11 +5750,13 @@ class APISite(BaseSite):
                 _file_key = None
                 pywikibot.warning('No filekey defined.')
             if not report_success:
+                if 'offset' not in result:
+                    result['offset'] = True
                 if ignore_warnings(create_warnings_list(result)):
                     return self.upload(
                         filepage, source_filename, source_url, comment, text,
                         watch, True, chunk_size, _file_key,
-                        result.get('offset', False), report_success=False)
+                        result['offset'], report_success=False)
                 else:
                     return False
             warn('When ignore_warnings=False in APISite.upload will change '
@@ -5644,7 +5787,6 @@ class APISite(BaseSite):
     @deprecated_args(number='total',
                      repeat=None,
                      namespace="namespaces",
-                     returndict=None,
                      rcshow=None,
                      rc_show=None,
                      get_redirect=None)
@@ -6008,6 +6150,10 @@ class APISite(BaseSite):
         assert 'create' in self.protection_types(), \
             "'create' should be a valid protection type."
         if type == 'create':
+            if MediaWikiVersion(self.version()) < MediaWikiVersion('1.15'):
+                raise NotImplementedError(
+                    'protectedpages(type=create) requires MW 1.15+')
+
             return self._generator(
                 api.PageGenerator, type_arg='protectedtitles',
                 namespaces=namespaces, gptlevel=level, total=total)
@@ -6197,7 +6343,7 @@ class APISite(BaseSite):
         data = req.submit()
         return data['flow']['reply']['committed']['topic']
 
-    @must_be('user')
+    @must_be('user', 'flow-lock')
     @need_extension('Flow')
     def lock_topic(self, page, lock, reason):
         """Lock or unlock a Flow topic.
@@ -6220,6 +6366,164 @@ class APISite(BaseSite):
         data = req.submit()
         return data['flow']['lock-topic']['committed']['topic']
 
+    @must_be('user')
+    @need_extension('Flow')
+    def moderate_topic(self, page, state, reason):
+        """Moderate a Flow topic.
+
+        @param page: A Flow topic
+        @type page: Topic
+        @param state: The new moderation state
+        @type state: str
+        @param reason: The reason to moderate the topic
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        token = self.tokens['csrf']
+        params = {'action': 'flow', 'page': page, 'token': token,
+                  'submodule': 'moderate-topic', 'mtreason': reason,
+                  'mtmoderationState': state}
+        req = self._request(parameters=params, use_get=False)
+        data = req.submit()
+        return data['flow']['moderate-topic']['committed']['topic']
+
+    @must_be('user', 'flow-delete')
+    @need_extension('Flow')
+    def delete_topic(self, page, reason):
+        """Delete a Flow topic.
+
+        @param page: A Flow topic
+        @type page: Topic
+        @param reason: The reason to delete the topic
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        return self.moderate_topic(page, 'delete', reason)
+
+    @must_be('user', 'flow-hide')
+    @need_extension('Flow')
+    def hide_topic(self, page, reason):
+        """Hide a Flow topic.
+
+        @param page: A Flow topic
+        @type page: Topic
+        @param reason: The reason to hide the topic
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        return self.moderate_topic(page, 'hide', reason)
+
+    @must_be('user', 'flow-suppress')
+    @need_extension('Flow')
+    def suppress_topic(self, page, reason):
+        """Suppress a Flow topic.
+
+        @param page: A Flow topic
+        @type page: Topic
+        @param reason: The reason to suppress the topic
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        return self.moderate_topic(page, 'suppress', reason)
+
+    @must_be('user')
+    @need_extension('Flow')
+    def restore_topic(self, page, reason):
+        """Restore a Flow topic.
+
+        @param page: A Flow topic
+        @type page: Topic
+        @param reason: The reason to restore the topic
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        return self.moderate_topic(page, 'restore', reason)
+
+    @must_be('user')
+    @need_extension('Flow')
+    def moderate_post(self, post, state, reason):
+        """Moderate a Flow post.
+
+        @param post: A Flow post
+        @type post: Post
+        @param state: The new moderation state
+        @type state: str
+        @param reason: The reason to moderate the topic
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        page = post.page
+        uuid = post.uuid
+        token = self.tokens['csrf']
+        params = {'action': 'flow', 'page': page, 'token': token,
+                  'submodule': 'moderate-post', 'mpreason': reason,
+                  'mpmoderationState': state, 'mppostId': uuid}
+        req = self._request(parameters=params, use_get=False)
+        data = req.submit()
+        return data['flow']['moderate-post']['committed']['topic']
+
+    @must_be('user', 'flow-delete')
+    @need_extension('Flow')
+    def delete_post(self, post, reason):
+        """Delete a Flow post.
+
+        @param post: A Flow post
+        @type post: Post
+        @param reason: The reason to delete the post
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        return self.moderate_post(post, 'delete', reason)
+
+    @must_be('user', 'flow-hide')
+    @need_extension('Flow')
+    def hide_post(self, post, reason):
+        """Hide a Flow post.
+
+        @param post: A Flow post
+        @type post: Post
+        @param reason: The reason to hide the post
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        return self.moderate_post(post, 'hide', reason)
+
+    @must_be('user', 'flow-suppress')
+    @need_extension('Flow')
+    def suppress_post(self, post, reason):
+        """Suppress a Flow post.
+
+        @param post: A Flow post
+        @type post: Post
+        @param reason: The reason to suppress the post
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        return self.moderate_post(post, 'suppress', reason)
+
+    @must_be('user')
+    @need_extension('Flow')
+    def restore_post(self, post, reason):
+        """Restore a Flow post.
+
+        @param post: A Flow post
+        @type post: Post
+        @param reason: The reason to restore the post
+        @type reason: unicode
+        @return: Metadata returned by the API
+        @rtype: dict
+        """
+        return self.moderate_post(post, 'restore', reason)
+
     def watched_pages(self, sysop=False, force=False, step=None, total=None):
         """
         Return watchlist.
@@ -6234,13 +6538,10 @@ class APISite(BaseSite):
         self.login(sysop=sysop)
         if not total:
             total = pywikibot.config.special_page_limit
-        if force:
-            gen = api.PageGenerator(site=self, generator='watchlistraw',
-                                    step=step, gwrlimit=total)
-        else:
-            gen = api.PageGenerator(
-                site=self, generator='watchlistraw', step=step,
-                expiry=pywikibot.config.API_config_expiry, gwrlimit=total)
+        expiry = None if force else pywikibot.config.API_config_expiry
+        gen = api.PageGenerator(site=self, generator='watchlistraw',
+                                expiry=expiry,
+                                step=step, gwrlimit=total)
         return gen
 
     # aliases for backwards compatibility
@@ -6332,10 +6633,6 @@ class DataSite(APISite):
                     f.__doc__ = method.__doc__
                 return f
         return super(APISite, self).__getattr__(attr)
-
-    def __repr__(self):
-        """Return internal representation."""
-        return 'DataSite("%s", "%s")' % (self.code, self.family.name)
 
     @deprecated("pywikibot.PropertyPage")
     def _get_propertyitem(self, props, source, **params):
@@ -6736,6 +7033,7 @@ class DataSite(APISite):
         data = req.submit()
         return data
 
+    @must_be(group='user')
     def linkTitles(self, page1, page2, bot=True):
         """
         Link two pages together.
@@ -6762,6 +7060,7 @@ class DataSite(APISite):
         data = req.submit()
         return data
 
+    @must_be(group='user')
     def mergeItems(self, fromItem, toItem, **kwargs):
         """
         Merge two items together.
@@ -6785,6 +7084,7 @@ class DataSite(APISite):
         data = req.submit()
         return data
 
+    @must_be(group='user')
     def set_redirect_target(self, from_item, to_item):
         """
         Make a redirect to another item.
@@ -6804,6 +7104,7 @@ class DataSite(APISite):
         data = req.submit()
         return data
 
+    @must_be(group='user')
     def createNewItemFromPage(self, page, bot=True, **kwargs):
         """
         Create a new Wikibase item for a provided page.

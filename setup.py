@@ -5,11 +5,18 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 import itertools
 import os
 import sys
+
+try:
+    # Work around a traceback on Python < 2.7.4 and < 3.3.1
+    # http://bugs.python.org/issue15881#msg170215
+    import multiprocessing  # noqa: unused
+except ImportError:
+    pass
 
 PYTHON_VERSION = sys.version_info[:3]
 PY2 = (PYTHON_VERSION[0] == 2)
@@ -40,6 +47,7 @@ dependencies = ['requests']
 
 # the irc module has no Python 2.6 support since 10.0
 irc_dep = 'irc==8.9' if sys.version_info < (2, 7) else 'irc'
+csv_dep = 'unicodecsv!=0.14.0' if PYTHON_VERSION < (2, 7) else 'unicodecsv'
 
 extra_deps = {
     # Core library dependencies
@@ -53,12 +61,13 @@ extra_deps = {
     'rcstream': ['socketIO-client<0.6.1'],
     'security': ['requests[security]'],
     'mwoauth': ['mwoauth>=0.2.4'],
+    'html': ['BeautifulSoup4'],
 }
 
 if PY2:
     # Additional core library dependencies which are only available on Python 2
     extra_deps.update({
-        'csv': ['unicodecsv'],
+        'csv': [csv_dep],
         'MySQL': ['oursql'],
         'unicode7': ['unicodedata2>=7.0.0-2'],
     })
@@ -67,6 +76,7 @@ script_deps = {
     'flickrripper.py': ['Pillow'],
     'states_redirect.py': ['pycountry'],
     'weblinkchecker.py': ['memento_client>=0.5.1'],
+    'patrol.py': ['mwparserfromhell>=0.3.3'],
 }
 # flickrapi 1.4.4 installs a root logger in verbose mode; 1.4.5 fixes this.
 # The problem doesnt exist in flickrapi 2.x.
@@ -105,11 +115,6 @@ if PYTHON_VERSION < (2, 7, 3):
 
 if sys.version_info[0] == 2:
     if PY26:
-        # requests security extra includes pyOpenSSL. cryptography is the
-        # dependency of pyOpenSSL. 0.8.2 is the newest and compatible version
-        # for Python 2.6, which won't raise unexpected DeprecationWarning.
-        extra_deps['security'].append('cryptography<=0.8.2')
-
         script_deps['replicate_wiki.py'] = ['argparse']
         dependencies.append('future>=0.15.0')  # provides collections backports
 
@@ -136,9 +141,6 @@ if sys.version_info[0] == 2:
 
     script_deps['data_ingestion.py'] = extra_deps['csv']
 
-    # mwlib is not available for py3
-    script_deps['patrol'] = ['mwlib']
-
 # Some of the ui_tests depend on accessing the console window's menu
 # to set the console font and copy and paste, achieved using pywinauto
 # which depends on pywin32.
@@ -160,11 +162,6 @@ extra_deps.update(script_deps)
 # so all scripts can be compiled for script_tests, etc.
 if 'PYSETUP_TEST_EXTRAS' in os.environ:
     test_deps += list(itertools.chain(*(extra_deps.values())))
-    # mwlib requires 'pyparsing>=1.4.11,<1.6', which conflicts with
-    # pydot's requirement for pyparsing>=2.0.1.
-    if 'mwlib' in test_deps:
-        test_deps.remove('mwlib')
-
     if 'oursql' in test_deps and os.name == 'nt':
         test_deps.remove('oursql')  # depends on Cython
 
@@ -193,9 +190,9 @@ setup(
     maintainer='The Pywikibot team',
     maintainer_email='pywikibot@lists.wikimedia.org',
     license='MIT License',
-    packages=['pywikibot'] + [package
-                              for package in find_packages()
-                              if package.startswith('pywikibot.')],
+    packages=[str(name)] + [package
+                            for package in find_packages()
+                            if package.startswith('pywikibot.')],
     install_requires=dependencies,
     dependency_links=dependency_links,
     extras_require=extra_deps,

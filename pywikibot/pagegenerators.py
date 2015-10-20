@@ -18,7 +18,7 @@ These parameters are supported to specify which pages titles to print:
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -42,12 +42,12 @@ from pywikibot.tools import (
     issue_deprecation_warning,
     DequeGenerator,
     intersect_generators,
+    IteratorNextMixin,
     filter_unique,
 )
 
-from pywikibot import date, config, i18n
+from pywikibot import date, config, i18n, xmlreader
 from pywikibot.comms import http
-from pywikibot.data import wikidataquery as wdquery
 from pywikibot.exceptions import ArgumentDeprecationWarning
 
 if sys.version_info[0] > 2:
@@ -100,33 +100,43 @@ parameterHelp = u"""\
 
 -logevents        Work on articles that were on a specified Special:Log.
                   The value may be a comma separated list of three values:
+
                       logevent,username,total
+
                   To use the default value, use an empty string.
                   You have options for every type of logs given by the
                   log event parameter which could be one of the following:
+
                       block, protect, rights, delete, upload, move, import,
                       patrol, merge, suppress, review, stable, gblblock,
                       renameuser, globalauth, gblrights, abusefilter, newusers
+
                   It uses the default number of pages 10.
+
                   Examples:
+
                   -logevents:move gives pages from move log (usually redirects)
                   -logevents:delete,,20 gives 20 pages from deletion log
                   -logevents:protect,Usr gives pages from protect by user Usr
                   -logevents:patrol,Usr,20 gives 20 patroled pages by user Usr
+
                   In some cases it must be written as -logevents:"patrol,Usr,20"
 
 -namespaces       Filter the page generator to only yield pages in the
 -namespace        specified namespaces. Separate multiple namespace
 -ns               numbers or names with commas.
                   Examples:
+
                   -ns:0,2,4
                   -ns:Help,MediaWiki
+
                   If used with -newpages, -namepace/ns must be provided
                   before -newpages.
                   If used with -recentchanges, efficiency is improved if
                   -namepace/ns is provided before -recentchanges.
-                  If used with -titleregex, -namepace/ns must be provided
-                  before -titleregex and shall contain only one value.
+
+                  If used with -start, -namepace/ns shall contain only one
+                  value.
 
 -interwiki        Work on the given page and all equivalent pages in other
                   languages. This can, for example, be used to fight
@@ -172,13 +182,21 @@ parameterHelp = u"""\
                   "-start:Template:!" will make the bot work on all pages
                   in the template namespace.
 
+                  default value is start:!
+
 -prefixindex      Work on pages commencing with a common prefix.
 
 -step:n           When used with any other argument that specifies a set
                   of pages, only retrieve n pages at a time from the wiki
                   server.
 
--titleregex       Work on titles that match the given regular expression.
+-titleregex       A regular expression that needs to match the article title
+                  otherwise the page won't be returned.
+                  Multiple -titleregex:regexpr can be provided and the page will
+                  be returned if title is matched by any of the regexpr
+                  provided.
+                  Case insensitive regular expressions will be used and
+                  dot matches any character.
 
 -transcludes      Work on all pages that use a certain template.
                   Argument can also be given as "-transcludes:Title".
@@ -318,6 +336,7 @@ class GeneratorFactory(object):
         self.step = None
         self.limit = None
         self.articlefilter_list = []
+        self.titlefilter_list = []
         self.claimfilter_list = []
         self.intersect = False
         self._site = site
@@ -387,6 +406,9 @@ class GeneratorFactory(object):
                 if self.limit:
                     self.gens[i] = itertools.islice(self.gens[i], self.limit)
         if len(self.gens) == 0:
+            if self.titlefilter_list or self.articlefilter_list:
+                pywikibot.warning(
+                    'grep/titleregex filters specified but no generators.')
             return None
         elif len(self.gens) == 1:
             gensList = self.gens[0]
@@ -410,11 +432,15 @@ class GeneratorFactory(object):
                                                             claim[0], claim[1],
                                                             claim[2], claim[3])
 
+        if self.titlefilter_list:
+            dupfiltergen = RegexFilterPageGenerator(
+                dupfiltergen, self.titlefilter_list)
+
         if self.articlefilter_list:
-            return RegexBodyFilterPageGenerator(
+            dupfiltergen = RegexBodyFilterPageGenerator(
                 PreloadingGenerator(dupfiltergen), self.articlefilter_list)
-        else:
-            return dupfiltergen
+
+        return dupfiltergen
 
     def getCategoryGen(self, arg, recurse=False, content=False,
                        gen_func=None):
@@ -663,8 +689,7 @@ class GeneratorFactory(object):
         elif arg.startswith('-start'):
             firstPageTitle = arg[7:]
             if not firstPageTitle:
-                firstPageTitle = pywikibot.input(
-                    u'At which page do you want to start?')
+                firstPageTitle = '!'
             firstpagelink = pywikibot.Link(firstPageTitle,
                                            self.site)
             namespace = firstpagelink.namespace
@@ -730,18 +755,11 @@ class GeneratorFactory(object):
             gen = GoogleSearchPageGenerator(arg[8:])
         elif arg.startswith('-titleregex'):
             if len(arg) == 11:
-                regex = pywikibot.input(u'What page names are you looking for?')
+                self.titlefilter_list.append(pywikibot.input(
+                    'What page names are you looking for?'))
             else:
-                regex = arg[12:]
-            # partial workaround for bug T85389
-            # to use -namespace/ns with -newpages, -ns must be given
-            # before -titleregex, otherwise default namespace is 0.
-            # allpages only accepts a single namespace, and will raise a
-            # TypeError if self.namespaces contains more than one namespace.
-            namespaces = self.namespaces or 0
-            gen = RegexFilterPageGenerator(
-                self.site.allpages(namespace=namespaces),
-                regex)
+                self.titlefilter_list.append(arg[12:])
+            return True
         elif arg.startswith('-grep'):
             if len(arg) == 5:
                 self.articlefilter_list.append(pywikibot.input(
@@ -1677,7 +1695,7 @@ def DequePreloadingGenerator(generator, step=50):
     while True:
         page_count = min(len(generator), step)
         if not page_count:
-            raise StopIteration
+            return
 
         for page in PreloadingGenerator(generator, page_count):
             yield page
@@ -2138,7 +2156,7 @@ def LiveRCPageGenerator(site=None, total=None):
 # following classes just ported from version 1 without revision; not tested
 
 
-class YahooSearchPageGenerator:
+class YahooSearchPageGenerator(object):
 
     """
     Page generator using Yahoo! search results.
@@ -2197,13 +2215,14 @@ class YahooSearchPageGenerator:
                 yield page
 
 
-class GoogleSearchPageGenerator:
+class GoogleSearchPageGenerator(object):
 
     """
     Page generator using Google search results.
 
-    To use this generator, you need to install the package 'google'.
-    https://pypi.python.org/pypi/google
+    To use this generator, you need to install the package 'google':
+
+        L{https://pypi.python.org/pypi/google}
 
     This package has been available since 2010, hosted on github
     since 2012, and provided by pypi since 2013.
@@ -2230,6 +2249,7 @@ class GoogleSearchPageGenerator:
 
         The terms of service as at June 2014 give two conditions that
         may apply to use of search:
+
             1. Dont access [Google Services] using a method other than
                the interface and the instructions that [they] provide.
             2. Don't remove, obscure, or alter any legal notices
@@ -2321,6 +2341,62 @@ def MySQLPageGenerator(query, site=None):
             yield page
 
 
+class XMLDumpOldPageGenerator(IteratorNextMixin):
+
+    """Xml generator that yields Page objects with old text loaded."""
+
+    @deprecated_args(xmlFilename='filename', xmlStart='start')
+    def __init__(self, filename, start=None, namespaces=[], site=None,
+                 text_predicate=None):
+        """Constructor."""
+        # xmlFilename and xmlStart mapped to not break git blame
+        # use filename and start on new/changed lines
+        xmlFilename = filename
+        xmlStart = start
+
+        if text_predicate is None:
+            text_predicate = lambda text: True
+        self.text_predicate = text_predicate
+
+        self.xmlStart = xmlStart
+        self.namespaces = namespaces
+        self.skipping = bool(xmlStart)
+        self.site = site or pywikibot.Site()
+
+        dump = xmlreader.XmlDump(xmlFilename)
+        self.parser = dump.parse()
+
+    def __next__(self):
+        """Get next Page."""
+        while True:
+            try:
+                entry = next(self.parser)
+            except StopIteration:
+                raise
+            if self.skipping:
+                if entry.title != self.xmlStart:
+                    continue
+                self.skipping = False
+            page = pywikibot.Page(self.site, entry.title)
+            if not self.namespaces == []:
+                if page.namespace() not in self.namespaces:
+                    continue
+            if self.text_predicate(entry.text):
+                page.text = entry.text
+                return page
+
+
+class XMLDumpPageGenerator(XMLDumpOldPageGenerator):
+
+    """Xml generator that yields Page objects without text loaded."""
+
+    def __next__(self):
+        """Get next Page from dump and remove the text."""
+        page = super(XMLDumpPageGenerator, self).__next__()
+        del page.text
+        return page
+
+
 def YearPageGenerator(start=1, end=2050, site=None):
     """
     Year page generator.
@@ -2367,6 +2443,8 @@ def WikidataQueryPageGenerator(query, site=None):
     @type site: L{pywikibot.site.BaseSite}
 
     """
+    from pywikibot.data import wikidataquery as wdquery
+
     if site is None:
         site = pywikibot.Site()
     repo = site.data_repository()

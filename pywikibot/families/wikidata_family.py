@@ -1,9 +1,10 @@
 # -*- coding: utf-8  -*-
 """Family module for Wikidata."""
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
+from pywikibot import config
 from pywikibot import family
 
 # The Wikidata family
@@ -30,6 +31,15 @@ class Family(family.WikimediaFamily):
         self.doc_subpages = {
             '_default': ((u'/doc', ), ['wikidata']),
         }
+
+        # Disable cosmetic changes
+        config.cosmetic_changes_disable.update({
+            'wikidata': ('wikidata', 'test')
+        })
+
+    def interface(self, code):
+        """Return 'DataSite'."""
+        return 'DataSite'
 
     def shared_data_repository(self, code, transcluded=False):
         """

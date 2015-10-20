@@ -5,20 +5,28 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 __version__ = '$Id$'
 
 import os
 import sys
 
-from tests import _root_dir
+from pywikibot.tools import (
+    PY2,
+    PYTHON_VERSION,
+    StringTypes,
+)
+
+from tests import join_root_path
 from tests.aspects import unittest, DefaultSiteTestCase, MetaTestCaseClass, PwbTestCase
 from tests.utils import allowed_failure, execute_pwb, add_metaclass
 
-if sys.version_info[0] > 2:
-    basestring = (str, )
+scripts_path = join_root_path('scripts')
 
-scripts_path = os.path.join(_root_dir, 'scripts')
+if PY2:
+    TK_IMPORT = 'Tkinter'
+else:
+    TK_IMPORT = 'tkinter'
 
 # These dependencies are not always the package name which is in setup.py.
 # e.g. 'PIL.ImageTk' is a object provided by several different pypi packages,
@@ -26,21 +34,24 @@ scripts_path = os.path.join(_root_dir, 'scripts')
 # Here, it doesnt matter which pypi package was requested and installed.
 # Here, the name given to the module which will be imported is required.
 script_deps = {
+    'imagecopy': [TK_IMPORT],
+    'imagecopy_self': [TK_IMPORT],
     'script_wui': ['crontab', 'lua'],
     # Note: package 'lunatic-python' provides module 'lua'
 
     'flickrripper': ['flickrapi'],
+    'imageharvest': ['BeautifulSoup'],
     'match_images': ['PIL.ImageTk'],
+    'panoramiopicker': ['BeautifulSoup'],
     'states_redirect': ['pycountry'],
-    'patrol': ['mwlib'],
-    'weblinkchecker.py': ['memento_client'],
+    'patrol': ['mwparserfromhell'],
 }
 
-if sys.version_info < (2, 7):
+if PYTHON_VERSION < (2, 7):
     script_deps['replicate_wiki'] = ['argparse']
     script_deps['editarticle'] = ['argparse']
 
-if sys.version_info < (3, 0):
+if PY2:
     script_deps['data_ingestion'] = ['unicodecsv']
 
 
@@ -83,6 +94,7 @@ script_input = {
     'catall': 'q\n',  # q for quit
     'editarticle': 'Test page\n',
     'imageuncat': 'q\n',
+    'imageharvest': 'https://upload.wikimedia.org/wikipedia/commons/8/80/Wikipedia-logo-v2.svg\n\n',
     'interwiki': 'Test page that should not exist\n',
     'misspelling': 'q\n',
     'pagefromfile': 'q\n',
@@ -114,6 +126,7 @@ auto_run_script_list = [
     'patrol',
     'script_wui',
     'shell',
+    'standardize_interwiki',
     'states_redirect',
     'unusedfiles',
     'upload',
@@ -134,8 +147,10 @@ no_args_expected_results = {
     'imageuncat': 'WARNING: This script is primarily written for Wikimedia Commons',
     # script_input['interwiki'] above lists a title that should not exist
     'interwiki': 'does not exist. Skipping.',
+    'imageharvest': 'From what URL should I get the images',
     'login': 'Logged in on ',
     'pagefromfile': 'Please enter the file name',
+    'panoramiopicker': 'Panoramiopicker is a tool to transfer Panaramio ',
     'replace': 'Press Enter to use this automatic message',
     'script_wui': 'Pre-loading all relevant page contents',
     'shell': ('>>> ', 'Welcome to the'),
@@ -150,7 +165,7 @@ no_args_expected_results = {
     'upload': 'ERROR: Upload error',
 }
 
-if sys.version_info[0] > 2:
+if not PY2:
     no_args_expected_results['replicate_wiki'] = (
         'error: the following arguments are required: destination')
 else:
@@ -238,7 +253,7 @@ class TestScriptMeta(MetaTestCaseClass):
 
                 if self._results and script_name in self._results:
                     error = self._results[script_name]
-                    if isinstance(error, basestring):
+                    if isinstance(error, StringTypes):
                         stdout = None
                     else:
                         stdout, error = error
@@ -318,7 +333,7 @@ class TestScriptMeta(MetaTestCaseClass):
                 return test_skip_script
             return testScript
 
-        argument = dct['_argument']
+        argument = '-' + dct['_argument']
 
         for script_name in script_list:
             # force login to be the first, alphabetically, so the login
@@ -331,18 +346,14 @@ class TestScriptMeta(MetaTestCaseClass):
             else:
                 test_name = 'test_' + script_name
 
-            # it's explicitly using str() because __name__ must be str
-            test_name = str(test_name)
-            dct[test_name] = test_execution(script_name, ['-' + argument])
+            cls.add_method(dct, test_name,
+                           test_execution(script_name, [argument]),
+                           'Test running %s %s.' % (script_name, argument))
 
             if script_name in dct['_expected_failures']:
                 dct[test_name] = unittest.expectedFailure(dct[test_name])
             elif script_name in dct['_allowed_failures']:
                 dct[test_name] = allowed_failure(dct[test_name])
-
-            dct[test_name].__doc__ = 'Test running %s -%s.' % (script_name,
-                                                               argument)
-            dct[test_name].__name__ = test_name
 
             # Disable test by default in nosetests
             if script_name in unrunnable_script_list:

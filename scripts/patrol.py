@@ -5,9 +5,30 @@ The bot is meant to mark the edits based on info obtained by whitelist.
 
 This bot obtains a list of recent changes and newpages and marks the
 edits as patrolled based on a whitelist.
-See http://en.wikisource.org/wiki/User:JVbot/patrol_whitelist
 
-Commandline parameters that are supported:
+Whitelist format
+================
+
+The whitelist is formatted as a number of list entries. Any links outside of
+lists are ignored and can be used for documentation. In a list the first link
+must be to the username which should be white listed and any other link
+following is adding that page to the white list of that username. If the user
+edited a page on their white list it gets patrolled. It will also patrol pages
+which start with the mentioned link (e.g. [[foo]] will also patrol [[foobar]]).
+
+To avoid redlinks it's possible to use Special:PrefixIndex as a prefix so that
+it will list all pages which will be patrolled. The page after the slash will be
+used then.
+
+On Wikisource, it'll also check if the page is on the author namespace in which
+case it'll also patrol pages which are linked from that page.
+
+An example can be found at:
+
+https://en.wikisource.org/wiki/User:Wikisource-bot/patrol_whitelist
+
+Commandline parameters
+======================
 
 -namespace         Filter the page generator to only yield pages in
                     specified namespaces
@@ -22,14 +43,19 @@ Commandline parameters that are supported:
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
-import pywikibot
-from pywikibot import pagegenerators, Bot
-import mwlib.uparser  # used to parse the whitelist
-import mwlib.parser  # used to parse the whitelist
 import time
+
+from collections import defaultdict
+
+import mwparserfromhell
+
+import pywikibot
+
+from pywikibot import pagegenerators
+from pywikibot.bot import SingleSiteBot
 
 _logger = 'patrol'
 
@@ -40,7 +66,7 @@ docuReplacements = {
 }
 
 
-class PatrolBot(Bot):
+class PatrolBot(SingleSiteBot):
 
     """Bot marks the edits as patrolled based on info obtained by whitelist."""
 
@@ -49,7 +75,7 @@ class PatrolBot(Bot):
         'en': u'patrol_whitelist',
     }
 
-    def __init__(self, **kwargs):
+    def __init__(self, site=True, **kwargs):
         """
         Constructor.
 
@@ -67,10 +93,9 @@ class PatrolBot(Bot):
             'versionchecktime': 300,
             'autopatroluserns': False
         })
-        super(PatrolBot, self).__init__(**kwargs)
+        super(PatrolBot, self).__init__(site, **kwargs)
         self.recent_gen = True
         self.user = None
-        self.site = pywikibot.Site()
         if self.getOption('whitelist'):
             self.whitelist_pagename = self.getOption('whitelist')
         else:
@@ -90,6 +115,13 @@ class PatrolBot(Bot):
 
         self.rc_item_counter = 0  # counts how many items have been reviewed
         self.patrol_counter = 0  # and how many times an action was taken
+        for entry in self.site.siteinfo['specialpagealiases']:
+            if entry['realname'] == 'Prefixindex':
+                self._prefixindex_aliases = set(alias.lower()
+                                                for alias in entry['aliases'])
+                break
+        else:
+            raise RuntimeError('No alias for "prefixindex"')
 
     def load_whitelist(self):
         """Load most recent watchlist_page for further processing."""
@@ -135,17 +167,6 @@ class PatrolBot(Bot):
                 raise
             pywikibot.error(u'%s' % e)
 
-    @staticmethod
-    def add_to_tuples(tuples, user, page):
-        """Update tuples 'user' key by adding page."""
-        if pywikibot.config.verbose_output:
-            pywikibot.output(u"Adding %s:%s" % (user, page.title()))
-
-        if user in tuples:
-            tuples[user].append(page)
-        else:
-            tuples[user] = [page]
-
     def in_list(self, pagelist, title):
         """Check if title present in pagelist."""
         if pywikibot.config.verbose_output:
@@ -179,36 +200,37 @@ class PatrolBot(Bot):
 
     def parse_page_tuples(self, wikitext, user=None):
         """Parse page details apart from 'user:' for use."""
-        tuples = {}
+        whitelist = defaultdict(list)
 
-        # for any structure, the only first 'user:' page
-        # is registered as the user the rest of the structure
-        # refers to.
-        def process_children(obj, current_user):
-            pywikibot.debug(u'Parsing node: %s' % obj, _logger)
-            for c in obj.children:
-                temp = process_node(c, current_user)
-                if temp and not current_user:
-                    current_user = temp
+        current_user = False
+        parsed = mwparserfromhell.parse(wikitext)
+        for node in parsed.nodes:
+            if isinstance(node, mwparserfromhell.nodes.tag.Tag):
+                if node.tag == 'li':
+                    current_user = None
+            elif isinstance(node, mwparserfromhell.nodes.text.Text):
+                if node.endswith('\n'):
+                    current_user = False
+            elif isinstance(node, mwparserfromhell.nodes.wikilink.Wikilink):
+                if current_user is False:
+                    pywikibot.debug('Link to "{0}" ignored as outside '
+                                    'list'.format(node.title), _logger)
+                    continue
 
-        def process_node(obj, current_user):
-            # links are analysed; interwiki links are included because mwlib
-            # incorrectly calls 'Wikisource:' namespace links an interwiki
-            if isinstance(obj, mwlib.parser.NamespaceLink) or \
-               isinstance(obj, mwlib.parser.InterwikiLink) or \
-               isinstance(obj, mwlib.parser.ArticleLink):
+                obj = pywikibot.Link(node.title, self.site)
                 if obj.namespace == -1:
                     # the parser accepts 'special:prefixindex/' as a wildcard
                     # this allows a prefix that doesnt match an existing page
                     # to be a blue link, and can be clicked to see what pages
                     # will be included in the whitelist
-                    if obj.target[:20].lower() == 'special:prefixindex/':
-                        if len(obj.target) == 20:
+                    name, sep, prefix = obj.title.partition('/')
+                    if name.lower() in self._prefixindex_aliases:
+                        if not prefix:
                             if pywikibot.config.verbose_output:
                                 pywikibot.output(u'Whitelist everything')
                             page = ''
                         else:
-                            page = obj.target[20:]
+                            page = prefix
                             if pywikibot.config.verbose_output:
                                 pywikibot.output(u'Whitelist prefixindex hack '
                                                  u'for: %s' % page)
@@ -220,37 +242,32 @@ class PatrolBot(Bot):
                     # if a target user hasn't been found yet, and the link is
                     # 'user:'
                     # the user will be the target of subsequent rules
-                    page_prefix_len = len(self.site.namespace(2))
-                    current_user = obj.target[(page_prefix_len + 1):]
+                    current_user = obj.title
                     if pywikibot.config.verbose_output:
                         pywikibot.output(u'Whitelist user: %s' % current_user)
-                    return current_user
+                    continue
                 else:
-                    page = obj.target
+                    page = obj.canonical_title()
 
                 if current_user:
                     if not user or current_user == user:
                         if self.is_wikisource_author_page(page):
                             if pywikibot.config.verbose_output:
                                 pywikibot.output(u'Whitelist author: %s' % page)
-                            author = LinkedPagesRule(page)
-                            self.add_to_tuples(tuples, current_user, author)
+                            page = LinkedPagesRule(page)
                         else:
                             if pywikibot.config.verbose_output:
                                 pywikibot.output(u'Whitelist page: %s' % page)
-                            self.add_to_tuples(tuples, current_user, page)
+                        if pywikibot.config.verbose_output:
+                            pywikibot.output('Adding {0}:{1}'.format(current_user, page))
+                        whitelist[current_user].append(page)
                     elif pywikibot.config.verbose_output:
                         pywikibot.output(u'Discarding whitelist page for '
                                          u'another user: %s' % page)
                 else:
                     raise Exception(u'No user set for page %s' % page)
-            else:
-                process_children(obj, current_user)
 
-        root = mwlib.uparser.parseString(title='Not used', raw=wikitext)
-        process_children(root, None)
-
-        return tuples
+        return dict(whitelist)
 
     def is_wikisource_author_page(self, title):
         """Initialise author_ns if site family is 'wikisource' else pass."""

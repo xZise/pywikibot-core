@@ -11,7 +11,7 @@ mixin to show cache usage is included.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 __version__ = '$Id$'
 """
     TODO:
@@ -43,20 +43,23 @@ import pywikibot
 
 import pywikibot.config2 as config
 
-from pywikibot import log, Site
-from pywikibot.exceptions import ServerError, NoUsername
-from pywikibot.site import BaseSite
-from pywikibot.family import WikimediaFamily
+from pywikibot import Site
 from pywikibot.comms import http
 from pywikibot.data.api import Request as _original_Request
+from pywikibot.exceptions import ServerError, NoUsername
+from pywikibot.family import WikimediaFamily
+from pywikibot.site import BaseSite
+from pywikibot.tools import PY2, StringTypes
 
 import tests
 
 from tests import unittest, patch_request, unpatch_request
 from tests.utils import (
     add_metaclass, execute_pwb, DrySite, DryRequest,
-    WarningSourceSkipContextManager,
+    WarningSourceSkipContextManager, AssertAPIErrorContextManager,
 )
+
+OSWIN32 = (sys.platform == 'win32')
 
 
 class TestCaseBase(unittest.TestCase):
@@ -102,6 +105,21 @@ class TestCaseBase(unittest.TestCase):
         print(' expected failure ', end='')
         sys.stdout.flush()
         result.addSuccess(self)
+
+    def assertMethod(self, method, *args):
+        """Generic method assertion."""
+        if not method(*args):
+            self.fail('{0!r} ({1!r}) fails'.format(method, args))
+
+    def assertStringMethod(self, method, *args):
+        """
+        Generic string method assertion.
+
+        All args must be already converted to a string.
+        """
+        for arg in args:
+            self.assertIsInstance(arg, StringTypes)
+        self.assertMethod(method, *args)
 
     def assertPageInNamespaces(self, page, namespaces):
         """
@@ -245,65 +263,32 @@ class TestCaseBase(unittest.TestCase):
 
     assertPagelistTitles = assertPageTitlesEqual
 
+    def assertAPIError(self, code, info=None, callable_obj=None, *args,
+                       **kwargs):
+        """
+        Assert that a specific APIError wrapped around L{assertRaises}.
 
-class TestLoggingMixin(TestCaseBase):
+        If no callable object is defined and it returns a context manager, that
+        context manager will return the underlying context manager used by
+        L{assertRaises}. So it's possible to access the APIError by using it's
+        C{exception} attribute.
 
-    """Logging for test cases."""
-
-    @classmethod
-    def setUpClass(cls):
-        """Set up test class."""
-        cls._log_prefix = inspect.getfile(cls) + ':' + cls.__name__
-
-    def setUp(self):
-        """Set up each unit test."""
-        super(TestLoggingMixin, self).setUp()
-
-        if hasattr(self, '_outcomeForDoCleanups'):
-            # Python 3 unittest & nose
-            outcome = self._outcomeForDoCleanups
-        elif hasattr(self, '_outcome'):
-            # Python 3.4 nose
-            outcome = self._outcome
-        elif hasattr(self, '_resultForDoCleanups'):
-            # Python 2 unittest & nose
-            outcome = self._resultForDoCleanups
-        else:
-            return
-
-        self._previous_errors = len(outcome.errors)
-        # nose 3.4 doesn't has failures
-        if hasattr(outcome, 'failures'):
-            self._previous_failures = len(outcome.failures)
-
-        log('START ' + self._log_prefix + '.' + self._testMethodName)
-
-    def tearDown(self):
-        """Tear down test."""
-        super(TestLoggingMixin, self).tearDown()
-
-        if hasattr(self, '_outcomeForDoCleanups'):
-            # Python 3 unittest & nose
-            outcome = self._outcomeForDoCleanups
-        elif hasattr(self, '_outcome'):
-            # Python 3.4 nose
-            outcome = self._outcome
-        elif hasattr(self, '_resultForDoCleanups'):
-            # Python 2 unittest & nose
-            outcome = self._resultForDoCleanups
-        else:
-            return
-
-        if len(outcome.errors) > self._previous_errors:
-            status = ' NOT OK: ERROR'
-        # nose 3.4 doesn't has failures
-        elif (hasattr(outcome, 'failures') and
-                len(outcome.failures) > self._previous_failures):
-            status = ' NOT OK: FAILURE'
-        else:
-            status = ' OK'
-
-        log('END ' + self._log_prefix + '.' + self._testMethodName + status)
+        @param code: The code of the error which must have happened.
+        @type code: str
+        @param info: The info string of the error or None if no it shouldn't be
+            checked.
+        @type info: str or None
+        @param callable_obj: The object that will be tested. If None it returns
+            a context manager like L{assertRaises}.
+        @type callable_obj: callable
+        @param args: The positional arguments forwarded to the callable object.
+        @param kwargs: The keyword arguments forwared to the callable object.
+        @return: The context manager if callable_obj is None and None otherwise.
+        @rtype: None or context manager
+        """
+        msg = kwargs.pop('msg', None)
+        return AssertAPIErrorContextManager(
+            code, info, msg, self).handle(callable_obj, args, kwargs)
 
 
 class TestTimerMixin(TestCaseBase):
@@ -329,6 +314,25 @@ class TestTimerMixin(TestCaseBase):
             sys.stdout.flush()
 
         super(TestTimerMixin, self).tearDown()
+
+
+def require_modules(*required_modules):
+    """Require that the given list of modules can be imported."""
+    def test_requirement(obj):
+        """Test the requirement and return an optionally decorated object."""
+        missing = []
+        for required_module in required_modules:
+            try:
+                __import__(required_module, globals(), locals(), [], 0)
+            except ImportError:
+                missing += [required_module]
+        if missing:
+            return unittest.skip('{0} not installed'.format(
+                ', '.join(missing)))(obj)
+        else:
+            return obj
+
+    return test_requirement
 
 
 class DisableSiteMixin(TestCaseBase):
@@ -698,7 +702,14 @@ class MetaTestCaseClass(type):
                  for attr_name in dct
                  if attr_name.startswith('test')]
 
-        dct['abstract_class'] = len(tests) == 0
+        base_tests = []
+        if not tests:
+            for base in bases:
+                base_tests += [attr_name
+                               for attr_name, attr in base.__dict__.items()
+                               if attr_name.startswith('test') and callable(attr)]
+
+        dct['abstract_class'] = not tests and not base_tests
 
         # Bail out if it is the abstract class.
         if dct['abstract_class']:
@@ -757,8 +768,7 @@ class MetaTestCaseClass(type):
         if (('sites' not in dct and 'site' not in dct) or
                 ('site' in dct and not dct['site'])):
             # Prevent use of pywikibot.Site
-            if all(not issubclass(base, DisableSiteMixin) for base in bases):
-                bases = tuple([DisableSiteMixin] + list(bases))
+            bases = cls.add_base(bases, DisableSiteMixin)
 
             # 'pwb' tests will _usually_ require a site.  To ensure the
             # test class dependencies are declarative, this requires the
@@ -792,29 +802,29 @@ class MetaTestCaseClass(type):
         # The following section is only processed if the test uses sites.
 
         if 'dry' in dct and dct['dry']:
-            bases = tuple([DisconnectedSiteMixin] + list(bases))
+            bases = cls.add_base(bases, DisconnectedSiteMixin)
             del dct['net']
         else:
             dct['net'] = True
 
         if 'cacheinfo' in dct and dct['cacheinfo']:
-            bases = tuple([CacheInfoMixin] + list(bases))
+            bases = cls.add_base(bases, CacheInfoMixin)
 
         if 'cached' in dct and dct['cached']:
-            bases = tuple([ForceCacheMixin] + list(bases))
+            bases = cls.add_base(bases, ForceCacheMixin)
 
         if 'net' in dct and dct['net']:
-            bases = tuple([CheckHostnameMixin] + list(bases))
+            bases = cls.add_base(bases, CheckHostnameMixin)
         else:
             assert not hostnames, 'net must be True with hostnames defined'
 
         if 'write' in dct and dct['write']:
             if 'user' not in dct:
                 dct['user'] = True
-            bases = tuple([SiteWriteMixin] + list(bases))
+            bases = cls.add_base(bases, SiteWriteMixin)
 
         if ('user' in dct and dct['user']) or ('sysop' in dct and dct['sysop']):
-            bases = tuple([RequireUserMixin] + list(bases))
+            bases = cls.add_base(bases, RequireUserMixin)
 
         for test in tests:
             test_func = dct[test]
@@ -837,9 +847,9 @@ class MetaTestCaseClass(type):
 
             # create test methods processed by unittest
             for (key, sitedata) in dct['sites'].items():
-                test_name = test + '_' + key
-
-                dct[test_name] = wrap_method(key, sitedata, dct[test])
+                test_name = test + '_' + key.replace('-', '_')
+                cls.add_method(dct, test_name,
+                               wrap_method(key, sitedata, dct[test]))
 
                 if key in dct.get('expected_failures', []):
                     dct[test_name] = unittest.expectedFailure(dct[test_name])
@@ -848,9 +858,31 @@ class MetaTestCaseClass(type):
 
         return super(MetaTestCaseClass, cls).__new__(cls, name, bases, dct)
 
+    @staticmethod
+    def add_base(bases, subclass):
+        """Return a tuple of bases with the subclasses added if not already."""
+        if not any(issubclass(base, subclass) for base in bases):
+            bases = (subclass, ) + bases
+        return bases
+
+    @staticmethod
+    def add_method(dct, test_name, method, doc=None, doc_suffix=None):
+        """Add a method to a dictionary and set its name and documention."""
+        dct[test_name] = method
+        # it's explicitly using str() because __name__ must be str
+        dct[test_name].__name__ = str(test_name)
+        if doc_suffix:
+            if not doc:
+                doc = method.__doc__
+            assert doc[-1] == '.'
+            doc = doc[:-1] + ' ' + doc_suffix + '.'
+
+        if doc:
+            dct[test_name].__doc__ = doc
+
 
 @add_metaclass
-class TestCase(TestTimerMixin, TestLoggingMixin, TestCaseBase):
+class TestCase(TestTimerMixin, TestCaseBase):
 
     """Run tests on pre-defined sites."""
 
@@ -1021,9 +1053,20 @@ class CapturingTestCase(TestCase):
         if not nested:
             self._patched = False
 
+    @contextmanager
+    def _delay_assertion(self, context, assertion, args, kwargs):
+        with self.disable_assert_capture():
+            with context as ctx:
+                yield ctx
+            self.after_assert(assertion, *args, **kwargs)
+
     def process_assert(self, assertion, *args, **kwargs):
-        """Handle the assertion."""
-        assertion(*args, **kwargs)
+        """Handle the assertion call."""
+        return assertion(*args, **kwargs)
+
+    def after_assert(self, assertion, *args, **kwargs):
+        """Handle after the assertion."""
+        pass
 
     def patch_assert(self, assertion):
         """Execute process_assert when the assertion is called."""
@@ -1031,7 +1074,12 @@ class CapturingTestCase(TestCase):
             assert self._patched is False
             self._patched = True
             try:
-                self.process_assert(assertion, *args, **kwargs)
+                context = self.process_assert(assertion, *args, **kwargs)
+                if hasattr(context, '__enter__'):
+                    return self._delay_assertion(context, assertion, args, kwargs)
+                else:
+                    self.after_assert(assertion, *args, **kwargs)
+                    return context
             finally:
                 self._patched = False
         return inner_assert
@@ -1337,7 +1385,7 @@ class PwbTestCase(TestCase):
         if 'PYWIKIBOT2_DIR' in os.environ:
             self.orig_pywikibot_dir = os.environ['PYWIKIBOT2_DIR']
         base_dir = pywikibot.config.base_dir
-        if sys.platform == 'win32' and sys.version_info[0] < 3:
+        if OSWIN32 and PY2:
             base_dir = str(base_dir)
         os.environ[str('PYWIKIBOT2_DIR')] = base_dir
 
@@ -1566,14 +1614,13 @@ class AutoDeprecationTestCase(CapturingTestCase, DeprecationTestCase):
     C{assertOneDeprecation}.
     """
 
-    def process_assert(self, assertion, *args, **kwargs):
+    def after_assert(self, assertion, *args, **kwargs):
         """Handle assertion and call C{assertOneDeprecation} after it."""
-        super(AutoDeprecationTestCase, self).process_assert(
+        super(AutoDeprecationTestCase, self).after_assert(
             assertion, *args, **kwargs)
         self.assertOneDeprecation()
 
     skip_list = DeprecationTestCase.skip_list + [
         CapturingTestCase.process_assert,
         CapturingTestCase.patch_assert,
-        process_assert,
     ]

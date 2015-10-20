@@ -45,7 +45,6 @@ Syntax example:
 #        [ shell (rev-id) -> output mit shell rev-id ]
 #        [ shell rev-id (als eindeutige job/task-config bzw. script) -> crontab ]
 #  @todo Bei jeder Botbearbeitung wird der Name des Auftraggebers vermerkt
-#  @todo (may be queue_security needed later in order to allow other 'super-users' too...)
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 #  Writing code in Wikipedia:
 #
@@ -60,7 +59,7 @@ Syntax example:
 #  ...
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -89,6 +88,7 @@ import crontab
 import pywikibot
 # pywikibot.botirc depends on https://pypi.python.org/pypi/irc
 import pywikibot.botirc
+from pywikibot.tools.formatter import color_format
 
 if sys.version_info[0] > 2:
     import _thread as thread
@@ -107,11 +107,6 @@ bot_config = {
     'ConfCSSoutput': u'User:DrTrigonBot/Simulation',
 
     'CRONMaxDelay': 5 * 60.0,       # check all ~5 minutes
-#    'queue_security':       ([u'DrTrigon', u'DrTrigonBot'], u'Bot: exec'),
-#    'queue_security':       ([u'DrTrigon'], u'Bot: exec'),
-
-    # supported and allowed bot scripts
-    # (at the moment all)
 
     # forbidden parameters
     # (at the moment none, but consider e.g. '-always' or allow it with '-simulate' only!)
@@ -126,7 +121,8 @@ class ScriptWUIBot(pywikibot.botirc.IRCBot):
     """WikiUserInterface bot."""
 
     def __init__(self, *arg):
-        pywikibot.output(u'\03{lightgreen}* Initialization of bot\03{default}')
+        pywikibot.output(color_format(
+            '{lightgreen}* Initialization of bot{default}'))
 
         pywikibot.botirc.IRCBot.__init__(self, *arg)
 

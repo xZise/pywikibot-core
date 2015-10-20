@@ -5,20 +5,19 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
-
-import sys
 
 import pywikibot
 
 from pywikibot import i18n, bot, plural
+from pywikibot.tools import StringTypes
 
-from tests.aspects import unittest, TestCase, DefaultSiteTestCase, PwbTestCase
-
-if sys.version_info[0] == 3:
-    basestring = (str, )
+from tests.aspects import (
+    unittest, TestCase, DefaultSiteTestCase, PwbTestCase,
+    AutoDeprecationTestCase,
+)
 
 
 class TestTranslate(TestCase):
@@ -130,7 +129,7 @@ class TWNTestCaseBase(TWNSetMessagePackageBase):
     @classmethod
     def setUpClass(cls):
         """Verify that the test translations are not empty."""
-        if not isinstance(cls.message_package, basestring):
+        if not isinstance(cls.message_package, StringTypes):
             raise TypeError('%s.message_package must be a package name'
                             % cls.__name__)
         # The call to set_messages_package below exists only to confirm
@@ -188,7 +187,7 @@ class TestTWTranslate(TWNTestCaseBase):
                           'en', 'test-no-english')
 
 
-class TestTWNTranslate(TWNTestCaseBase):
+class TestTWNTranslate(TWNTestCaseBase, AutoDeprecationTestCase):
 
     """Test {{PLURAL:}} support."""
 
@@ -308,10 +307,10 @@ class TestTWNTranslate(TWNTestCaseBase):
 
     def testAllParametersExist(self):
         """Test that all parameters are required when using a dict."""
-        with self.assertRaisesRegex(KeyError, repr(u'line')):
-            # all parameters must be inside twntranslate
-            i18n.twntranslate('de', 'test-multiple-plurals',
-                              {'line': 1, 'page': 1}) % {'action': u'Ändere'}
+        # all parameters must be inside twntranslate
+        self.assertEqual(i18n.twntranslate('de', 'test-multiple-plurals',
+                                           {'line': 1, 'page': 1}),
+                         'Bot: %(action)s %(line)s Zeile von einer Seite.')
 
     def test_fallback_lang(self):
         """
@@ -412,6 +411,36 @@ class MissingPackageTestCase(TWNSetMessagePackageBase,
                         fallback_prompt='dummy output')
         self.assertEqual(rv, 'dummy input')
         self.assertIn('dummy output: ', self.output_text)
+
+
+class TestExtractPlural(TestCase):
+
+    """Test extracting plurals from a dummy string."""
+
+    net = False
+
+    def test_standard(self):
+        """Test default usage using a dict and no specific plurals."""
+        self.assertEqual(
+            i18n._extract_plural('en', '{{PLURAL:foo|one|other}}', {'foo': 42}),
+            'other')
+        self.assertEqual(
+            i18n._extract_plural('en', '{{PLURAL:foo|one|other}}', {'foo': 1}),
+            'one')
+        self.assertEqual(
+            i18n._extract_plural('en', '{{PLURAL:foo|one|other}}', {'foo': 0}),
+            'other')
+
+    def test_specific(self):
+        """Test using a specific plural."""
+        self.assertEqual(
+            i18n._extract_plural('en', '{{PLURAL:foo|one|other|12=dozen}}',
+                                 {'foo': 42}),
+            'other')
+        self.assertEqual(
+            i18n._extract_plural('en', '{{PLURAL:foo|one|other|12=dozen}}',
+                                 {'foo': 12}),
+            'dozen')
 
 
 if __name__ == '__main__':

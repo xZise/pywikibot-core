@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 import os.path
 
@@ -643,14 +643,15 @@ def _load_file(filename):
     if os.path.exists(filename):
         # load binary, to let compile decode it according to the file header
         with open(filename, 'rb') as f:
-            exec(compile(f.read(), filename, 'exec'))
+            exec(compile(f.read(), filename, 'exec'), globals())
         return True
     else:
         return False
 
 #
 # Load the user fixes file.
-if _load_file(config.datafilepath('user-fixes.py')):
+filename = config.datafilepath('user-fixes.py')
+if _load_file(filename):
     user_fixes_loaded = True
 else:
     user_fixes_loaded = False

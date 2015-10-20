@@ -5,18 +5,20 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
 from collections import Iterable
-from pywikibot.site import Namespace, NamespacesDict
-from tests.aspects import unittest, TestCase, AutoDeprecationTestCase
 
-import sys
-if sys.version_info[0] > 2:
-    basestring = (str, )
-    unicode = str
+from pywikibot.site import Namespace, NamespacesDict
+from pywikibot.tools import (
+    PY2,
+    StringTypes as basestring,
+    UnicodeType as unicode,
+)
+
+from tests.aspects import unittest, TestCase, AutoDeprecationTestCase
 
 # Default namespaces which should work in any MW wiki
 _base_builtin_ns = {
@@ -126,7 +128,7 @@ class TestNamespaceObject(TestCase):
                       aliases=[u'Image', u'Immagine'], **kwargs)
 
         self.assertEqual(str(y), ':File:')
-        if sys.version_info[0] <= 2:
+        if PY2:
             self.assertEqual(unicode(y), u':ملف:')
         self.assertEqual(y.canonical_prefix(), ':File:')
         self.assertEqual(y.custom_prefix(), u':ملف:')
@@ -334,6 +336,30 @@ class TestNamespaceCollections(TestCase):
 
         self.assertEqual(len(namespaces),
                          len(positive_namespaces) + len(excluded_namespaces))
+
+
+class TestNamespacesDictLookupName(TestCase):
+
+    """Test NamespacesDict.lookup_name and lookup_normalized_name."""
+
+    net = False
+
+    def test_lookup_name(self):
+        """Test lookup_name."""
+        namespaces = builtin_NamespacesDict()
+        self.assertIs(namespaces.lookup_name('project'), namespaces[4])
+        self.assertIs(namespaces.lookup_name('PROJECT'), namespaces[4])
+        self.assertIs(namespaces.lookup_name('Project'), namespaces[4])
+        self.assertIs(namespaces.lookup_name('Project:'), namespaces[4])
+
+    def test_lookup_normalized_name(self):
+        """Test lookup_normalized_name."""
+        namespaces = builtin_NamespacesDict()
+        self.assertIs(namespaces.lookup_normalized_name('project'),
+                      namespaces[4])
+        self.assertIsNone(namespaces.lookup_normalized_name('PROJECT'))
+        self.assertIsNone(namespaces.lookup_normalized_name('Project'))
+        self.assertIsNone(namespaces.lookup_normalized_name('Project:'))
 
 
 class TestNamespacesDictGetItem(TestCase):

@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 """User interface for Win32 terminals."""
 #
-# (C) Pywikibot team, 2003-2013
+# (C) Pywikibot team, 2003-2015
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
 import re
 
-from pywikibot.userinterfaces import terminal_interface_base
+from pywikibot.userinterfaces import (
+    terminal_interface_base,
+    win32_unicode,
+)
 
 try:
     import ctypes
@@ -60,7 +63,7 @@ class Win32CtypesUI(Win32BaseUI):
     def __init__(self):
         """Constructor."""
         Win32BaseUI.__init__(self)
-        from .win32_unicode import stdin, stdout, stderr, argv
+        (stdin, stdout, stderr, argv) = win32_unicode.get_unicode_console()
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr

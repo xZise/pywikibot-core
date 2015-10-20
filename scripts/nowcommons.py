@@ -52,24 +52,26 @@ Please fix these if you are capable and motivated:
 # (C) Wikipedian, 2006-2007
 # (C) Siebrand Mazeland, 2007-2008
 # (C) xqt, 2010-2014
-# (C) Pywikibot team, 2006-2014
+# (C) Pywikibot team, 2006-2015
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
 
-import sys
 import re
+import sys
 import webbrowser
 
 import pywikibot
+
 from pywikibot import i18n, Bot
 from pywikibot import pagegenerators as pg
-import image
-from imagetransfer import nowCommonsMessage
+from pywikibot.tools.formatter import color_format
+
+from scripts.image import ImageRobot as ImageBot
 
 nowCommons = {
     '_default': [
@@ -251,8 +253,9 @@ class NowCommonsDeleteBot(Bot):
                     continue
                 url_local = x.group('urllocal')
                 url_commons = x.group('urlcommons')
-                pywikibot.output(u"\n\n>>> \03{lightpurple}%s\03{default} <<<"
-                                 % image_local)
+                pywikibot.output(color_format(
+                    '\n\n>>> {lightpurple}{0}{default} <<<',
+                    image_local))
                 pywikibot.output(u'Local: %s\nCommons: %s\n'
                                  % (url_local, url_commons))
                 webbrowser.open(url_local, 0, 1)
@@ -318,7 +321,7 @@ class NowCommonsDeleteBot(Bot):
 
     def run(self):
         commons = pywikibot.Site('commons', 'commons')
-        comment = i18n.translate(self.site, nowCommonsMessage, fallback=True)
+        comment = i18n.twtranslate(self.site, 'imagetransfer-nowcommons_notice')
 
         for page in self.getPageGenerator():
             if self.getOption('use_hash'):
@@ -343,38 +346,39 @@ class NowCommonsDeleteBot(Bot):
                     pywikibot.output(u'NowCommons template not found.')
                     continue
                 commonsImagePage = pywikibot.FilePage(commons, 'Image:%s'
-                                                       % filenameOnCommons)
-                if localImagePage.title(withNamespace=False) == \
-                 commonsImagePage.title(withNamespace=False) and self.getOption('use_hash'):
+                                                      % filenameOnCommons)
+                if (localImagePage.title(withNamespace=False) ==
+                        commonsImagePage.title(withNamespace=False) and
+                        self.getOption('use_hash')):
                     pywikibot.output(
                         u'The local and the commons images have the same name')
-                if localImagePage.title(withNamespace=False) != \
-                 commonsImagePage.title(withNamespace=False):
+                if (localImagePage.title(withNamespace=False) !=
+                        commonsImagePage.title(withNamespace=False)):
                     usingPages = list(localImagePage.usingPages())
                     if usingPages and usingPages != [localImagePage]:
-                        pywikibot.output(
-                            u'\"\03{lightred}%s\03{default}\" is still used in %i pages.'
-                            % (localImagePage.title(withNamespace=False),
-                               len(usingPages)))
+                        pywikibot.output(color_format(
+                            '"{lightred}{0}{default}" is still used in {1} pages.',
+                            localImagePage.title(withNamespace=False),
+                            len(usingPages)))
                         if self.getOption('replace') is True:
-                                pywikibot.output(
-                                    u'Replacing \"\03{lightred}%s\03{default}\" by \
-                                    \"\03{lightgreen}%s\03{default}\".'
-                                    % (localImagePage.title(withNamespace=False),
-                                       commonsImagePage.title(withNamespace=False)))
-                                oImageRobot = image.ImageRobot(
+                                pywikibot.output(color_format(
+                                    'Replacing "{lightred}{0}{default}" by '
+                                    '"{lightgreen}{1}{default}\".',
+                                    localImagePage.title(withNamespace=False),
+                                    commonsImagePage.title(withNamespace=False)))
+                                bot = ImageBot(
                                     pg.FileLinksGenerator(localImagePage),
                                     localImagePage.title(withNamespace=False),
                                     commonsImagePage.title(withNamespace=False),
                                     '', self.getOption('replacealways'),
                                     self.getOption('replaceloose'))
-                                oImageRobot.run()
+                                bot.run()
                                 # If the image is used with the urlname the
                                 # previous function won't work
-                                if len(list(pywikibot.FilePage(self.site,
-                                                                page.title()).usingPages())) > 0 and \
-                                                                self.getOption('replaceloose'):
-                                    oImageRobot = image.ImageRobot(
+                                is_used = bool(list(pywikibot.FilePage(
+                                    self.site, page.title()).usingPages(total=1)))
+                                if is_used and self.getOption('replaceloose'):
+                                    bot = ImageBot(
                                         pg.FileLinksGenerator(
                                             localImagePage),
                                         localImagePage.title(
@@ -383,7 +387,7 @@ class NowCommonsDeleteBot(Bot):
                                             withNamespace=False),
                                         '', self.getOption('replacealways'),
                                         self.getOption('replaceloose'))
-                                    oImageRobot.run()
+                                    bot.run()
                                 # refresh because we want the updated list
                                 usingPages = len(list(pywikibot.FilePage(
                                     self.site, page.title()).usingPages()))
@@ -398,9 +402,10 @@ class NowCommonsDeleteBot(Bot):
                             pywikibot.output(u'Please change them manually.')
                         continue
                     else:
-                        pywikibot.output(
-                            u'No page is using \"\03{lightgreen}%s\03{default}\" anymore.'
-                            % localImagePage.title(withNamespace=False))
+                        pywikibot.output(color_format(
+                            'No page is using "{lightgreen}{0}{default}" '
+                            'anymore.',
+                            localImagePage.title(withNamespace=False)))
                 commonsText = commonsImagePage.get()
                 if self.getOption('replaceonly') is False:
                     if sha1 == commonsImagePage.latest_file_info.sha1:
@@ -414,13 +419,13 @@ class NowCommonsDeleteBot(Bot):
                                 old versions are not worth keeping.""")
                             continue
                         if self.getOption('always') is False:
-                            pywikibot.output(
-                                u'\n\n>>>> Description on \03{lightpurple}%s\03{default} <<<<\n'
-                                % page.title())
+                            format_str = color_format(
+                                '\n\n>>>> Description on {lightpurple}%s'
+                                '{default} <<<<\n')
+                            pywikibot.output(format_str % page.title())
                             pywikibot.output(localImagePage.get())
-                            pywikibot.output(
-                                u'\n\n>>>> Description on \03{lightpurple}%s\03{default} <<<<\n'
-                                % commonsImagePage.title())
+                            pywikibot.output(format_str %
+                                             commonsImagePage.title())
                             pywikibot.output(commonsText)
                             if pywikibot.input_yn(
                                     u'Does the description on Commons contain '
@@ -454,10 +459,7 @@ def main(*args):
     options = {}
 
     for arg in pywikibot.handle_args(args):
-        if arg.startswith('-') and \
-        arg[1:] in ('always', 'replace', 'replaceloose', 'replaceonly'):
-            options[arg[1:]] = True
-        elif arg == '-replacealways':
+        if arg == '-replacealways':
             options['replace'] = True
             options['replacealways'] = True
         elif arg == '-hash':
@@ -466,6 +468,10 @@ def main(*args):
             pywikibot.warning(u"The '-autonomous' argument is DEPRECATED,"
                               u" use '-always' instead.")
             options['always'] = True
+        elif arg.startswith('-'):
+            if arg[1:] in ('always', 'replace', 'replaceloose', 'replaceonly'):
+                options[arg[1:]] = True
+
     bot = NowCommonsDeleteBot(**options)
     bot.run()
 

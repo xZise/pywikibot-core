@@ -114,7 +114,7 @@ This will move all pages in the category US to the category United States.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -122,7 +122,6 @@ __version__ = '$Id$'
 import os
 import re
 import pickle
-import bz2
 import sys
 
 import pywikibot
@@ -132,8 +131,9 @@ from pywikibot.bot import (
     MultipleSitesBot, IntegerOption, StandardOption, ContextOption,
 )
 from pywikibot.tools import (
-    deprecated_args, deprecated, ModuleDeprecationWrapper
+    deprecated_args, deprecated, ModuleDeprecationWrapper, open_archive
 )
+from pywikibot.tools.formatter import color_format
 
 if sys.version_info[0] > 2:
     basestring = (str, )
@@ -160,7 +160,7 @@ cfd_templates = {
 }
 
 
-class CategoryDatabase:
+class CategoryDatabase(object):
 
     """Temporary database saving pages and subcategories for each category.
 
@@ -183,11 +183,10 @@ class CategoryDatabase:
     def _load(self):
         if not self.is_loaded:
             try:
-                f = bz2.BZ2File(self.filename, 'r')
                 pywikibot.output(u'Reading dump from %s'
                                  % config.shortpath(self.filename))
-                databases = pickle.load(f)
-                f.close()
+                with open_archive(self.filename, 'rb') as f:
+                    databases = pickle.load(f)
                 # keys are categories, values are 2-tuples with lists as
                 # entries.
                 self.catContentDB = databases['catContentDB']
@@ -265,17 +264,16 @@ class CategoryDatabase:
         if self.is_loaded and (self.catContentDB or self.superclassDB):
             pywikibot.output(u'Dumping to %s, please wait...'
                              % config.shortpath(filename))
-            f = bz2.BZ2File(filename, 'w')
             databases = {
                 'catContentDB': self.catContentDB,
                 'superclassDB': self.superclassDB
             }
             # store dump to disk in binary format
-            try:
-                pickle.dump(databases, f, protocol=config.pickle_protocol)
-            except pickle.PicklingError:
-                pass
-            f.close()
+            with open_archive(filename, 'wb') as f:
+                try:
+                    pickle.dump(databases, f, protocol=config.pickle_protocol)
+                except pickle.PicklingError:
+                    pass
         else:
             try:
                 os.remove(filename)
@@ -769,7 +767,7 @@ class CategoryRemoveRobot(CategoryMoveRobot):
             pagesonly=pagesonly)
 
 
-class CategoryListifyRobot:
+class CategoryListifyRobot(object):
 
     """Create a list containing all of the members in a category."""
 
@@ -793,10 +791,10 @@ class CategoryListifyRobot:
         if self.subCats:
             setOfArticles = setOfArticles.union(set(self.cat.subcategories()))
         if not self.editSummary:
-            self.editSummary = i18n.twntranslate(self.site,
-                                                 'category-listifying',
-                                                 {'fromcat': self.cat.title(),
-                                                  'num': len(setOfArticles)})
+            self.editSummary = i18n.twtranslate(self.site,
+                                                'category-listifying',
+                                                {'fromcat': self.cat.title(),
+                                                 'num': len(setOfArticles)})
 
         listString = ""
         for article in setOfArticles:
@@ -894,10 +892,10 @@ class CategoryTidyRobot(pywikibot.Bot):
         pywikibot.output(u'')
         # Show the title of the page where the link was found.
         # Highlight the title in purple.
-        pywikibot.output(
-            u'Treating page \03{lightpurple}%s\03{default}, '
-            u'currently in \03{lightpurple}%s\03{default}'
-            % (article.title(), current_cat.title()))
+        pywikibot.output(color_format(
+            'Treating page {lightpurple}{0}{default}, '
+            'currently in {lightpurple}{1}{default}',
+            article.title(), current_cat.title()))
 
         # Determine a reasonable amount of context to print
         try:
@@ -985,7 +983,7 @@ class CategoryTidyRobot(pywikibot.Bot):
         self.move_to_category(page, self.cat, self.cat)
 
 
-class CategoryTreeRobot:
+class CategoryTreeRobot(object):
 
     """Robot to create tree overviews of the category structure.
 

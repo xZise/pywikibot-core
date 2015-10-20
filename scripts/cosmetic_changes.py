@@ -31,13 +31,14 @@ For further information see pywikibot/cosmetic_changes.py
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
 
 import pywikibot
-from pywikibot import i18n, pagegenerators, cosmetic_changes
+
+from pywikibot import config, cosmetic_changes, i18n, pagegenerators
 from pywikibot.bot import MultipleSitesBot, ExistingPageBot, NoRedirectPageBot
 
 
@@ -130,7 +131,7 @@ def main(*args):
 
     gen = genFactory.getCombinedGenerator()
     if gen:
-        if options.get('always') or pywikibot.input_yn(
+        if options.get('always') or config.simulate or pywikibot.input_yn(
                 warning + '\nDo you really want to continue?',
                 default=False, automatic_quit=False):
             site.login()

@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """Text editor class for your favourite editor."""
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 #
 # (C) Gerrit Holl, 2004
@@ -95,7 +95,8 @@ class TextEditor(object):
         @rtype: unicode or None
         """
         if config.editor:
-            tempFilename = '%s.%s' % (tempfile.mkstemp()[1],
+            handle, tempFilename = tempfile.mkstemp()
+            tempFilename = '%s.%s' % (tempFilename,
                                       config.editor_filename_extension)
             try:
                 with codecs.open(tempFilename, 'w',
@@ -113,6 +114,7 @@ class TextEditor(object):
                         newcontent = temp_file.read()
                     return newcontent
             finally:
+                os.close(handle)
                 os.unlink(tempFilename)
 
         if isinstance(gui, ImportError):

@@ -3,6 +3,7 @@
 Exception and warning classes used throughout the framework.
 
 Error: Base class, all exceptions should the subclass of this class.
+
   - NoUsername: Username is not in user-config.py, or it is invalid.
   - UserBlocked: Username or IP has been blocked
   - AutoblockUser: requested action on a virtual autoblock user not valid
@@ -16,10 +17,12 @@ Error: Base class, all exceptions should the subclass of this class.
   - UnknownExtension: Extension is not defined for this site
 
 SiteDefinitionError: Site loading problem
+
   - UnknownSite: Site does not exist in Family
   - UnknownFamily: Family is not registered
 
 PageRelatedError: any exception which is caused by an operation on a Page.
+
   - NoPage: Page does not exist
   - IsRedirectPage: Page is a redirect page
   - IsNotRedirectPage: Page is not a redirect page
@@ -31,6 +34,7 @@ PageRelatedError: any exception which is caused by an operation on a Page.
 
 PageSaveRelatedError: page exceptions within the save operation on a Page
 (alias: PageNotSaved).
+
   - SpamfilterError: MediaWiki spam filter detected a blacklisted URL
   - OtherPageSaveError: misc. other save related exception.
   - LockedPage: Page is locked
@@ -43,43 +47,49 @@ PageSaveRelatedError: page exceptions within the save operation on a Page
   - NoCreateError: parameter nocreate not allow page creation
 
 ServerError: a problem with the server.
+
   - FatalServerError: A fatal/non-recoverable server error
 
 WikiBaseError: any issue specific to Wikibase.
+
   - CoordinateGlobeUnknownException: globe is not implemented yet.
   - EntityTypeUnknownException: entity type is not available on the site.
 
 DeprecationWarning: old functionality replaced by new functionality
 
 PendingDeprecationWarning: problematic code which has not yet been
-    fully deprecated, possibly because a replacement is not available
+fully deprecated, possibly because a replacement is not available
 
 RuntimeWarning: problems developers should have fixed, and users need to
-    be aware of its status.
+be aware of its status.
+
   - tools._NotImplementedWarning: do not use
   - NotImplementedWarning: functionality not implemented
 
 UserWarning: warnings targetted at users
+
   - config2._ConfigurationDeprecationWarning: user configuration file problems
   - login._PasswordFileWarning: password file problems
   - ArgumentDeprecationWarning: command line argument problems
   - FamilyMaintenanceWarning: missing information in family definition
 """
 #
-# (C) Pywikibot team, 2008
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
-import sys
-
-from pywikibot.tools import UnicodeMixin, _NotImplementedWarning
-
-if sys.version_info[0] > 2:
-    unicode = str
+from pywikibot.tools import (
+    # __ to avoid conflict with ModuleDeprecationWrapper._deprecated
+    deprecated as __deprecated,
+    ModuleDeprecationWrapper as _ModuleDeprecationWrapper,
+    UnicodeMixin,
+    UnicodeType,
+    _NotImplementedWarning,
+)
 
 
 class NotImplementedWarning(_NotImplementedWarning):
@@ -149,7 +159,8 @@ class PageRelatedError(Error):
         self.site = page.site
 
         if '%(' in self.message and ')s' in self.message:
-            super(PageRelatedError, self).__init__(self.message % self.__dict__)
+            super(PageRelatedError, self).__init__(
+                self.message % self.__dict__)  # noqa: H501
         else:
             super(PageRelatedError, self).__init__(self.message % page)
 
@@ -171,7 +182,7 @@ class PageSaveRelatedError(PageRelatedError):  # noqa
     @property
     def args(self):
         """Expose args."""
-        return unicode(self)
+        return UnicodeType(self)
 
 
 class OtherPageSaveError(PageSaveRelatedError):
@@ -192,7 +203,7 @@ class OtherPageSaveError(PageSaveRelatedError):
     @property
     def args(self):
         """Expose args."""
-        return unicode(self.reason)
+        return UnicodeType(self.reason)
 
 
 class NoUsername(Error):
@@ -512,11 +523,7 @@ class EntityTypeUnknownException(WikiBaseError):
     pass
 
 
-import pywikibot.data.api
-import pywikibot.tools
-
-
-@pywikibot.tools.deprecated
+@__deprecated
 class DeprecatedPageNotFoundError(Error):
 
     """Page not found (deprecated)."""
@@ -524,7 +531,7 @@ class DeprecatedPageNotFoundError(Error):
     pass
 
 
-@pywikibot.tools.deprecated
+@__deprecated
 class _EmailUserError(UserRightsError, NotEmailableError):
 
     """Email related error."""
@@ -532,8 +539,12 @@ class _EmailUserError(UserRightsError, NotEmailableError):
     pass
 
 
-wrapper = pywikibot.tools.ModuleDeprecationWrapper(__name__)
-wrapper._add_deprecated_attr('UploadWarning', pywikibot.data.api.UploadWarning)
+wrapper = _ModuleDeprecationWrapper(__name__)
+wrapper._add_deprecated_attr(
+    'UploadWarning',
+    replacement_name='pywikibot.data.api.UploadWarning',
+    warning_message='pywikibot.exceptions.UploadWarning is deprecated; '
+                    'use APISite.upload with a warning handler instead.')
 wrapper._add_deprecated_attr('PageNotFound', DeprecatedPageNotFoundError,
                              warning_message='{0}.{1} is deprecated, and no '
                                              'longer used by pywikibot; use '

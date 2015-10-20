@@ -6,16 +6,17 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
 from pywikibot import interwiki_graph
 
-from tests.aspects import unittest, SiteAttributeTestCase
+from tests.aspects import unittest, require_modules, SiteAttributeTestCase
 from tests.utils import DryPage
 
 
+@require_modules('pydot')
 class TestWiktionaryGraph(SiteAttributeTestCase):
 
     """Tests for interwiki links to local sites."""
@@ -39,8 +40,6 @@ class TestWiktionaryGraph(SiteAttributeTestCase):
     @classmethod
     def setUpClass(cls):
         """Setup test class."""
-        if isinstance(interwiki_graph.pydot, ImportError):
-            raise unittest.SkipTest('pydot not installed')
         super(TestWiktionaryGraph, cls).setUpClass()
 
         cls.pages = {

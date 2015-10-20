@@ -76,7 +76,7 @@ and arguments can be:
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -85,6 +85,7 @@ import sys
 import datetime
 import pywikibot
 from pywikibot import i18n, xmlreader, Bot
+from pywikibot.tools.formatter import color_format
 
 if sys.version_info[0] > 2:
     basestring = (str, )
@@ -96,7 +97,7 @@ def space_to_underscore(link):
     return link.canonical_title().replace(' ', '_')
 
 
-class RedirectGenerator:
+class RedirectGenerator(object):
 
     """Redirect generator."""
 
@@ -406,8 +407,8 @@ class RedirectRobot(Bot):
         # Show the title of the page we're working on.
         # Highlight the title in purple.
         done = not self.getOption('delete')
-        pywikibot.output(u"\n\n>>> \03{lightpurple}%s\03{default} <<<"
-                         % redir_page.title())
+        pywikibot.output(color_format(
+            '\n\n>>> {lightpurple}{0}{default} <<<', redir_page.title()))
         try:
             targetPage = redir_page.getRedirectTarget()
         except pywikibot.IsNotRedirectPage:
@@ -507,7 +508,7 @@ class RedirectRobot(Bot):
                     pywikibot.output(u'Cannot fix or delete the broken redirect')
             except pywikibot.IsRedirectPage:
                 pywikibot.output(
-                    "Redirect target {{0}} is also a redirect! {{1}}".format(
+                    "Redirect target {0} is also a redirect! {1}".format(
                         targetPage.title(asLink=True),
                         "Won't delete anything."
                         if self.getOption('delete') else "Skipping."))
@@ -515,7 +516,7 @@ class RedirectRobot(Bot):
                 # we successfully get the target page, meaning that
                 # it exists and is not a redirect: no reason to touch it.
                 pywikibot.output(
-                    "Redirect target {{0}} does exist! {{1}}".format(
+                    "Redirect target {0} does exist! {1}".format(
                         targetPage.title(asLink=True),
                         "Won't delete anything."
                         if self.getOption('delete') else "Skipping."))
@@ -531,8 +532,8 @@ class RedirectRobot(Bot):
             redir = redir_name
         # Show the title of the page we're working on.
         # Highlight the title in purple.
-        pywikibot.output(u"\n\n>>> \03{lightpurple}%s\03{default} <<<"
-                         % redir.title())
+        pywikibot.output(color_format(
+            '\n\n>>> {lightpurple}{0}{default} <<<', redir.title()))
         newRedir = redir
         redirList = []  # bookkeeping to detect loops
         while True:

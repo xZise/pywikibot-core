@@ -54,7 +54,7 @@ or by adding a list to the given one:
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -65,33 +65,15 @@ from warnings import warn
 
 try:
     import stdnum.isbn as stdnum_isbn
-    scripts_isbn = None
 except ImportError:
     stdnum_isbn = None
-    # Old dependency
-    try:
-        import scripts.isbn as scripts_isbn
-    except ImportError:
-        scripts_isbn = None
 
 import pywikibot
 
-from pywikibot import config, textlib, pagegenerators
-from pywikibot.page import url2unicode
+from pywikibot import config, textlib
 from pywikibot.tools import deprecate_arg, first_lower, first_upper
 from pywikibot.tools import MediaWikiVersion
 
-
-warning = """
-ATTENTION: You can run this script as a stand-alone for testing purposes.
-However, the changes that are made are only minor, and other users
-might get angry if you fill the version histories and watchlists with such
-irrelevant changes. Some wikis prohibit stand-alone running."""
-
-docuReplacements = {
-    '&params;': pagegenerators.parameterHelp,
-    '&warning;': warning,
-}
 
 # This is from interwiki.py;
 # move it to family file and implement global instances
@@ -159,6 +141,20 @@ CANCEL_MATCH = 3
 
 def _format_isbn_match(match, strict=True):
     """Helper function to validate and format a single matched ISBN."""
+    scripts_isbn = None
+
+    if not stdnum_isbn:
+        # For backwards compatibility, if stdnum.isbn is not available
+        # attempt loading scripts.isbn as an alternative implementation.
+        try:
+            import scripts.isbn as scripts_isbn
+        except ImportError:
+            raise NotImplementedError(
+                'ISBN functionality not available.  Install stdnum package.')
+
+        warn('package stdnum.isbn not found; using scripts.isbn',
+             ImportWarning)
+
     isbn = match.group('code')
     if stdnum_isbn:
         try:
@@ -194,19 +190,11 @@ def _reformat_ISBNs(text, strict=True):
 
     @raises Exception: Invalid ISBN encountered when strict enabled
     """
-    if not stdnum_isbn:
-        if not scripts_isbn:
-            raise NotImplementedError(
-                'ISBN functionality not available.  Install stdnum package.')
-
-        warn('package stdnum.isbn not found; using scripts.isbn',
-             ImportWarning)
-
     return textlib.reformat_ISBNs(
         text, lambda match: _format_isbn_match(match, strict=strict))
 
 
-class CosmeticChangesToolkit:
+class CosmeticChangesToolkit(object):
 
     """Cosmetic changes toolkit."""
 
@@ -232,9 +220,11 @@ class CosmeticChangesToolkit:
             self.cleanUpSectionHeaders,
             self.putSpacesInLists,
             self.translateAndCapitalizeNamespaces,
-# FIXME:    self.translateMagicWords,
+            # FIXME: fix bugs and re-enable
+            # self.translateMagicWords,
             self.replaceDeprecatedTemplates,
-# FIXME:    self.resolveHtmlEntities,
+            # FIXME: fix bugs and re-enable
+            # self.resolveHtmlEntities,
             self.removeUselessSpaces,
             self.removeNonBreakingSpaceBeforePercent,
 
@@ -519,6 +509,7 @@ class CosmeticChangesToolkit:
                                              titleLength)
 
                     # Convert URL-encoded characters to unicode
+                    from pywikibot.page import url2unicode
                     titleWithSection = url2unicode(titleWithSection,
                                                    encodings=self.site)
 
@@ -626,13 +617,11 @@ class CosmeticChangesToolkit:
 
     def removeUselessSpaces(self, text):
         """Cleanup multiple or trailing spaces."""
-        multipleSpacesR = re.compile('  +')
-        spaceAtLineEndR = re.compile(' $')
         exceptions = ['comment', 'math', 'nowiki', 'pre', 'startspace', 'table']
         if self.site.sitename != 'wikipedia:cs':
             exceptions.append('template')
-        text = textlib.replaceExcept(text, multipleSpacesR, ' ', exceptions)
-        text = textlib.replaceExcept(text, spaceAtLineEndR, '', exceptions)
+        text = textlib.replaceExcept(text, r'(?m) +( |$)', r'\1', exceptions,
+                                     site=self.site)
         return text
 
     def removeNonBreakingSpaceBeforePercent(self, text):
@@ -705,27 +694,49 @@ class CosmeticChangesToolkit:
 
     # from fixes.py
     def fixSyntaxSave(self, text):
+        def replace_link(match):
+            replacement = '[[' + match.group('link')
+            if match.group('title'):
+                replacement += '|' + match.group('title')
+            return replacement + ']]'
+
         exceptions = ['nowiki', 'comment', 'math', 'pre', 'source',
                       'startspace']
         # link to the wiki working on
-        # TODO: disable this for difflinks and titled links,
-        # to prevent edits like this:
-        # https://de.wikipedia.org/w/index.php?title=Wikipedia%3aVandalismusmeldung&diff=103109563&oldid=103109271
-#        text = textlib.replaceExcept(text,
-#                                     r'\[https?://%s\.%s\.org/wiki/(?P<link>\S+)\s+(?P<title>.+?)\s?\]'
-#                                     % (self.site.code, self.site.family.name),
-#                                     r'[[\g<link>|\g<title>]]', exceptions)
-        # external link in double brackets
+        # Do not use the first entry as it is not actually a prefix
+        for suffix in self.site._interwiki_urls()[1:]:
+            http_url = self.site.base_url(suffix, 'http')
+            if self.site.protocol() == 'http':
+                https_url = None
+            else:
+                https_url = self.site.base_url(suffix, 'https')
+            # compare strings without the protocol, if they are empty support
+            # also no prefix (//en.wikipedia.org/…)
+            if http_url[4:] == https_url[5:]:
+                urls = ['(?:https?:)?' + re.escape(http_url[5:])]
+            else:
+                urls = [re.escape(url) for url in (http_url, https_url)
+                        if url is not None]
+            for url in urls:
+                # Only include links which don't include the separator as
+                # the wikilink won't support additional parameters
+                separator = '?'
+                if '?' in suffix:
+                    separator += '&'
+                # Match first a non space in the title to prevent that multiple
+                # spaces at the end without title will be matched by it
+                text = textlib.replaceExcept(
+                    text,
+                    r'\[\[?' + url + r'(?P<link>[^' + separator + r']+?)'
+                    r'(\s+(?P<title>[^\s].*?))?\s*\]\]?',
+                    replace_link, exceptions, site=self.site)
+        # external link in/starting with double brackets
         text = textlib.replaceExcept(
             text,
-            r'\[\[(?P<url>https?://[^\]]+?)\]\]',
-            r'[\g<url>]', exceptions)
-        # external link starting with double bracket
-        text = textlib.replaceExcept(text,
-                                     r'\[\[(?P<url>https?://.+?)\]',
-                                     r'[\g<url>]', exceptions)
-        # external link and description separated by a dash, with
-        # whitespace in front of the dash, so that it is clear that
+            r'\[\[(?P<url>https?://[^\]]+?)\]\]?',
+            r'[\g<url>]', exceptions, site=self.site)
+        # external link and description separated by a pipe, with
+        # whitespace in front of the pipe, so that it is clear that
         # the dash is not a legitimate part of the URL.
         text = textlib.replaceExcept(
             text,
@@ -744,18 +755,18 @@ class CosmeticChangesToolkit:
         return text
 
     def fixHtml(self, text):
+        def replace_header(match):
+            depth = int(match.group(1))
+            return r'{0} {1} {0}'.format('=' * depth, match.group(2))
+
         # Everything case-insensitive (?i)
         # Keep in mind that MediaWiki automatically converts <br> to <br />
         exceptions = ['nowiki', 'comment', 'math', 'pre', 'source',
                       'startspace']
-        text = textlib.replaceExcept(text, r'(?i)<b>(.*?)</b>', r"'''\1'''",
-                                     exceptions)
-        text = textlib.replaceExcept(text, r'(?i)<strong>(.*?)</strong>',
-                                     r"'''\1'''", exceptions)
-        text = textlib.replaceExcept(text, r'(?i)<i>(.*?)</i>', r"''\1''",
-                                     exceptions)
-        text = textlib.replaceExcept(text, r'(?i)<em>(.*?)</em>', r"''\1''",
-                                     exceptions)
+        text = textlib.replaceExcept(text, r'(?i)<(b|strong)>(.*?)</\1>',
+                                     r"'''\2'''", exceptions, site=self.site)
+        text = textlib.replaceExcept(text, r'(?i)<(i|em)>(.*?)</\1>',
+                                     r"''\2''", exceptions, site=self.site)
         # horizontal line without attributes in a single line
         text = textlib.replaceExcept(text, r'(?i)([\r\n])<hr[ /]*>([\r\n])',
                                      r'\1----\2', exceptions)
@@ -765,14 +776,11 @@ class CosmeticChangesToolkit:
                                      r'<hr \1 />',
                                      exceptions)
         # a header where only spaces are in the same line
-        for level in range(1, 7):
-            equals = '\\1%s \\2 %s\\3' % ("=" * level, "=" * level)
-            text = textlib.replaceExcept(
-                text,
-                r'(?i)([\r\n]) *<h%d> *([^<]+?) *</h%d> *([\r\n])'
-                % (level, level),
-                r'%s' % equals,
-                exceptions)
+        text = textlib.replaceExcept(
+            text,
+            r'(?i)(?<=[\r\n]) *<h([1-7])> *([^<]+?) *</h\1> *(?=[\r\n])',
+            replace_header,
+            exceptions)
         # TODO: maybe we can make the bot replace <p> tags with \r\n's.
         return text
 
@@ -806,21 +814,18 @@ class CosmeticChangesToolkit:
         exceptions = ['nowiki', 'comment', 'math', 'pre', 'source',
                       'startspace', 'gallery', 'hyperlink', 'interwiki', 'link']
         # change <number> ccm -> <number> cm³
-        text = textlib.replaceExcept(text, r'(\d)\s*&nbsp;ccm',
-                                     r'\1&nbsp;' + u'cm³', exceptions)
-        text = textlib.replaceExcept(text,
-                                     r'(\d)\s*ccm', r'\1&nbsp;' + u'cm³',
-                                     exceptions)
+        text = textlib.replaceExcept(text, r'(\d)\s*(?:&nbsp;)?ccm',
+                                     r'\1&nbsp;cm³', exceptions,
+                                     site=self.site)
         # Solve wrong Nº sign with °C or °F
         # additional exception requested on fr-wiki for this stuff
         pattern = re.compile(u'«.*?»', re.UNICODE)
         exceptions.append(pattern)
-        text = textlib.replaceExcept(text, r'(\d)\s*&nbsp;' + u'[º°]([CF])',
-                                     r'\1&nbsp;' + u'°' + r'\2', exceptions)
-        text = textlib.replaceExcept(text, r'(\d)\s*' + u'[º°]([CF])',
-                                     r'\1&nbsp;' + u'°' + r'\2', exceptions)
+        text = textlib.replaceExcept(text, r'(\d)\s*(?:&nbsp;)?[º°]([CF])',
+                                     r'\1&nbsp;°\2', exceptions, site=self.site)
         text = textlib.replaceExcept(text, u'º([CF])', u'°' + r'\1',
-                                     exceptions)
+                                     exceptions,
+                                     site=self.site)
         return text
 
     def fixArabicLetters(self, text):
@@ -864,12 +869,17 @@ class CosmeticChangesToolkit:
         text = textlib.replaceExcept(text, u',', u'،', exceptions)
         if self.site.code == 'ckb':
             text = textlib.replaceExcept(text,
-                                         u'\u0647([.\u060c_<\\]\\s])',
-                                         u'\u06d5\\1', exceptions)
-            text = textlib.replaceExcept(text, u'ه‌', u'ە', exceptions)
-            text = textlib.replaceExcept(text, u'ه', u'ھ', exceptions)
-        text = textlib.replaceExcept(text, u'ك', u'ک', exceptions)
-        text = textlib.replaceExcept(text, u'[ىي]', u'ی', exceptions)
+                                         '\u0647([.\u060c_<\\]\\s])',
+                                         '\u06d5\\1', exceptions,
+                                         site=self.site)
+            text = textlib.replaceExcept(text, 'ه\u200c', 'ە', exceptions,
+                                         site=self.site)
+            text = textlib.replaceExcept(text, 'ه', 'ھ', exceptions,
+                                         site=self.site)
+        text = textlib.replaceExcept(text, 'ك', 'ک', exceptions,
+                                     site=self.site)
+        text = textlib.replaceExcept(text, '[ىي]', 'ی', exceptions,
+                                     site=self.site)
 
         return text
 

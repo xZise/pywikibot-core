@@ -1,11 +1,58 @@
 # -*- coding: utf-8  -*-
-"""User-interface related functions for building bots."""
+"""
+User-interface related functions for building bots.
+
+This module supports several different bot classes which could be used in
+conjunction. Each bot should subclass at least one of these four classes:
+
+* L{BaseBot}: Basic bot class in case where the site is handled differently,
+  like working on two sites in parallel.
+
+* L{SingleSiteBot}: Bot class which should only be run on a single site. They
+  usually store site specific content and thus can't be easily run when the
+  generator returns a page on another site. It has a property C{site} which
+  can also be changed. If the generator returns a page of a different site
+  it'll skip that page.
+
+* L{MultipleSitesBot}: Bot class which supports to be run on multiple sites
+  without the need to manually initialize it every time. It is not possible to
+  set the C{site} property and it's deprecated to request it. Instead site of
+  the current page should be used. And out of C{run} that sit isn't defined.
+
+* L{Bot}: The previous base class which should be avoided. This class is mainly
+  used for bots which work with wikibase or together with an image repository.
+
+Additionally there is the L{CurrentPageBot} class which automatically sets the
+current page to the page treated. It is recommended to use this class and to
+use C{treat_page} instead of C{treat} and C{put_current} instead of C{userPut}.
+It by default subclasses the C{BaseBot} class.
+
+With L{CurrentPageBot} it's possible to subclass one of the following classes to
+filter the pages which are ultimately handled by C{treat_page}:
+
+* L{ExistingPageBot}: Only handle pages which do exist.
+* L{CreatingPageBot}: Only handle pages which do not exist.
+* L{RedirectPageBot}: Only handle pages which are redirect pages.
+* L{NoRedirectPageBot}: Only handle pages which are not redirect pages.
+* L{FollowRedirectPageBot}: If the generator returns a redirect page it'll
+  follow the redirect and instead work on the redirected class.
+
+It is possible to combine filters by subclassing multiple of them. They are
+new-style classes so when a class is first subclassing L{ExistingPageBot} and
+then L{FollowRedirectPageBot} it will also work on pages which do not exist when
+a redirect pointed to that. If the order is inversed it'll first follow them and
+then check whether they exist.
+
+Additionally there is the L{AutomaticTWSummaryBot} which subclasses
+L{CurrentPageBot} and automatically defines the summary when C{put_current} is
+used.
+"""
 #
 # (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -31,12 +78,6 @@ from warnings import warn
 
 _logger = "bot"
 
-# logging levels
-from logging import DEBUG, INFO, WARNING, ERROR, CRITICAL
-STDOUT = 16
-VERBOSE = 18
-INPUT = 25
-
 import pywikibot
 
 from pywikibot import backports
@@ -45,10 +86,22 @@ from pywikibot import daemonize
 from pywikibot import version
 from pywikibot.bot_choice import (  # noqa: unused imports
     Option, StandardOption, NestedOption, IntegerOption, ContextOption,
-    ListOption, HighlightContextOption,
+    ListOption, OutputProxyOption, HighlightContextOption,
     ChoiceException, QuitKeyboardInterrupt,
 )
+from pywikibot.logging import CRITICAL, ERROR, INFO, WARNING  # noqa: unused
+from pywikibot.logging import DEBUG, INPUT, STDOUT, VERBOSE
+from pywikibot.logging import (
+    add_init_routine,
+    debug, error, exception, log, output, stdout, warning,
+)
+from pywikibot.logging import critical  # noqa: unused
 from pywikibot.tools import deprecated, deprecated_args, PY2, PYTHON_VERSION
+from pywikibot.tools._logging import (
+    LoggingFormatter as _LoggingFormatter,
+    RotatingFileHandler,
+)
+from pywikibot.tools.formatter import color_format
 
 if not PY2:
     unicode = str
@@ -86,119 +139,13 @@ class UnhandledAnswer(Exception):
         self.stop = stop
 
 
-# Logging module configuration
-class RotatingFileHandler(logging.handlers.RotatingFileHandler):
+class LoggingFormatter(_LoggingFormatter):
 
-    """Modified RotatingFileHandler supporting unlimited amount of backups."""
+    """Logging formatter that uses config.console_encoding."""
 
-    def doRollover(self):
-        """
-        Modified naming system for logging files.
-
-        Overwrites the default Rollover renaming by inserting the count number
-        between file name root and extension. If backupCount is >= 1, the system
-        will successively create new files with the same pathname as the base
-        file, but with inserting ".1", ".2" etc. in front of the filename
-        suffix. For example, with a backupCount of 5 and a base file name of
-        "app.log", you would get "app.log", "app.1.log", "app.2.log", ...
-        through to "app.5.log". The file being written to is always "app.log" -
-        when it gets filled up, it is closed and renamed to "app.1.log", and if
-        files "app.1.log", "app.2.log" etc. already exist, then they are
-        renamed to "app.2.log", "app.3.log" etc. respectively.
-        If backupCount is == -1 do not rotate but create new numbered filenames.
-        The newest file has the highest number except some older numbered files
-        where deleted and the bot was restarted. In this case the ordering
-        starts from the lowest available (unused) number.
-
-        """
-        if self.stream:
-            self.stream.close()
-            self.stream = None
-        root, ext = os.path.splitext(self.baseFilename)
-        if self.backupCount > 0:
-            for i in range(self.backupCount - 1, 0, -1):
-                sfn = "%s.%d%s" % (root, i, ext)
-                dfn = "%s.%d%s" % (root, i + 1, ext)
-                if os.path.exists(sfn):
-                    if os.path.exists(dfn):
-                        os.remove(dfn)
-                    os.rename(sfn, dfn)
-            dfn = "%s.1%s" % (root, ext)
-            if os.path.exists(dfn):
-                os.remove(dfn)
-            os.rename(self.baseFilename, dfn)
-        elif self.backupCount == -1:
-            if not hasattr(self, '_lastNo'):
-                self._lastNo = 1
-            while True:
-                fn = "%s.%d%s" % (root, self._lastNo, ext)
-                self._lastNo += 1
-                if not os.path.exists(fn):
-                    break
-            os.rename(self.baseFilename, fn)
-        self.mode = 'w'
-        self.stream = self._open()
-
-    def format(self, record):
-        """Strip trailing newlines before outputting text to file."""
-        # Warnings captured from the warnings system are not processed by
-        # logoutput(), so the 'context' variables are missing.
-        # The same context details are provided by Python 3.X, but need to
-        # be extracted from the warning message for Python <= 2.7.
-        if record.name == 'py.warnings' and 'caller_file' not in record.__dict__:
-            assert len(record.args) == 1, \
-                'Arguments for record is not correctly set'
-            msg = record.args[0]
-
-            if PY2:
-                record.pathname = msg.partition(':')[0]
-                record.lineno = msg.partition(':')[2].partition(':')[0]
-                record.module = msg.rpartition('/')[2].rpartition('.')[0]
-            else:
-                assert msg.startswith(record.pathname + ':'), \
-                    'Record argument should start with path'
-
-            record.__dict__['caller_file'] = record.pathname
-            record.__dict__['caller_name'] = record.module
-            record.__dict__['caller_line'] = record.lineno
-
-            # Remove the path and the line number, and strip the extra space
-            msg = msg.partition(':')[2].partition(':')[2].lstrip()
-            record.args = (msg,)
-
-        text = logging.handlers.RotatingFileHandler.format(self, record)
-        return text.rstrip("\r\n")
-
-
-class LoggingFormatter(logging.Formatter):
-
-    """Format LogRecords for output to file.
-
-    This formatter *ignores* the 'newline' key of the LogRecord, because
-    every record written to a file must end with a newline, regardless of
-    whether the output to the user's console does.
-
-    """
-
-    def formatException(self, ei):
-        r"""
-        Convert exception trace to unicode if necessary.
-
-        Make sure that the exception trace is converted to unicode.
-
-        L{exceptions.Error} traces are encoded in our console encoding, which
-        is needed for plainly printing them.  However, when logging them
-        using logging.exception, the Python logging module will try to use
-        these traces, and it will fail if they are console encoded strings.
-
-        Formatter.formatException also strips the trailing \n, which we need.
-        """
-        strExc = logging.Formatter.formatException(self, ei)
-
-        if PY2 and isinstance(strExc, bytes):
-            return strExc.decode(config.console_encoding) + '\n'
-        else:
-            return strExc + '\n'
+    def __init__(self, fmt=None, datefmt=None):
+        """Constructor setting underlying encoding to console_encoding."""
+        _LoggingFormatter.__init__(self, fmt, datefmt, config.console_encoding)
 
 
 # Initialize the handlers and formatters for the logging system.
@@ -236,9 +183,10 @@ def init_handlers(strm=None):
     user interfaces (GUIs) without modifying the core bot code.
 
     The following output levels are defined:
+
      - DEBUG: only for file logging; debugging messages.
      - STDOUT: output that must be sent to sys.stdout (for bots that may
-         have their output redirected to a file or other destination).
+       have their output redirected to a file or other destination).
      - VERBOSE: optional progress information for display to user.
      - INFO: normal (non-optional) progress information for display to user.
      - INPUT: prompts requiring user response.
@@ -246,7 +194,7 @@ def init_handlers(strm=None):
      - ERROR: user error messages.
      - CRITICAL: fatal error messages.
 
-    Accordingly, do ''not'' use print statements in bot code; instead,
+    Accordingly, do **not** use print statements in bot code; instead,
     use pywikibot.output function.
 
     @param strm: Output stream. If None, re-uses the last stream if one
@@ -323,8 +271,6 @@ def init_handlers(strm=None):
         warnings_logger.addHandler(file_handler)
 
     _handlers_initialized = True
-
-    pywikibot.tools.debug = debug
 
     writelogheader()
 
@@ -411,161 +357,7 @@ def writelogheader():
     log(u'=== ' * 14)
 
 
-# User output/logging functions
-
-# Six output functions are defined. Each requires a unicode or string
-# argument.  All of these functions generate a message to the log file if
-# logging is enabled ("-log" or "-debug" command line arguments).
-
-# The functions output(), stdout(), warning(), and error() all display a
-# message to the user through the logger object; the only difference is the
-# priority level,  which can be used by the application layer to alter the
-# display. The stdout() function should be used only for data that is
-# the "result" of a script, as opposed to information messages to the
-# user.
-
-# The function log() by default does not display a message to the user, but
-# this can be altered by using the "-verbose" command line option.
-
-# The function debug() only logs its messages, they are never displayed on
-# the user console. debug() takes a required second argument, which is a
-# string indicating the debugging layer.
-
-def logoutput(text, decoder=None, newline=True, _level=INFO, _logger="",
-              **kwargs):
-    """Format output and send to the logging module.
-
-    Helper function used by all the user-output convenience functions.
-
-    """
-    if _logger:
-        logger = logging.getLogger("pywiki." + _logger)
-    else:
-        logger = logging.getLogger("pywiki")
-
-    # make sure logging system has been initialized
-    if not _handlers_initialized:
-        init_handlers()
-
-    # frame 0 is logoutput() in this module,
-    # frame 1 is the convenience function (output(), etc.)
-    # frame 2 is whatever called the convenience function
-    frame = sys._getframe(2)
-
-    module = os.path.basename(frame.f_code.co_filename)
-    context = {'caller_name': frame.f_code.co_name,
-               'caller_file': module,
-               'caller_line': frame.f_lineno,
-               'newline': ("\n" if newline else "")}
-
-    if decoder:
-        text = text.decode(decoder)
-    elif not isinstance(text, unicode):
-        if not isinstance(text, str):
-            # looks like text is a non-text object.
-            # Maybe it has a __unicode__ builtin ?
-            # (allows to print Page, Site...)
-            text = unicode(text)
-        else:
-            try:
-                text = text.decode('utf-8')
-            except UnicodeDecodeError:
-                text = text.decode('iso8859-1')
-
-    logger.log(_level, text, extra=context, **kwargs)
-
-
-def output(text, decoder=None, newline=True, toStdout=False, **kwargs):
-    r"""Output a message to the user via the userinterface.
-
-    Works like print, but uses the encoding used by the user's console
-    (console_encoding in the configuration file) instead of ASCII.
-
-    If decoder is None, text should be a unicode string. Otherwise it
-    should be encoded in the given encoding.
-
-    If newline is True, a line feed will be added after printing the text.
-
-    If toStdout is True, the text will be sent to standard output,
-    so that it can be piped to another process. All other text will
-    be sent to stderr. See: https://en.wikipedia.org/wiki/Pipeline_%28Unix%29
-
-    text can contain special sequences to create colored output. These
-    consist of the escape character \03 and the color name in curly braces,
-    e. g. \03{lightpurple}. \03{default} resets the color.
-
-    Other keyword arguments are passed unchanged to the logger; so far, the
-    only argument that is useful is "exc_info=True", which causes the
-    log message to include an exception traceback.
-
-    """
-    if toStdout:  # maintained for backwards-compatibity only
-        logoutput(text, decoder, newline, STDOUT, **kwargs)
-    else:
-        logoutput(text, decoder, newline, INFO, **kwargs)
-
-
-def stdout(text, decoder=None, newline=True, **kwargs):
-    """Output script results to the user via the userinterface."""
-    logoutput(text, decoder, newline, STDOUT, **kwargs)
-
-
-def warning(text, decoder=None, newline=True, **kwargs):
-    """Output a warning message to the user via the userinterface."""
-    logoutput(text, decoder, newline, WARNING, **kwargs)
-
-
-def error(text, decoder=None, newline=True, **kwargs):
-    """Output an error message to the user via the userinterface."""
-    logoutput(text, decoder, newline, ERROR, **kwargs)
-
-
-def log(text, decoder=None, newline=True, **kwargs):
-    """Output a record to the log file."""
-    logoutput(text, decoder, newline, VERBOSE, **kwargs)
-
-
-def critical(text, decoder=None, newline=True, **kwargs):
-    """Output a critical record to the log file."""
-    logoutput(text, decoder, newline, CRITICAL, **kwargs)
-
-
-def debug(text, layer, decoder=None, newline=True, **kwargs):
-    """Output a debug record to the log file.
-
-    @param layer: The name of the logger that text will be sent to.
-    """
-    logoutput(text, decoder, newline, DEBUG, layer, **kwargs)
-
-
-def exception(msg=None, decoder=None, newline=True, tb=False, **kwargs):
-    """Output an error traceback to the user via the userinterface.
-
-    Use directly after an 'except' statement::
-
-        ...
-        except:
-            pywikibot.exception()
-        ...
-
-    or alternatively::
-
-        ...
-        except Exception as e:
-            pywikibot.exception(e)
-        ...
-
-    @param tb: Set to True in order to output traceback also.
-    """
-    if isinstance(msg, BaseException):
-        exc_info = 1
-    else:
-        exc_info = sys.exc_info()
-        msg = u'%s: %s' % (repr(exc_info[1]).split('(')[0],
-                           unicode(exc_info[1]).strip())
-    if tb:
-        kwargs['exc_info'] = exc_info
-    logoutput(msg, decoder, newline, ERROR, **kwargs)
+add_init_routine(init_handlers)
 
 
 # User input functions
@@ -945,21 +737,21 @@ class InteractiveReplace(object):
             # at the beginning of the link, start red color.
             # at the end of the link, reset the color to default
             pywikibot.output(text[max(0, rng[0] - self.context): rng[0]] +
-                             '\03{lightred}' + text[rng[0]: rng[1]] +
-                             '\03{default}' + text[rng[1]: rng[1] + self.context])
+                             color_format('{lightred}{0}{default}',
+                                          text[rng[0]: rng[1]]) +
+                             text[rng[1]: rng[1] + self.context])
             question = 'Should the link '
         else:
-            question = 'Should the link \03{{lightred}}{0}\03{{default}} '
+            question = 'Should the link {lightred}{0}{default} '
 
         if self._new is False:
             question += 'be unlinked?'
         else:
-            question += ('target to '
-                         '\03{{{{lightpurple}}}}{0}\03{{{{default}}}}?').format(
-                             self._new.canonical_title())
+            question += color_format('target to {lightpurple}{0}{default}?',
+                                     self._new.canonical_title())
 
         choice = pywikibot.input_choice(
-            question.format(self._old.canonical_title()),
+            color_format(question, self._old.canonical_title()),
             choices, default=self._default, automatic_quit=self._quit)
 
         return self.handle_answer(choice)
@@ -1160,7 +952,7 @@ def handle_args(args=None, do_help=True):
         showHelp()
         sys.exit(0)
 
-    pywikibot.debug(u"handle_args() completed.", _logger)
+    debug('handle_args() completed.', _logger)
     return nonGlobalArgs
 
 
@@ -1417,8 +1209,8 @@ class BaseBot(object):
             msg = u'Working on %r' % page.title()
             if config.colorized_output:
                 log(msg)
-                stdout(u'\n\n>>> \03{lightpurple}%s\03{default} <<<'
-                       % page.title())
+                stdout(color_format('\n\n>>> {lightpurple}{0}{default} <<<',
+                                    page.title()))
             else:
                 stdout(msg)
 
@@ -1454,9 +1246,11 @@ class BaseBot(object):
         and puts the page if needed.
 
         Option used:
+
         * 'always'
 
         Keyword args used:
+
         * 'async' - passed to page.save
         * 'summary' - passed to page.save
         * 'show_diff' - show changes between oldtext and newtext (enabled)
@@ -2047,16 +1841,16 @@ class WikidataBot(Bot):
         @param data: data to be saved, or None if the diff should be created
           automatically
         @kwarg summary: revision comment, passed to ItemPage.editEntity
-        @kwtype summary: str
+        @type summary: str
         @kwarg show_diff: show changes between oldtext and newtext (default:
           True)
-        @kwtype show_diff: bool
+        @type show_diff: bool
         @kwarg ignore_server_errors: if True, server errors will be reported
           and ignored (default: False)
-        @kwtype ignore_server_errors: bool
+        @type ignore_server_errors: bool
         @kwarg ignore_save_related_errors: if True, errors related to
-        page save will be reported and ignored (default: False)
-        @kwtype ignore_save_related_errors: bool
+          page save will be reported and ignored (default: False)
+        @type ignore_save_related_errors: bool
         """
         self.current_page = item
 

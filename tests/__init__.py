@@ -5,52 +5,73 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
+import functools
 import os
-import sys
 import warnings
 
-__all__ = ('requests', '_cache_dir', 'TestRequest',
+__all__ = ('requests', 'TestRequest',
            'patch_request', 'unpatch_request')
 
 # Verify that the unit tests have a base working environment:
 # - requests is mandatory
 # - future is needed as a fallback for python 2.6,
 #   however if unavailable this will fail on use; see pywikibot/tools.py
+# - unittest2; see below
 # - mwparserfromhell is optional, so is only imported in textlib_tests
-try:
-    import requests  # noqa
-except ImportError as e:
-    print("ImportError: %s" % e)
-    sys.exit(1)
+import requests  # noqa
 
-if sys.version_info < (2, 7, 3):
-    # Unittest2 is a backport of python 2.7s unittest module to python 2.6
+from pywikibot.tools import PYTHON_VERSION
+
+if PYTHON_VERSION < (2, 7, 3):
+    # unittest2 is a backport of python 2.7s unittest module to python 2.6
     # Also use unittest2 for python 2.7.2 (T106512)
     import unittest2 as unittest
 else:
     import unittest
 
+import pywikibot.data.api
+
 from pywikibot import config
 from pywikibot import i18n
-import pywikibot.data.api
 from pywikibot.data.api import Request as _original_Request
 from pywikibot.data.api import CachedRequest
 
-_tests_dir = os.path.split(__file__)[0]
-_cache_dir = os.path.join(_tests_dir, 'apicache')
-_data_dir = os.path.join(_tests_dir, 'data')
-_images_dir = os.path.join(_data_dir, 'images')
+_root_dir = os.path.split(os.path.split(__file__)[0])[0]
+
+
+def join_root_path(*names):
+    """Return a path relative to the root directory."""
+    return os.path.join(_root_dir, *names)
+
+
+def create_path_func(base_func, subpath):
+    """Return a function returning a path relative to the given directory."""
+    func = functools.partial(base_func, subpath)
+    func.path = base_func.path + '/' + subpath
+    func.__doc__ = 'Return a path relative to `{0}/`.'.format(func.path)
+    return func
+
+
+join_root_path.path = 'root'
+join_tests_path = create_path_func(join_root_path, 'tests')
+join_cache_path = create_path_func(join_tests_path,
+                                   'apicache-py%d' % PYTHON_VERSION[0])
+join_data_path = create_path_func(join_tests_path, 'data')
+join_pages_path = create_path_func(join_tests_path, 'pages')
+
+join_images_path = create_path_func(join_data_path, 'images')
+join_xml_data_path = create_path_func(join_data_path, 'xml')
 
 # Find the root directory of the checkout
-_root_dir = os.path.split(_tests_dir)[0]
-_pwb_py = os.path.join(_root_dir, 'pwb.py')
+_pwb_py = join_root_path('pwb.py')
 
 library_test_modules = [
     'python',
+    'plural',
     'deprecation',
     'ui',
     'ui_options',
@@ -122,10 +143,7 @@ script_test_modules = [
 
 disabled_test_modules = [
     'tests',  # tests of the tests package
-    # weblib is deprecated, the tests fail for weblib,
-    # but the tests are run in weblinkchecker_tests.
     'l10n',
-    'weblib',
 ]
 if not i18n.messages_available():
     disabled_test_modules.append('l10n')
@@ -137,12 +155,15 @@ disabled_tests = {
     'site_detect': [
         'test_IWM',  # very slow and tests include unnecessary sites
     ],
+    'weblib': [
+        'testWebCiteOlder',  # fails. T110640
+    ],
 }
 
 
 def _unknown_test_modules():
     """List tests which are to be executed."""
-    dir_list = os.listdir(_tests_dir)
+    dir_list = os.listdir(join_tests_path())
     all_test_list = [name[0:-9] for name in dir_list  # strip '_tests.py'
                      if name.endswith('_tests.py') and
                      not name.startswith('_')]   # skip __init__.py and _*
@@ -220,7 +241,7 @@ def load_tests(loader=unittest.loader.defaultTestLoader,
 
 
 CachedRequest._get_cache_dir = classmethod(
-    lambda cls, *args: cls._make_dir(_cache_dir))
+    lambda cls, *args: cls._make_dir(join_cache_path()))
 
 
 # Travis-CI builds are set to retry twice, which aims to reduce the number

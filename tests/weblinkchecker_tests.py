@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -19,20 +19,14 @@ else:
 
 from scripts import weblinkchecker
 
-from tests.aspects import unittest, TestCase, TestCaseBase
+from tests.aspects import unittest, require_modules, TestCase
 from tests import weblib_tests
 
 
-class MementoTestBase(TestCaseBase):
+@require_modules('memento_client')
+class MementoTestCase(TestCase):
 
     """Test memento client."""
-
-    @classmethod
-    def setUpClass(cls):
-        """Set up test class."""
-        if isinstance(weblinkchecker.memento_client, ImportError):
-            raise unittest.SkipTest('memento_client not imported')
-        super(MementoTestBase, cls).setUpClass()
 
     def _get_archive_url(self, url, date_string=None):
         if date_string is None:
@@ -45,7 +39,7 @@ class MementoTestBase(TestCaseBase):
             self.timegate_uri)
 
 
-class WeblibTestMementoInternetArchive(MementoTestBase, weblib_tests.TestInternetArchive):
+class WeblibTestMementoInternetArchive(MementoTestCase, weblib_tests.TestInternetArchive):
 
     """Test InternetArchive Memento using old weblib tests."""
 
@@ -53,7 +47,7 @@ class WeblibTestMementoInternetArchive(MementoTestBase, weblib_tests.TestInterne
     hostname = timegate_uri
 
 
-class WeblibTestMementoWebCite(MementoTestBase, weblib_tests.TestWebCite):
+class WeblibTestMementoWebCite(MementoTestCase, weblib_tests.TestWebCite):
 
     """Test WebCite Memento using old weblib tests."""
 
@@ -61,7 +55,7 @@ class WeblibTestMementoWebCite(MementoTestBase, weblib_tests.TestWebCite):
     hostname = timegate_uri
 
 
-class TestMementoWebCite(MementoTestBase):
+class TestMementoWebCite(MementoTestCase):
 
     """New WebCite Memento tests."""
 
@@ -76,7 +70,7 @@ class TestMementoWebCite(MementoTestBase):
         self.assertEqual(parsed.netloc, 'www.webcitation.org')
 
 
-class TestMementoDefault(MementoTestBase, TestCase):
+class TestMementoDefault(MementoTestCase):
 
     """Test InternetArchive is default Memento timegate."""
 

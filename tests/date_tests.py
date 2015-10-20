@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 from datetime import datetime
 
@@ -37,23 +37,22 @@ class TestDateMeta(MetaTestCaseClass):
                     for value in range(start, stop, step):
                         self.assertTrue(
                             predicate(value),
-                            "date.formats['%(formatname)s']['%(code)s']:\n"
-                            "invalid value %(value)d" % locals())
+                            "date.formats['%s']['%s']:\ninvalid value %d"
+                            % (formatname, code, value))
 
                         newValue = convFunc(convFunc(value))
                         self.assertEqual(
                             newValue, value,
-                            "date.formats['%(formatname)s']['%(code)s']:\n"
-                            "value %(newValue)d does not match %(value)s"
-                            % locals())
+                            "date.formats['%s']['%s']:\n"
+                            "value %d does not match %s"
+                            % (formatname, code, newValue, value))
             return testMapEntry
 
         for formatname in date.formats:
-            # it's explicitly using str() because __name__ must be str
-            test_name = str('test_' + formatname)
-            dct[test_name] = test_method(formatname)
-            dct[test_name].__name__ = test_name
-        return type.__new__(cls, name, bases, dct)
+            cls.add_method(dct, 'test_' + formatname, test_method(formatname),
+                           doc_suffix='using {0} format'.format(formatname))
+
+        return super(TestDateMeta, cls).__new__(cls, name, bases, dct)
 
 
 @add_metaclass

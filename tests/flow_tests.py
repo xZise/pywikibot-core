@@ -5,25 +5,21 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
 from pywikibot.exceptions import NoPage
 from pywikibot.flow import Board, Topic, Post
-from pywikibot.tools import PY2
+from pywikibot.tools import UnicodeType as unicode
 
 from tests.aspects import (
     TestCase,
 )
-
 from tests.basepage_tests import (
     BasePageMethodsTestBase,
     BasePageLoadRevisionsCachingTestBase,
 )
-
-if not PY2:
-    unicode = str
 
 
 class TestBoardBasePageMethods(BasePageMethodsTestBase):

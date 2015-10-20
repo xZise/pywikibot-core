@@ -5,20 +5,21 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
 from datetime import datetime
-import sys
+
 import pywikibot
 import pywikibot.page
-from pywikibot.textlib import TimeStripper
-from scripts import archivebot
-from tests.aspects import unittest, TestCase
 
-if sys.version_info[0] > 2:
-    basestring = (str,)
+from pywikibot.textlib import TimeStripper
+from pywikibot.tools import StringTypes as basestring
+
+from scripts import archivebot
+
+from tests.aspects import unittest, TestCase
 
 THREADS = {
     'als': 4, 'ar': 1, 'bar': 0, 'bg': 0, 'bjn': 1, 'bs': 0, 'ca': 5, 'ckb': 2,
@@ -78,7 +79,7 @@ class TestArchiveBot(TestCase):
                 raise
 
     expected_failures = ['ar', 'pdc', 'th']
-    # expected failures - should be fixed
+    # FIXME:
     # 'ar': Uses Arabic acronym for TZ
     # 'pdc': changed month name setting in wiki over time (?)
     #   in old posts in talk page, February is "Feb.", site message gives

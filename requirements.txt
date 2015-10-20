@@ -21,10 +21,6 @@
 # mandatory; see README.conversion.txt
 requests
 
-# Dependency of pyOpenSSL. Use specific version to avoid expected
-# DeprecationWarning
-cryptography<=0.8.2 ; python_version < '2.7'
-
 # requests security extra
 pyOpenSSL ; python_full_version < '2.7.9'
 ndg-httpsclient ; python_full_version < '2.7.9'
@@ -45,7 +41,8 @@ mwoauth>=0.2.4
 git+https://github.com/nlhepler/pydot#egg=pydot-1.0.29
 
 # wikistats.py and scripts
-unicodecsv ; python_version < '3'
+unicodecsv!=0.14.0 ; python_version < '2.7'
+unicodecsv ; python_version < '3' and python_version >= '2.7'
 
 # cosmetic_changes and scripts/isbn
 python-stdnum
@@ -76,7 +73,7 @@ flickrapi ; python_version >= '2.7'
 # incomplete core component botirc
 irc ; python_version > '2.6'
 
-# textlib.py
+# textlib.py and patrol.py
 mwparserfromhell>=0.3.3 ; python_version <= '3.4'
 
 # The mysql generator in pagegenerators depends on either oursql or MySQLdb

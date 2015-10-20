@@ -38,11 +38,11 @@ See [[:en:User:DumZiBoT/refLinks]] for more information on the bot.
                   one from i18n/reflinks.py
 """
 # (C) Nicolas Dumazet (NicDumZ), 2008
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import division, unicode_literals
+from __future__ import absolute_import, division, unicode_literals
 __version__ = '$Id$'
 #
 
@@ -56,13 +56,18 @@ import gzip
 import sys
 import io
 
+from functools import partial
+
 import pywikibot
 
-from pywikibot import i18n, pagegenerators, textlib, xmlreader, Bot
+from pywikibot import i18n, pagegenerators, textlib, Bot
+from pywikibot.pagegenerators import (
+    XMLDumpPageGenerator as _XMLDumpPageGenerator,
+)
+from pywikibot.tools.formatter import color_format
 
 from scripts import noreferences
 
-# TODO: Convert to httlib2
 if sys.version_info[0] > 2:
     from urllib.parse import quote
     from urllib.request import urlopen
@@ -184,41 +189,8 @@ linksInRef = re.compile(
 # ( maintained by User:Dispenser )
 listof404pages = '404-links.txt'
 
-
-class XmlDumpPageGenerator(object):
-
-    """Xml generator that yields pages containing bare references."""
-
-    def __init__(self, xmlFilename, xmlStart, namespaces, site=None):
-        self.xmlStart = xmlStart
-        self.namespaces = namespaces
-        self.skipping = bool(xmlStart)
-        self.site = site or pywikibot.Site()
-
-        dump = xmlreader.XmlDump(xmlFilename)
-        self.parser = dump.parse()
-
-    def __iter__(self):
-        return self
-
-    def next(self):
-        while True:
-            try:
-                entry = next(self.parser)
-            except StopIteration:
-                raise
-            if self.skipping:
-                if entry.title != self.xmlStart:
-                    continue
-                self.skipping = False
-            page = pywikibot.Page(self.site, entry.title)
-            if not self.namespaces == []:
-                if page.namespace() not in self.namespaces:
-                    continue
-            if linksInRef.search(entry.text):
-                return page
-
-    __next__ = next
+XmlDumpPageGenerator = partial(
+    _XMLDumpPageGenerator, text_predicate=linksInRef.search)
 
 
 class RefLink(object):
@@ -524,7 +496,7 @@ class ReferencesRobot(Bot):
                 new_text = page.get()
                 if not page.canBeEdited():
                     pywikibot.output(u"You can't edit page %s"
-                                      % page.title(asLink=True))
+                                     % page.title(asLink=True))
                     continue
             except pywikibot.NoPage:
                 pywikibot.output(u'Page %s not found' % page.title(asLink=True))
@@ -566,9 +538,9 @@ class ReferencesRobot(Bot):
                             # If file has a PDF suffix
                             self.getPDFTitle(ref, f)
                         else:
-                            pywikibot.output(
-                                u'\03{lightyellow}WARNING\03{default} : '
-                                u'media : %s ' % ref.link)
+                            pywikibot.output(color_format(
+                                '{lightyellow}WARNING{default} : '
+                                'media : {0} ', ref.link))
                         if ref.title:
                             if not re.match(
                                     u'(?i) *microsoft (word|excel|visio)',
@@ -576,9 +548,9 @@ class ReferencesRobot(Bot):
                                 ref.transform(ispdf=True)
                                 repl = ref.refTitle()
                             else:
-                                pywikibot.output(
-                                    u'\03{lightyellow}WARNING\03{default} : '
-                                    u'PDF title blacklisted : %s ' % ref.title)
+                                pywikibot.output(color_format(
+                                    '{lightyellow}WARNING{default} : '
+                                    'PDF title blacklisted : {0} ', ref.title))
                                 repl = ref.refLink()
                         else:
                             repl = ref.refLink()
@@ -590,15 +562,15 @@ class ReferencesRobot(Bot):
                        domain.findall(redir) == domain.findall(link):
                         if soft404.search(redir) and \
                            not soft404.search(ref.link):
-                            pywikibot.output(
-                                u'\03{lightyellow}WARNING\03{default} : '
-                                u'Redirect 404 : %s ' % ref.link)
+                            pywikibot.output(color_format(
+                                '{lightyellow}WARNING{default} : '
+                                'Redirect 404 : {0} ', ref.link))
                             continue
                         if dirIndex.match(redir) and \
                            not dirIndex.match(ref.link):
-                            pywikibot.output(
-                                u'\03{lightyellow}WARNING\03{default} : '
-                                u'Redirect to root : %s ' % ref.link)
+                            pywikibot.output(color_format(
+                                u'{lightyellow}WARNING{default} : '
+                                u'Redirect to root : {0} ', ref.link))
                             continue
 
                     # uncompress if necessary
@@ -617,9 +589,9 @@ class ReferencesRobot(Bot):
                 except UnicodeError:
                     # example : http://www.adminet.com/jo/20010615¦/ECOC0100037D.html
                     # in [[fr:Cyanure]]
-                    pywikibot.output(
-                        u'\03{lightred}Bad link\03{default} : %s in %s'
-                        % (ref.url, page.title(asLink=True)))
+                    pywikibot.output(color_format(
+                        '{lightred}Bad link{default} : %s in %s',
+                        ref.url, page.title(asLink=True)))
                     continue
                 except HTTPError as e:
                     pywikibot.output(u'HTTP error (%s) for %s on %s'
@@ -684,9 +656,9 @@ class ReferencesRobot(Bot):
                     pywikibot.output(u'No content-type found for %s' % ref.link)
                     continue
                 elif not self.MIME.search(contentType):
-                    pywikibot.output(
-                        u'\03{lightyellow}WARNING\03{default} : media : %s '
-                        % ref.link)
+                    pywikibot.output(color_format(
+                        '{lightyellow}WARNING{default} : media : %s ',
+                        ref.link))
                     repl = ref.refLink()
                     new_text = new_text.replace(match.group(), repl)
                     continue
@@ -740,9 +712,9 @@ class ReferencesRobot(Bot):
                 if self.titleBlackList.match(ref.title):
                     repl = ref.refLink()
                     new_text = new_text.replace(match.group(), repl)
-                    pywikibot.output(u'\03{lightred}WARNING\03{default} %s : '
-                                     u'Blacklisted title (%s)'
-                                     % (ref.link, ref.title))
+                    pywikibot.output(color_format(
+                        '{lightred}WARNING{default} {0} : '
+                        'Blacklisted title ({1})', ref.link, ref.title))
                     continue
 
                 # Truncate long titles. 175 is arbitrary
@@ -773,8 +745,8 @@ class ReferencesRobot(Bot):
                 return
 
             if editedpages % 20 == 0:
-                pywikibot.output(
-                    '\03{lightgreen}Checking stop page...\03{default}')
+                pywikibot.output(color_format(
+                    '{lightgreen}Checking stop page...{default}'))
                 actualRev = self.stopPage.latest_revision_id
                 if actualRev != self.stopPageRevId:
                     pywikibot.output(

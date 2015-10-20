@@ -11,7 +11,7 @@ and return a unicode string.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -38,7 +38,12 @@ import pywikibot
 from pywikibot import config2 as config
 from pywikibot.exceptions import InvalidTitle
 from pywikibot.family import Family
-from pywikibot.tools import OrderedDict, DeprecatedRegex
+from pywikibot.tools import (
+    DeprecatedRegex,
+    OrderedDict,
+    UnicodeType,
+    issue_deprecation_warning
+)
 
 # cache for replaceExcept to avoid recompile or regexes each call
 _regex_cache = {}
@@ -182,9 +187,6 @@ def _create_default_regexes():
 
 def _get_regexes(keys, site):
     """Fetch compiled regexes."""
-    if site is None:
-        site = pywikibot.Site()
-
     if not _regex_cache:
         _create_default_regexes()
 
@@ -198,6 +200,11 @@ def _get_regexes(keys, site):
             # which may not yet have a site specific re compiled.
             if exc in _regex_cache:
                 if type(_regex_cache[exc]) is tuple:
+                    if not site:
+                        issue_deprecation_warning(
+                            'site=None', 'a valid site', 3)
+                        site = pywikibot.Site()
+
                     if (exc, site) not in _regex_cache:
                         re_text, re_var = _regex_cache[exc]
                         _regex_cache[(exc, site)] = re.compile(
@@ -730,7 +737,8 @@ def getLanguageLinks(text, insite=None, pageLink="[[]]",
     """
     Return a dict of inter-language links found in text.
 
-    The returned dict uses language codes as keys and Page objects as values.
+    The returned dict uses the site as keys and Page objects as values. It does
+    not contain its own site.
 
     Do not call this routine directly, use Page.interwiki() method
     instead.
@@ -772,8 +780,11 @@ def getLanguageLinks(text, insite=None, pageLink="[[]]",
                 pagetitle = pagetitle[:pagetitle.index('|')]
             # we want the actual page objects rather than the titles
             site = pywikibot.Site(code=lang, fam=fam)
+            # skip language links to its own site
+            if site == insite:
+                continue
             try:
-                result[site] = pywikibot.Page(site, pagetitle, insite=insite)
+                result[site] = pywikibot.Page(site, pagetitle)
             except pywikibot.InvalidTitle:
                 pywikibot.output(u'[getLanguageLinks] Text contains invalid '
                                  u'interwiki link [[%s:%s]].'
@@ -793,12 +804,12 @@ def removeLanguageLinks(text, site=None, marker=''):
     """
     if site is None:
         site = pywikibot.Site()
-    if not site.validLanguageLinks():
-        return text
     # This regular expression will find every interwiki link, plus trailing
     # whitespace.
     languages = '|'.join(site.validLanguageLinks() +
                          list(site.family.obsolete.keys()))
+    if not languages:
+        return text
     interwikiR = re.compile(r'\[\[(%s)\s?:[^\[\]\n]*\]\][\s]*'
                             % languages, re.IGNORECASE)
     text = replaceExcept(text, interwikiR, '',
@@ -843,6 +854,9 @@ def replaceLanguageLinks(oldtext, new, site=None, addOnly=False,
     cseparator = site.family.category_text_separator
     separatorstripped = separator.strip()
     cseparatorstripped = cseparator.strip()
+    do_not_strip = oldtext.strip() != oldtext
+    if do_not_strip:
+        issue_deprecation_warning('Using unstripped text', 'stripped text', 2)
     if addOnly:
         s2 = oldtext
     else:
@@ -910,7 +924,7 @@ def replaceLanguageLinks(oldtext, new, site=None, addOnly=False,
                     newtext = s2.replace(marker, '').strip() + separator + s
     else:
         newtext = s2.replace(marker, '')
-    return newtext
+    return newtext if do_not_strip else newtext.strip()
 
 
 def interwikiFormat(links, insite=None):
@@ -934,14 +948,15 @@ def interwikiFormat(links, insite=None):
     ar = interwikiSort(list(links.keys()), insite)
     s = []
     for site in ar:
-        try:
+        if isinstance(links[site], pywikibot.Link):
+            links[site] = pywikibot.Page(links[site])
+        if isinstance(links[site], pywikibot.Page):
             title = links[site].title(asLink=True, forceInterwiki=True,
                                       insite=insite)
             link = title.replace('[[:', '[[')
             s.append(link)
-        except AttributeError:
-            s.append(pywikibot.Site(site, insite.family).linkto(
-                links[site], othersite=insite))
+        else:
+            raise ValueError('links dict must contain Page or Link objects')
     if insite.code in insite.family.interwiki_on_one_line:
         sep = u' '
     else:
@@ -1247,7 +1262,7 @@ def compileLinkR(withoutBracketed=False, onlyBracketed=False):
 # Functions dealing with templates
 # --------------------------------
 
-def extract_templates_and_params(text, remove_disabled_parts=None):
+def extract_templates_and_params(text, remove_disabled_parts=None, strip=None):
     """Return a list of templates found in text.
 
     Return value is a list of tuples. There is one tuple for each use of a
@@ -1270,6 +1285,11 @@ def extract_templates_and_params(text, remove_disabled_parts=None):
     mwpfh preserves whitespace in parameter names and values.  regex excludes
     anything between <!-- --> before parsing the text.
 
+    If there are multiple numbered parameters in the wikitext for the same
+    position, MediaWiki will only use the last parameter value.
+    e.g. {{a| foo | 2 <!-- --> = bar | baz }} is {{a|1=foo|2=baz}}
+    To replicate that behaviour, enable both remove_disabled_parts and strip.
+
     @param text: The wikitext from which templates are extracted
     @type text: unicode or string
     @param remove_disabled_parts: Remove disabled wikitext such as comments
@@ -1277,26 +1297,33 @@ def extract_templates_and_params(text, remove_disabled_parts=None):
         is not available or is disabled in the config, and disabled if
         mwparserfromhell is present and enabled in the config.
     @type remove_disabled_parts: bool or None
+    @param strip: if enabled, strip arguments and values of templates.
+        If None (default), this is enabled when mwparserfromhell
+        is not available or is disabled in the config, and disabled if
+        mwparserfromhell is present and enabled in the config.
+    @type strip: bool
     @return: list of template name and params
     @rtype: list of tuple
     """
     use_mwparserfromhell = (config.use_mwparserfromhell and
                             not isinstance(mwparserfromhell, Exception))
 
-    if use_mwparserfromhell:
-        if remove_disabled_parts is None:
-            remove_disabled_parts = False
+    if remove_disabled_parts is None:
+        remove_disabled_parts = not use_mwparserfromhell
+
+    if strip is None:
+        strip = not use_mwparserfromhell
 
     if remove_disabled_parts:
         text = removeDisabledParts(text)
 
     if use_mwparserfromhell:
-        return extract_templates_and_params_mwpfh(text)
+        return extract_templates_and_params_mwpfh(text, strip)
     else:
-        return extract_templates_and_params_regex(text, False)
+        return extract_templates_and_params_regex(text, False, strip)
 
 
-def extract_templates_and_params_mwpfh(text):
+def extract_templates_and_params_mwpfh(text, strip=False):
     """
     Extract templates with params using mwparserfromhell.
 
@@ -1314,15 +1341,29 @@ def extract_templates_and_params_mwpfh(text):
     """
     code = mwparserfromhell.parse(text)
     result = []
+
     for template in code.filter_templates(recursive=True):
         params = OrderedDict()
         for param in template.params:
-            params[unicode(param.name)] = unicode(param.value)
+            if strip:
+                implicit_parameter = not param.showkey
+                key = param.name.strip()
+                if not implicit_parameter:
+                    value = param.value.strip()
+                else:
+                    value = UnicodeType(param.value)
+            else:
+                key = UnicodeType(param.name)
+                value = UnicodeType(param.value)
+
+            params[key] = value
+
         result.append((unicode(template.name.strip()), params))
     return result
 
 
-def extract_templates_and_params_regex(text, remove_disabled_parts=True):
+def extract_templates_and_params_regex(text, remove_disabled_parts=True,
+                                       strip=True):
     """
     Extract templates with params using a regex with additional processing.
 
@@ -1466,10 +1507,12 @@ def extract_templates_and_params_regex(text, remove_disabled_parts=True):
                 for param in markedParams:
                     if "=" in param:
                         param_name, param_val = param.split("=", 1)
+                        implicit_parameter = False
                     else:
                         param_name = unicode(numbered_param)
                         param_val = param
                         numbered_param += 1
+                        implicit_parameter = True
                     count = len(inside)
                     for m2 in Rmarker1.finditer(param_val):
                         param_val = param_val.replace(m2.group(),
@@ -1483,7 +1526,11 @@ def extract_templates_and_params_regex(text, remove_disabled_parts=True):
                     for m2 in Rmarker4.finditer(param_val):
                         param_val = param_val.replace(m2.group(),
                                                       values[int(m2.group(1))])
-                    params[param_name.strip()] = param_val.strip()
+                    if strip:
+                        param_name = param_name.strip()
+                        if not implicit_parameter:
+                            param_val = param_val.strip()
+                    params[param_name] = param_val
 
             # Special case for {{a|}} which has an undetected parameter
             if not params and '|' in m.group(0):

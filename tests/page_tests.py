@@ -1,30 +1,31 @@
 # -*- coding: utf-8  -*-
 """Tests for the page module."""
 #
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2015
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
-import sys
 import pywikibot
-from pywikibot import config
-from pywikibot import InvalidTitle
 import pywikibot.page
 
-from pywikibot.tools import PY2
+from pywikibot import config
+from pywikibot import InvalidTitle
+
+from pywikibot.tools import (
+    MediaWikiVersion,
+    PY2,
+    StringTypes as basestring,
+    UnicodeType as unicode,
+)
 
 from tests.aspects import (
     unittest, TestCase, DefaultSiteTestCase, SiteAttributeTestCase,
     DefaultDrySiteTestCase, DeprecationTestCase,
 )
-
-if sys.version_info[0] > 2:
-    basestring = (str, )
-    unicode = str
 
 
 class TestLinkObject(SiteAttributeTestCase):
@@ -531,10 +532,11 @@ class TestPageDeprecation(DefaultSiteTestCase, DeprecationTestCase):
         self.assertDeprecation()
 
         self._reset_messages()
-        self.assertIsInstance(mainpage.previous_revision_id, int)
-        self.assertEqual(mainpage.previous_revision_id,
-                         mainpage.latest_revision.parent_id)
-        self.assertDeprecation()
+        if MediaWikiVersion(self.site.version()) >= MediaWikiVersion('1.16'):
+            self.assertIsInstance(mainpage.previous_revision_id, int)
+            self.assertEqual(mainpage.previous_revision_id,
+                             mainpage.latest_revision.parent_id)
+            self.assertDeprecation()
 
 
 class TestPageBaseUnicode(DefaultDrySiteTestCase):
@@ -568,14 +570,14 @@ class TestPageRepr(TestPageBaseUnicode):
         page = pywikibot.Page(self.get_site(), u'Ō')
         self.assertEqual(repr(page), b'Page(\xc5\x8c)')
 
-    @unittest.skipIf(sys.version_info[0] > 2, 'Python 2 specific test')
+    @unittest.skipIf(not PY2, 'Python 2 specific test')
     def test_unicode_percent_r_failure(self):
         """Test u'{x!r}'.format(Page(u'<non-ascii>')) raises exception on Python 2."""
         # This raises an exception on Python 2, but passes on Python 3
         page = pywikibot.Page(self.get_site(), u'Ō')
         self.assertRaisesRegex(UnicodeDecodeError, '', unicode.format, u'{0!r}', page)
 
-    @unittest.skipIf(sys.version_info[0] < 3, 'Python 3+ specific test')
+    @unittest.skipIf(PY2, 'Python 3+ specific test')
     def test_unicode_value_py3(self):
         """Test to capture actual Python 3 result pre unicode_literals."""
         self.assertEqual(repr(self.page), "Page('Ō')")
@@ -787,6 +789,22 @@ class TestPageRedirects(TestCase):
         self.assertEqual(p1.get(), text)
         self.assertRaises(pywikibot.exceptions.IsRedirectPage, p2.get)
         self.assertRaises(pywikibot.exceptions.NoPage, p3.get)
+
+    def test_set_redirect_target(self):
+        """Test set_redirect_target method."""
+        # R1 redirects to R2 and R3 doesn't exist.
+        site = self.get_site()
+        p1 = pywikibot.Page(site, u'User:Legoktm/R2')
+        p2 = pywikibot.Page(site, u'User:Legoktm/R1')
+        p3 = pywikibot.Page(site, u'User:Legoktm/R3')
+
+        text = p2.get(get_redirect=True)
+        self.assertRaises(pywikibot.exceptions.IsNotRedirectPage,
+                          p1.set_redirect_target, p2)
+        self.assertRaises(pywikibot.exceptions.NoPage, p3.set_redirect_target,
+                          p2)
+        p2.set_redirect_target(p1, save=False)
+        self.assertEqual(text, p2.get(get_redirect=True))
 
 
 class TestPageUserAction(DefaultSiteTestCase):

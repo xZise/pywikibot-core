@@ -92,7 +92,7 @@ Options (may be omitted):
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -331,7 +331,7 @@ class DiscussionPage(pywikibot.Page):
         self.archiver = archiver
         # for testing purposes we allow archiver to be None and we are able
         # to create the a DiscussionPage in this way:
-        # >>> import pwb, pywikibot as py
+        # >>> import pywikibot as py
         # >>> from scripts.archivebot import DiscussionPage
         # >>> d = DiscussionPage(py.Page(py.Site(), <talk page name>), None)
         if archiver is None:
@@ -567,9 +567,9 @@ class PageArchiver(object):
             # Save the archives first (so that bugs don't cause a loss of data)
             for a in sorted(self.archives.keys()):
                 self.comment_params['count'] = self.archives[a].archived_threads
-                comment = i18n.twntranslate(self.site.code,
-                                            'archivebot-archive-summary',
-                                            self.comment_params)
+                comment = i18n.twtranslate(self.site.code,
+                                           'archivebot-archive-summary',
+                                           self.comment_params)
                 self.archives[a].update(comment)
 
             # Save the page itself
@@ -580,9 +580,9 @@ class PageArchiver(object):
                 = comma.join(a.title(asLink=True)
                              for a in self.archives.values())
             self.comment_params['why'] = comma.join(whys)
-            comment = i18n.twntranslate(self.site.code,
-                                        'archivebot-page-summary',
-                                        self.comment_params)
+            comment = i18n.twtranslate(self.site.code,
+                                       'archivebot-page-summary',
+                                       self.comment_params)
             self.page.update(comment)
 
 

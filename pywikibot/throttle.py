@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -136,8 +136,9 @@ class Throttle(object):
             else:
                 f.close()
             self.process_multiplicity = count
-            pywikibot.log(u"Found %(count)s %(mysite)s processes "
-                          u"running, including this one." % locals())
+            pywikibot.log(
+                'Found {0} {1} processes running, including this one.'.format(
+                    count, mysite))
         finally:
             self.lock.release()
 

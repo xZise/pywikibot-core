@@ -15,20 +15,21 @@ The following parameters are supported:
 """
 #
 # (C) xqt, 2010-2014
-# (C) Pywikibot team, 2014
+# (C) Pywikibot team, 2015
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
 
 import pywikibot
 from pywikibot import i18n
+from pywikibot.tools.formatter import color_format
 
 
-class BlockreviewBot:
+class BlockreviewBot(object):
 
     """Block review bot."""
 
@@ -270,8 +271,8 @@ class BlockreviewBot:
         if text != page.text:
             # Show the title of the page we're working on.
             # Highlight the title in purple.
-            pywikibot.output(u"\n\n>>> \03{lightpurple}%s\03{default} <<<"
-                             % page.title())
+            pywikibot.output(color_format(
+                '\n\n>>> {lightpurple}{0}{default} <<<', page.title()))
             # show what was changed
             pywikibot.showDiff(page.get(), text)
             pywikibot.output(u'Comment: %s' % comment)

@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -939,12 +939,16 @@ class Family(object):
         return cls
 
     @property
+    @deprecated('Family.codes or APISite.validLanguageLinks')
     def iwkeys(self):
+        """DEPRECATED: List of (interwiki_forward's) family codes."""
         if self.interwiki_forward:
             return list(pywikibot.Family(self.interwiki_forward).langs.keys())
         return list(self.langs.keys())
 
+    @deprecated('APISite.interwiki')
     def get_known_families(self, site):
+        """DEPRECATED: Return dict of inter-family interwiki links."""
         return self.known_families
 
     def linktrail(self, code, fallback='_default'):
@@ -952,7 +956,7 @@ class Family(object):
 
         Returns a string, not a compiled regular expression object.
 
-        This reads from the family file, and ''not'' from
+        This reads from the family file, and **not** from
         [[MediaWiki:Linktrail]], because the MW software currently uses a
         built-in linktrail from its message files and ignores the wiki
         value.
@@ -966,7 +970,8 @@ class Family(object):
                 "ERROR: linktrail in language %(language_code)s unknown"
                 % {'language_code': code})
 
-    def category_redirects(self, code, fallback="_default"):
+    def _category_redirects(self, code, fallback='_default'):
+        """Return list of category redirect templates."""
         if not hasattr(self, "_catredirtemplates") or \
            code not in self._catredirtemplates:
             self.get_cr_templates(code, fallback)
@@ -976,7 +981,8 @@ class Family(object):
             raise KeyError("ERROR: title for category redirect template in "
                            "language '%s' unknown" % code)
 
-    def get_cr_templates(self, code, fallback):
+    def _get_cr_templates(self, code, fallback):
+        """Build list of category redirect templates."""
         if not hasattr(self, "_catredirtemplates"):
             self._catredirtemplates = {}
         if code in self.category_redirect_templates:
@@ -998,7 +1004,18 @@ class Family(object):
                     cr_list.append(newtitle)
         self._catredirtemplates[code] = cr_list
 
+    @deprecated('Page.isCategoryRedirect')
+    def category_redirects(self, code, fallback="_default"):
+        """DEPRECATED: Return list of category redirect templates."""
+        return self._category_redirects(code, fallback)
+
+    @deprecated('Page.isCategoryRedirect')
+    def get_cr_templates(self, code, fallback):
+        """DEPRECATED: Build list of category redirect templates."""
+        return self._get_cr_templates(code, fallback)
+
     def disambig(self, code, fallback='_default'):
+        """"Return list of disambiguation templates."""
         if code in self.disambiguationTemplates:
             return self.disambiguationTemplates[code]
         elif fallback:
@@ -1059,44 +1076,76 @@ class Family(object):
         # Override this ONLY if the wiki family requires a path prefix
         return ''
 
-    def _hostname(self, code):
+    def _hostname(self, code, protocol=None):
         """Return the protocol and hostname."""
-        protocol = self.protocol(code)
+        if protocol is None:
+            protocol = self.protocol(code)
         if protocol == 'https':
             host = self.ssl_hostname(code)
         else:
             host = self.hostname(code)
         return protocol, host
 
-    def base_url(self, code, uri):
-        protocol, host = self._hostname(code)
+    def base_url(self, code, uri, protocol=None):
+        """
+        Prefix uri with port and hostname.
+
+        @param code: The site code
+        @param uri: The absolute path after the hostname
+        @param protocol: The protocol which is used. If None it'll determine the
+            protocol from the code.
+        @return: The full URL
+        @rtype: str
+        """
+        protocol, host = self._hostname(code, protocol)
         if protocol == 'https':
             uri = self.ssl_pathprefix(code) + uri
         return urlparse.urljoin('{0}://{1}'.format(protocol, host), uri)
 
     def path(self, code):
+        """Return path to index.php."""
         return '%s/index.php' % self.scriptpath(code)
 
     def querypath(self, code):
+        """Return path to query.php."""
         return '%s/query.php' % self.scriptpath(code)
 
     def apipath(self, code):
+        """Return path to api.php."""
         return '%s/api.php' % self.scriptpath(code)
 
     @deprecated('APISite.article_path')
     def nicepath(self, code):
+        """DEPRECATED: Return nice path prefix, e.g. '/wiki/'."""
         return '/wiki/'
 
     def rcstream_host(self, code):
+        """Hostname for RCStream."""
         raise NotImplementedError("This family does not support RCStream")
 
     @deprecated_args(name='title')
     def get_address(self, code, title):
+        """Return the path to title using index.php with redirects disabled."""
         return '%s?title=%s&redirect=no' % (self.path(code), title)
 
     @deprecated('APISite.nice_get_address(title)')
     def nice_get_address(self, code, title):
+        """DEPRECATED: Return the nice path to title using index.php."""
         return '%s%s' % (self.nicepath(code), title)
+
+    def interface(self, code):
+        """
+        Return interface to use for code.
+
+        @rtype: str or subclass of BaseSite
+        """
+        if code in self.interwiki_removals:
+            if code in self.codes:
+                pywikibot.warn('Interwiki removal %s is in %s codes'
+                               % (code, self))
+            return 'RemovedSite'
+
+        return config.site_interface
 
     # List of codes which aren't returned by from_url; True returns None always
     _ignore_from_url = []
@@ -1172,10 +1221,11 @@ class Family(object):
                 .format(url, ', '.join(str(s) for s in matched_sites)))
 
     def maximum_GET_length(self, code):
+        """Return the maximum URL length for GET instead of POST."""
         return config.maximum_GET_length
 
     def dbName(self, code):
-        # returns the name of the MySQL database
+        """Return the name of the MySQL database."""
         return '%s%s' % (code, self.name)
 
     # Which version of MediaWiki is used?
@@ -1186,7 +1236,7 @@ class Family(object):
         Use L{pywikibot.tools.MediaWikiVersion} to compare version strings.
         """
         # Here we return the latest mw release for downloading
-        return '1.25.1'
+        return '1.25.2'
 
     def force_version(self, code):
         """
@@ -1378,6 +1428,7 @@ class SingleSiteFamily(Family):
         return (self.domain, )
 
     def hostname(self, code):
+        """Return the domain as the hostname."""
         return self.domain
 
 
@@ -1524,15 +1575,18 @@ class WikimediaFamily(Family):
 
     @property
     def interwiki_removals(self):
+        """Return a list of interwiki codes to be removed from wiki pages."""
         return frozenset(self.removed_wikis + self.closed_wikis)
 
     @property
     def interwiki_replacements(self):
+        """Return an interwiki code replacement mapping."""
         rv = self.code_aliases.copy()
         rv.update(self.interwiki_replacement_overrides)
         return FrozenDict(rv)
 
     def shared_image_repository(self, code):
+        """Return Wikimedia Commons as the shared image repository."""
         return ('commons', 'commons')
 
     def protocol(self, code):
@@ -1540,12 +1594,13 @@ class WikimediaFamily(Family):
         return 'https'
 
     def rcstream_host(self, code):
+        """Return 'stream.wikimedia.org' as the RCStream hostname."""
         return 'stream.wikimedia.org'
 
 
 class WikimediaOrgFamily(SingleSiteFamily, WikimediaFamily):
 
-    """Single site family for sites hosted at *.wikimedia.org."""
+    """Single site family for sites hosted at C{*.wikimedia.org}."""
 
     @property
     def domain(self):
@@ -1557,8 +1612,16 @@ class AutoFamily(SingleSiteFamily):
 
     """Family that automatically loads the site configuration."""
 
+    @deprecated_args(site=None)
     def __init__(self, name, url):
-        """Constructor."""
+        """
+        Constructor.
+
+        @param name: Name for the family
+        @type name: str
+        @param url: API endpoint URL of the wiki
+        @type url: str
+        """
         self.name = name
         self.url = urlparse.urlparse(url)
         self.domain = self.url.netloc

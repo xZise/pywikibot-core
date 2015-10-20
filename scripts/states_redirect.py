@@ -19,7 +19,7 @@ PRE-REQUISITE : Need to install python-pycountry library.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -36,13 +36,6 @@ except ImportError:
     pywikibot.error('See: https://pypi.python.org/pypi/pycountry')
     pywikibot.exception()
     sys.exit(1)
-
-msg = {
-    'en': 'Creating state abbreviation redirect',
-    'ar': u'إنشاء تحويلة اختصار الولاية',
-    'fa': u'ایجاد تغییرمسیر برای نام اختصاری ایالت',
-    'he': u'יוצר הפניה מראשי התיבות של המדינה',
-}
 
 
 class StatesRedirectBot(pywikibot.Bot):
@@ -119,7 +112,8 @@ class StatesRedirectBot(pywikibot.Bot):
                     if change == 'y':
                         pl.set_redirect_target(
                             p2, create=True,
-                            summary=i18n.translate(self.site, msg))
+                            summary=i18n.twtranslate(self.site,
+                                                     'states_redirect-comment'))
 
 
 def main(*args):

@@ -1,6 +1,6 @@
 # -*- coding: utf-8  -*-
 """Family module for Vikidia."""
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -14,7 +14,7 @@ class Family(family.SubdomainFamily):
     name = 'vikidia'
     domain = 'vikidia.org'
 
-    codes = ['ca', 'en', 'es', 'fr', 'it', 'ru']
+    codes = ['ca', 'en', 'es', 'eu', 'fr', 'it', 'ru', 'scn']
 
     def protocol(self, code):
         """Return https as the protocol for this family."""

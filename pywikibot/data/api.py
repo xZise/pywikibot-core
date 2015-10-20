@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -29,7 +29,10 @@ from warnings import warn
 
 import pywikibot
 from pywikibot import config, login
-from pywikibot.tools import MediaWikiVersion, deprecated, itergroup, ip, PY2
+from pywikibot.tools import (
+    MediaWikiVersion, deprecated, itergroup, ip, PY2, getargspec,
+)
+from pywikibot.tools.formatter import color_format
 from pywikibot.exceptions import (
     Server504Error, Server414Error, FatalServerError, NoUsername, Error
 )
@@ -113,7 +116,7 @@ class APIError(Error):
                     '{0}:{1}'.format(key, val)
                     for key, val in self.other.items()))
 
-        return "%(code)s: %(info)s" % self.__dict__
+        return '{0}: {1}'.format(self.code, self.info)
 
 
 class UploadWarning(APIError):
@@ -1034,6 +1037,7 @@ class ParamInfo(Container):
                     if self[mod][attribute])
 
     @property
+    @deprecated('parameter()')
     def query_modules_with_limits(self):
         """Set of all query modules which have limits."""
         if not self._with_limits:
@@ -1297,24 +1301,24 @@ class Request(MutableMapping):
     >>> # add a new parameter
     >>> r['siprop'] = "namespaces"
     >>> # note that "uiprop" param gets added automatically
-    >>> r.action  # doctest: +IGNORE_UNICODE
-    u'query'
-    >>> sorted(r._params.keys())  # doctest: +IGNORE_UNICODE
-    [u'action', u'meta', u'siprop']
-    >>> r._params['action']  # doctest: +IGNORE_UNICODE
-    [u'query']
-    >>> r._params['meta']  # doctest: +IGNORE_UNICODE
-    [u'userinfo', u'siteinfo']
-    >>> r._params['siprop']  # doctest: +IGNORE_UNICODE
-    [u'namespaces']
-    >>> data = r.submit()  # doctest: +IGNORE_UNICODE
+    >>> str(r.action)
+    'query'
+    >>> sorted(str(key) for key in r._params.keys())
+    ['action', 'meta', 'siprop']
+    >>> [str(key) for key in r._params['action']]
+    ['query']
+    >>> [str(key) for key in r._params['meta']]
+    ['userinfo', 'siteinfo']
+    >>> [str(key) for key in r._params['siprop']]
+    ['namespaces']
+    >>> data = r.submit()
     >>> isinstance(data, dict)
     True
     >>> set(['query', 'batchcomplete', 'warnings']).issuperset(data.keys())
     True
     >>> 'query' in data
     True
-    >>> sorted(data[u'query'].keys())  # doctest: +IGNORE_UNICODE
+    >>> sorted(str(key) for key in data[u'query'].keys())
     ['namespaces', 'userinfo']
 
     """
@@ -1509,11 +1513,14 @@ class Request(MutableMapping):
         @return: The normalized keyword arguments.
         @rtype: dict
         """
+        if 'expiry' in kwargs and kwargs['expiry'] is None:
+            del kwargs['expiry']
+
         args = set()
         for super_cls in inspect.getmro(cls):
             if not super_cls.__name__.endswith('Request'):
                 break
-            args |= set(inspect.getargspec(super_cls.__init__)[0])
+            args |= set(getargspec(super_cls.__init__)[0])
         else:
             raise ValueError('Request was not a super class of '
                              '{0!r}'.format(cls))
@@ -1667,16 +1674,15 @@ class Request(MutableMapping):
         if self.action == 'query':
             meta = self._params.get("meta", [])
             if "userinfo" not in meta:
-                meta.append("userinfo")
-                self._params["meta"] = meta
+                meta = set(meta + ['userinfo'])
+                self._params['meta'] = list(meta)
             uiprop = self._params.get("uiprop", [])
             uiprop = set(uiprop + ["blockinfo", "hasmsg"])
             self._params["uiprop"] = list(sorted(uiprop))
-            if "properties" in self._params:
-                if "info" in self._params["properties"]:
-                    inprop = self._params.get("inprop", [])
-                    info = set(inprop + ["protection", "talkid", "subjectid"])
-                    self._params["info"] = list(info)
+            if 'prop' in self._params:
+                if self.site.has_extension('ProofreadPage'):
+                    prop = set(self._params['prop'] + ['proofread'])
+                    self._params['prop'] = list(prop)
             # When neither 'continue' nor 'rawcontinue' is present and the
             # version number is at least 1.25wmf5 we add a dummy rawcontinue
             # parameter. Querying siteinfo is save as it adds 'continue'.
@@ -1771,9 +1777,9 @@ class Request(MutableMapping):
     def _simulate(self, action):
         """Simulate action."""
         if action and config.simulate and (self.write or action in config.actions_to_block):
-            pywikibot.output(
-                u'\03{lightyellow}SIMULATION: %s action blocked.\03{default}'
-                % action)
+            pywikibot.output(color_format(
+                '{lightyellow}SIMULATION: {0} action blocked.{default}',
+                action))
             return {action: {'result': 'Success', 'nochange': ''}}
 
     def _is_wikibase_error_retryable(self, error):
@@ -2191,6 +2197,7 @@ class CachedRequest(Request):
 
         @param expiry: either a number of days or a datetime.timedelta object
         """
+        assert expiry is not None
         super(CachedRequest, self).__init__(*args, **kwargs)
         if not isinstance(expiry, datetime.timedelta):
             expiry = datetime.timedelta(expiry)
@@ -2498,10 +2505,11 @@ class QueryGenerator(_RequestWrapper):
             parameters['continue'] = True
         self.request = self.request_class(**kwargs)
 
-        # This forces all paraminfo for all query modules to be bulk loaded.
-        limited_modules = (
-            set(self.modules) & self.site._paraminfo.query_modules_with_limits
-        )
+        self.site._paraminfo.fetch('query+' + mod for mod in self.modules)
+
+        limited_modules = set(
+            mod for mod in self.modules
+            if self.site._paraminfo.parameter('query+' + mod, 'limit'))
 
         if not limited_modules:
             self.limited_module = None
@@ -2512,7 +2520,7 @@ class QueryGenerator(_RequestWrapper):
             # Query will continue as needed until limit (if any) for this module
             # is reached.
             for module in self.modules:
-                if module in self.site._paraminfo.query_modules_with_limits:
+                if module in limited_modules:
                     self.limited_module = module
                     limited_modules.remove(module)
                     break
@@ -2839,12 +2847,6 @@ class PageGenerator(QueryGenerator):
         parameters['generator'] = generator
         QueryGenerator.__init__(self, **kwargs)
         self.resultkey = "pages"  # element to look for in result
-
-        # TODO: Bug T91912 when using step > 50 with proofread, with queries
-        # returning Pages from Page ns.
-        if self.site.has_extension('ProofreadPage'):
-            self.request['prop'].append('proofread')
-
         self.props = self.request['prop']
 
     def result(self, pagedata):
@@ -3020,7 +3022,7 @@ class LoginManager(login.LoginManager):
 
     def storecookiedata(self, data):
         """Ignore data; cookies are set by threadedhttp module."""
-        pywikibot.cookie_jar.save()
+        http.cookie_jar.save()
 
 
 def update_page(page, pagedict, props=[]):
@@ -3063,11 +3065,7 @@ def update_page(page, pagedict, props=[]):
             page._protection[item['type']] = item['level'], item['expiry']
     if 'revisions' in pagedict:
         # TODO: T102735: Use the page content model for <1.21
-        # TODO: Add rvprop 'contentmodel' to all revisions calls, but only
-        # on 1.21+ otherwise it causes API warnings
         for rev in pagedict['revisions']:
-            assert 'parentid' in rev, 'parentid missing in revision %r' % rev
-
             revision = pywikibot.page.Revision(
                 revid=rev['revid'],
                 timestamp=pywikibot.Timestamp.fromISOformat(rev['timestamp']),

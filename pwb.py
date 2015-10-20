@@ -13,7 +13,7 @@ search paths so the package does not need to be installed, etc.
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 __version__ = '$Id$'
 
 # The following snippet was developed by Ned Batchelder (and others)
@@ -56,6 +56,13 @@ if not python_is_supported():
 pwb = None
 
 
+def remove_modules():
+    """Remove pywikibot modules."""
+    for name in list(sys.modules):
+        if name.startswith('pywikibot'):
+            del sys.modules[name]
+
+
 def tryimport_pwb():
     """Try to import pywikibot.
 
@@ -68,6 +75,8 @@ def tryimport_pwb():
         import pywikibot  # noqa
         pwb = pywikibot
     except RuntimeError:
+        remove_modules()
+
         pwb = lambda: None
         pwb.argvu = []
 

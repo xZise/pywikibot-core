@@ -7,7 +7,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 #
@@ -333,7 +333,7 @@ class OauthLoginManager(LoginManager):
         @type sysop: bool
 
         @raises NoUsername: No username is configured for the requested site.
-        @raise OAuthImpossible: mwoauth isn't installed
+        @raises OAuthImpossible: mwoauth isn't installed
         """
         if isinstance(mwoauth, ImportError):
             raise OAuthImpossible('mwoauth is not installed: %s.' % mwoauth)

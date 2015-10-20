@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -46,8 +46,8 @@ class FlowPage(BasePage):
         @param title: normalized title of the page
         @type title: unicode
 
-        @raise TypeError: incorrect use of parameters
-        @raise ValueError: use of non-Flow-enabled Site
+        @raises TypeError: incorrect use of parameters
+        @raises ValueError: use of non-Flow-enabled Site
         """
         super(FlowPage, self).__init__(source, title)
 
@@ -164,6 +164,10 @@ class Topic(FlowPage):
             self._data = self.site.load_topic(self, format)
         return self._data
 
+    def _reload(self):
+        """Forcibly reload the topic's root post."""
+        self.root._load(load_from_topic=True)
+
     @classmethod
     def create_topic(cls, board, title, content, format='wikitext'):
         """Create and return a Topic object for a new topic on a Board.
@@ -194,8 +198,8 @@ class Topic(FlowPage):
         @type topiclist_data: dict
         @return: A Topic object derived from the supplied data
         @rtype: Topic
-        @raise TypeError: any passed parameters have wrong types
-        @raise ValueError: the passed topiclist_data is missing required data
+        @raises TypeError: any passed parameters have wrong types
+        @raises ValueError: the passed topiclist_data is missing required data
         """
         if not isinstance(board, Board):
             raise TypeError('board must be a pywikibot.flow.Board object.')
@@ -218,6 +222,11 @@ class Topic(FlowPage):
     def is_locked(self):
         """Whether this topic is locked."""
         return self.root._current_revision['isLocked']
+
+    @property
+    def is_moderated(self):
+        """Whether this topic is moderated."""
+        return self.root._current_revision['isModerated']
 
     def replies(self, format='wikitext', force=False):
         """A list of replies to this topic's root post.
@@ -243,23 +252,60 @@ class Topic(FlowPage):
         """
         return self.root.reply(content, format)
 
-    def lock(self, reason='Closed'):
+    # Moderation
+    def lock(self, reason):
         """Lock this topic.
 
         @param reason: The reason for locking this topic
         @type reason: unicode
         """
         self.site.lock_topic(self, True, reason)
-        self.root._load(load_from_topic=True)
+        self._reload()
 
-    def unlock(self, reason='Reopened'):
+    def unlock(self, reason):
         """Unlock this topic.
 
         @param reason: The reason for unlocking this topic
         @type reason: unicode
         """
         self.site.lock_topic(self, False, reason)
-        self.root._load(load_from_topic=True)
+        self._reload()
+
+    def delete_mod(self, reason):
+        """Delete this topic through the Flow moderation system.
+
+        @param reason: The reason for deleting this topic.
+        @type reason: unicode
+        """
+        self.site.delete_topic(self, reason)
+        self._reload()
+
+    def hide(self, reason):
+        """Hide this topic.
+
+        @param reason: The reason for hiding this topic.
+        @type reason: unicode
+        """
+        self.site.hide_topic(self, reason)
+        self._reload()
+
+    def suppress(self, reason):
+        """Suppress this topic.
+
+        @param reason: The reason for suppressing this topic.
+        @type reason: unicode
+        """
+        self.site.suppress_topic(self, reason)
+        self._reload()
+
+    def restore(self, reason):
+        """Restore this topic.
+
+        @param reason: The reason for restoring this topic.
+        @type reason: unicode
+        """
+        self.site.restore_topic(self, reason)
+        self._reload()
 
 
 # Flow non-page-like objects
@@ -276,7 +322,7 @@ class Post(object):
         @param uuid: UUID of a Flow post
         @type uuid: unicode
 
-        @raise TypeError: incorrect types of parameters
+        @raises TypeError: incorrect types of parameters
         """
         if not isinstance(page, Topic):
             raise TypeError('Page must be a Topic object')
@@ -303,8 +349,8 @@ class Post(object):
         @type data: dict
 
         @return: A Post object
-        @raise TypeError: data is not a dict
-        @raise ValueError: data is missing required entries
+        @raises TypeError: data is not a dict
+        @raises ValueError: data is missing required entries
         """
         post = cls(page, post_uuid)
         post._set_data(data)
@@ -316,8 +362,8 @@ class Post(object):
 
         @param data: The data to store internally
         @type data: dict
-        @raise TypeError: data is not a dict
-        @raise ValueError: missing data entries or post/revision not found
+        @raises TypeError: data is not a dict
+        @raises ValueError: missing data entries or post/revision not found
         """
         if not isinstance(data, dict):
             raise TypeError('Illegal post data (must be a dictionary).')
@@ -375,6 +421,13 @@ class Post(object):
         """
         return self._page
 
+    @property
+    def is_moderated(self):
+        """Whether this post is moderated."""
+        if not hasattr(self, '_current_revision'):
+            self._load()
+        return self._current_revision['isModerated']
+
     def get(self, format='wikitext', force=False, sysop=False):
         """Return the contents of the post in the given format.
 
@@ -386,7 +439,7 @@ class Post(object):
         @type format: unicode
         @return: The contents of the post in the given content format
         @rtype: unicode
-        @raise NotImplementedError: use of 'sysop'
+        @raises NotImplementedError: use of 'sysop'
         """
         if sysop:
             raise NotImplementedError
@@ -402,7 +455,7 @@ class Post(object):
         @type format: str ('wikitext', 'html', or 'fixed-html')
         @param force: Whether to reload from the API instead of using the cache
         @type force: bool
-        @return This post's replies
+        @return: This post's replies
         @rtype: list of Posts
         """
         if format not in ('wikitext', 'html', 'fixed-html'):
@@ -445,3 +498,40 @@ class Post(object):
         data = self.site.reply_to_post(self.page, reply_to, content, format)
         post = Post(self.page, data['post-id'])
         return post
+
+    # Moderation
+    def delete(self, reason):
+        """Delete this post through the Flow moderation system.
+
+        @param reason: The reason for deleting this post.
+        @type reason: unicode
+        """
+        self.site.delete_post(self, reason)
+        self._load()
+
+    def hide(self, reason):
+        """Hide this post.
+
+        @param reason: The reason for hiding this post.
+        @type reason: unicode
+        """
+        self.site.hide_post(self, reason)
+        self._load()
+
+    def suppress(self, reason):
+        """Suppress this post.
+
+        @param reason: The reason for suppressing this post.
+        @type reason: unicode
+        """
+        self.site.suppress_post(self, reason)
+        self._load()
+
+    def restore(self, reason):
+        """Restore this post.
+
+        @param reason: The reason for restoring this post.
+        @type reason: unicode
+        """
+        self.site.restore_post(self, reason)
+        self._load()

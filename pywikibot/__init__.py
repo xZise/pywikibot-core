@@ -5,17 +5,17 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __release__ = '2.0b3'
 __version__ = '$Id$'
+__url__ = 'https://www.mediawiki.org/wiki/Special:MyLanguage/Manual:Pywikibot'
 
 import datetime
 import math
 import re
 import sys
 import threading
-import json
 
 if sys.version_info[0] > 2:
     from queue import Queue
@@ -25,18 +25,24 @@ else:
 
 from warnings import warn
 
-# Use pywikibot. prefix for all in-package imports; this is to prevent
-# confusion with similarly-named modules in version 1 framework, for users
-# who want to continue using both
+# logging must be imported first so that other modules can
+# use these logging methods during the initialisation sequence.
+from pywikibot.logging import (
+    critical, debug, error, exception, log, output, stdout, warning
+)
 
 from pywikibot import config2 as config
 from pywikibot.bot import (
-    output, warning, error, critical, debug, stdout, exception,
-    input, input_choice, input_yn, inputChoice, handle_args, showHelp, ui, log,
+    input, input_choice, input_yn, inputChoice, handle_args, showHelp, ui,
     calledModuleName, Bot, CurrentPageBot, WikidataBot,
     # the following are flagged as deprecated on usage
     handleArgs,
 )
+from pywikibot.bot_choice import (
+    QuitKeyboardInterrupt as _QuitKeyboardInterrupt,
+)
+from pywikibot.data.api import UploadWarning as _UploadWarning
+from pywikibot.diff import PatchManager
 from pywikibot.exceptions import (
     Error, InvalidTitle, BadTitle, NoPage, NoMoveTarget, SectionError,
     SiteDefinitionError, NoSuchSite, UnknownSite, UnknownFamily,
@@ -49,13 +55,25 @@ from pywikibot.exceptions import (
     ServerError, FatalServerError, Server504Error,
     CaptchaError, SpamfilterError, CircularRedirect, InterwikiRedirectPage,
     WikiBaseError, CoordinateGlobeUnknownException,
+    DeprecatedPageNotFoundError as _DeprecatedPageNotFoundError,
+    _EmailUserError,
 )
-from pywikibot.tools import PY2, UnicodeMixin, redirect_func
+from pywikibot.family import Family
 from pywikibot.i18n import translate
-from pywikibot.data.api import UploadWarning
-from pywikibot.diff import PatchManager
+from pywikibot.site import BaseSite
+from pywikibot.tools import (
+    # __ to avoid conflict with ModuleDeprecationWrapper._deprecated
+    deprecated as __deprecated,
+    deprecate_arg as __deprecate_arg,
+    normalize_username,
+    redirect_func,
+    ModuleDeprecationWrapper as _ModuleDeprecationWrapper,
+    PY2,
+    UnicodeMixin,
+)
+from pywikibot.tools.formatter import color_format
+
 import pywikibot.textlib as textlib
-import pywikibot.tools
 
 textlib_methods = (
     'unescape', 'replaceExcept', 'removeDisabledParts', 'removeHTMLParts',
@@ -105,8 +123,8 @@ for _name in textlib_methods:
     globals()[_name] = wrapped_func
 
 
-deprecated = redirect_func(pywikibot.tools.deprecated)
-deprecate_arg = redirect_func(pywikibot.tools.deprecate_arg)
+deprecated = redirect_func(__deprecated)
+deprecate_arg = redirect_func(__deprecate_arg)
 
 
 class Timestamp(datetime.datetime):
@@ -197,7 +215,10 @@ class Timestamp(datetime.datetime):
             return newdt
 
 
-class Coordinate(object):
+from pywikibot._wbtypes import WbRepresentation as _WbRepresentation
+
+
+class Coordinate(_WbRepresentation):
 
     """
     Class for handling and storing Coordinates.
@@ -205,6 +226,8 @@ class Coordinate(object):
     For now its just being used for DataSite, but
     in the future we can use it for the GeoData extension.
     """
+
+    _items = ('lat', 'lon', 'globe')
 
     def __init__(self, lat, lon, alt=None, precision=None, globe='earth',
                  typ="", name="", dim=None, site=None, entity=''):
@@ -244,13 +267,6 @@ class Coordinate(object):
             self.site = Site().data_repository()
         else:
             self.site = site
-
-    def __repr__(self):
-        string = 'Coordinate(%s, %s' % (self.lat, self.lon)
-        if self.globe != 'earth':
-            string += ', globe="%s"' % self.globe
-        string += ')'
-        return string
 
     @property
     def entity(self):
@@ -325,7 +341,7 @@ class Coordinate(object):
         raise NotImplementedError
 
 
-class WbTime(object):
+class WbTime(_WbRepresentation):
 
     """A Wikibase time representation."""
 
@@ -347,6 +363,9 @@ class WbTime(object):
                  }
 
     FORMATSTR = '{0:+012d}-{1:02d}-{2:02d}T{3:02d}:{4:02d}:{5:02d}Z'
+
+    _items = ('year', 'month', 'day', 'hour', 'minute', 'second',
+              'precision', 'before', 'after', 'timezone', 'calendarmodel')
 
     def __init__(self, year=None, month=None, day=None,
                  hour=None, minute=None, second=None,
@@ -444,24 +463,12 @@ class WbTime(object):
                                ts[u'before'], ts[u'after'],
                                ts[u'timezone'], ts[u'calendarmodel'])
 
-    def __str__(self):
-        return json.dumps(self.toWikibase(), indent=4, sort_keys=True,
-                          separators=(',', ': '))
 
-    def __eq__(self, other):
-        return self.__dict__ == other.__dict__
-
-    def __repr__(self):
-        return u"WbTime(year=%(year)d, month=%(month)d, day=%(day)d, " \
-            u"hour=%(hour)d, minute=%(minute)d, second=%(second)d, " \
-            u"precision=%(precision)d, before=%(before)d, after=%(after)d, " \
-            u"timezone=%(timezone)d, calendarmodel='%(calendarmodel)s')" \
-            % self.__dict__
-
-
-class WbQuantity(object):
+class WbQuantity(_WbRepresentation):
 
     """A Wikibase quantity representation."""
+
+    _items = ('amount', 'upperBound', 'lowerBound', 'unit')
 
     def __init__(self, amount, unit=None, error=None):
         u"""
@@ -476,9 +483,6 @@ class WbQuantity(object):
         """
         if amount is None:
             raise ValueError('no amount given')
-        if unit is not None and unit != '1':
-            raise NotImplementedError(
-                'Currently only unit-less quantities are supported')
         if unit is None:
             unit = '1'
         self.amount = amount
@@ -512,17 +516,6 @@ class WbQuantity(object):
         lowerBound = eval(wb['lowerBound'])
         error = (upperBound - amount, amount - lowerBound)
         return cls(amount, wb['unit'], error)
-
-    def __str__(self):
-        return json.dumps(self.toWikibase(), indent=4, sort_keys=True,
-                          separators=(',', ': '))
-
-    def __eq__(self, other):
-        return self.__dict__ == other.__dict__
-
-    def __repr__(self):
-        return (u"WbQuantity(amount=%(amount)s, upperBound=%(upperBound)s, "
-                u"lowerBound=%(lowerBound)s, unit=%(unit)s)" % self.__dict__)
 
 
 _sites = {}
@@ -564,14 +557,14 @@ def Site(code=None, fam=None, user=None, sysop=None, interface=None, url=None):
             # Iterate through all families and look, which does apply to
             # the given URL
             for fam in config.family_files:
-                family = pywikibot.family.Family.load(fam)
+                family = Family.load(fam)
                 code = family.from_url(url)
                 if code is not None:
-                    matched_sites += [(code, fam)]
+                    matched_sites += [(code, family)]
 
             if matched_sites:
                 if len(matched_sites) > 1:
-                    pywikibot.warning(
+                    warning(
                         'Found multiple matches for URL "{0}": {1} (use first)'
                         .format(url, ', '.join(str(s) for s in matched_sites)))
                 _url_cache[url] = matched_sites[0]
@@ -590,7 +583,11 @@ def Site(code=None, fam=None, user=None, sysop=None, interface=None, url=None):
         # Fallback to config defaults
         code = code or config.mylang
         fam = fam or config.family
-    interface = interface or config.site_interface
+
+        if not isinstance(fam, Family):
+            fam = Family.load(fam)
+
+    interface = interface or fam.interface(code)
 
     # config.usernames is initialised with a dict for each family name
     family_name = str(fam)
@@ -606,12 +603,12 @@ def Site(code=None, fam=None, user=None, sysop=None, interface=None, url=None):
             tmp = __import__('pywikibot.site', fromlist=[interface])
             interface = getattr(tmp, interface)
         except ImportError:
-            raise ValueError("Invalid interface name '%(interface)s'" % locals())
+            raise ValueError('Invalid interface name: {0}'.format(interface))
 
-    if not issubclass(interface, pywikibot.site.BaseSite):
+    if not issubclass(interface, BaseSite):
         warning('Site called with interface=%s' % interface.__name__)
 
-    user = pywikibot.tools.normalize_username(user)
+    user = normalize_username(user)
     key = '%s:%s:%s:%s' % (interface.__name__, fam, code, user)
     if key not in _sites or not isinstance(_sites[key], interface):
         _sites[key] = interface(code=code, fam=fam, user=user, sysop=sysop)
@@ -626,10 +623,11 @@ def Site(code=None, fam=None, user=None, sysop=None, interface=None, url=None):
 
 
 # alias for backwards-compability
-getSite = pywikibot.tools.redirect_func(Site, old_name='getSite')
+getSite = redirect_func(Site, old_name='getSite')
 
 
-from .page import (
+# These imports depend on Wb* classes above.
+from pywikibot.page import (
     Page,
     FilePage,
     Category,
@@ -639,13 +637,13 @@ from .page import (
     PropertyPage,
     Claim,
 )
-from .page import html2unicode, url2unicode, unicode2html
+from pywikibot.page import html2unicode, url2unicode, unicode2html
 
 
 link_regex = re.compile(r'\[\[(?P<title>[^\]|[<>{}]*)(\|.*?)?\]\]')
 
 
-@pywikibot.tools.deprecated("comment parameter for page saving method")
+@__deprecated('comment parameter for page saving method')
 def setAction(s):
     """Set a summary to use for changed page submissions."""
     config.default_edit_summary = s
@@ -692,11 +690,9 @@ def stopme():
 
         if page_put_queue.qsize() > 1:
             num, sec = remaining()
-            format_values = dict(num=num, sec=sec)
-            output(u'\03{lightblue}'
-                   u'Waiting for %(num)i pages to be put. '
-                   u'Estimated time remaining: %(sec)s'
-                   u'\03{default}' % format_values)
+            output(color_format(
+                '{lightblue}Waiting for {num} pages to be put. '
+                'Estimated time remaining: {sec}{default}', num=num, sec=sec))
 
         while(_putthread.isAlive()):
             try:
@@ -750,17 +746,23 @@ _putthread = threading.Thread(target=async_manager)
 _putthread.setName('Put-Thread')
 _putthread.setDaemon(True)
 
-wrapper = pywikibot.tools.ModuleDeprecationWrapper(__name__)
+wrapper = _ModuleDeprecationWrapper(__name__)
 wrapper._add_deprecated_attr('ImagePage', FilePage)
 wrapper._add_deprecated_attr(
-    'PageNotFound', pywikibot.exceptions.DeprecatedPageNotFoundError,
+    'cookie_jar', replacement_name='pywikibot.comms.http.cookie_jar')
+wrapper._add_deprecated_attr(
+    'PageNotFound', _DeprecatedPageNotFoundError,
     warning_message=('{0}.{1} is deprecated, and no longer '
                      'used by pywikibot; use http.fetch() instead.'))
 wrapper._add_deprecated_attr(
-    'UserActionRefuse', pywikibot.exceptions._EmailUserError,
+    'UserActionRefuse', _EmailUserError,
     warning_message='UserActionRefuse is deprecated; '
-                    'use UserRightsError and/or NotEmailableError')
+                    'use UserRightsError and/or NotEmailableError instead.')
 wrapper._add_deprecated_attr(
-    'QuitKeyboardInterrupt', pywikibot.bot.QuitKeyboardInterrupt,
+    'QuitKeyboardInterrupt', _QuitKeyboardInterrupt,
     warning_message='pywikibot.QuitKeyboardInterrupt is deprecated; '
-                    'use pywikibot.bot.QuitKeyboardInterrupt instead')
+                    'use pywikibot.bot.QuitKeyboardInterrupt instead.')
+wrapper._add_deprecated_attr(
+    'UploadWarning', _UploadWarning,
+    warning_message='pywikibot.UploadWarning is deprecated; '
+                    'use APISite.upload with a warning handler instead.')

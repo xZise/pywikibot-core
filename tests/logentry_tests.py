@@ -5,24 +5,24 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
 import datetime
-import sys
 
 import pywikibot
+
 from pywikibot.logentries import LogEntryFactory
-from pywikibot.tools import MediaWikiVersion
+from pywikibot.tools import (
+    MediaWikiVersion,
+    UnicodeType as unicode,
+)
 
 from tests.aspects import (
     unittest, MetaTestCaseClass, TestCase, DeprecationTestCase
 )
 from tests.utils import add_metaclass
-
-if sys.version_info[0] > 2:
-    unicode = str
 
 
 class TestLogentriesBase(TestCase):
@@ -107,8 +107,8 @@ class TestLogentriesMeta(MetaTestCaseClass):
 
         # create test methods for the support logtype classes
         for logtype in LogEntryFactory._logtypes:
-            test_name = str('test_%sEntry' % logtype.title())
-            dct[test_name] = test_method(logtype)
+            cls.add_method(dct, 'test_%sEntry' % logtype.title(),
+                           test_method(logtype))
 
         return super(TestLogentriesMeta, cls).__new__(cls, name, bases, dct)
 

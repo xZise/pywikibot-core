@@ -24,7 +24,7 @@
 #     easy_install --upgrade https://pywinauto.googlecode.com/files/pywinauto-0.4.2.zip
 #
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -60,16 +60,16 @@ import pywikibot
 from pywikibot.bot import (
     ui, DEBUG, VERBOSE, INFO, STDOUT, INPUT, WARNING, ERROR, CRITICAL
 )
-from pywikibot.tools import PY2
+from pywikibot.tools import (
+    PY2,
+    UnicodeType as unicode,
+)
 from pywikibot.userinterfaces import (
     terminal_interface_win32, terminal_interface_base, terminal_interface_unix,
 )
 
 from tests.aspects import TestCase
 from tests.utils import unittest, FakeModule
-
-if sys.version_info[0] > 2:
-    unicode = str
 
 
 class Stream(object):
@@ -86,7 +86,7 @@ class Stream(object):
             the patched stream.
         @type patched_streams: dict
         """
-        self._stream = io.StringIO() if sys.version_info[0] > 2 else io.BytesIO()
+        self._stream = io.StringIO() if not PY2 else io.BytesIO()
         self._name = 'std{0}'.format(name)
         self._original = getattr(sys, self._name)
         patched_streams[self._original] = self._stream
@@ -172,7 +172,7 @@ newstdout = strout._stream
 newstderr = strerr._stream
 newstdin = strin._stream
 
-if sys.version_info[0] == 2:
+if PY2:
     # In Python 2 the sys.std* streams use bytes instead of unicode
     # But this module is using unicode_literals so '…' will generate unicode
     # So it'll convert those back into bytes
@@ -229,7 +229,7 @@ class UITestCase(unittest.TestCase):
         unpatch()
 
     def _encode(self, string, encoding='utf-8'):
-        if sys.version_info[0] > 2:
+        if not PY2:
             return string
         else:
             return string.encode(encoding)
@@ -544,7 +544,7 @@ class WindowsTerminalTestCase(UITestCase):
                                     % e)
 
         try:
-            window.TypeKeys('% {UP}{ENTER}^L{HOME}L{ENTER}', with_spaces=True)
+            window.TypeKeys('% {UP}{ENTER}%L{HOME}L{ENTER}', with_spaces=True)
         except Exception as e:
             cls.tearDownProcess()
             raise unittest.SkipTest('Windows package pywinauto could not use window TypeKeys: %r'
@@ -666,8 +666,16 @@ class TestWindowsTerminalUnicodeArguments(WindowsTerminalTestCase):
             u"pywikibot.output(u'\\n'.join(pywikibot.handleArgs()))\" "
             u"Alpha Bετα Гамма دلتا\n")
         lines = []
-        while len(lines) < 4 or lines[0] != 'Alpha':
+
+        for i in range(3):
             lines = self.getstdouterr().split('\n')
+            if len(lines) >= 4 and 'Alpha' not in lines:
+                # if len(lines) < 4, we assume not all lines had been output
+                # yet, and retry. We check at least one of the lines contains
+                # "Alpha" to prevent using older clipboard content. We limit
+                # the number of retries to 3 so that the test will finish even
+                # if neither of these requirements are met.
+                break
             time.sleep(1)
 
         # empty line is the new command line

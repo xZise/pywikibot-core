@@ -11,7 +11,7 @@
 #
 # All configuration values have a default; values that are commented out
 # serve to show the default.
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 import os
 import sys
@@ -248,6 +248,11 @@ def pywikibot_env():
 def pywikibot_script_docstring_fixups(
         app, what, name, obj, options, lines):
     """Pywikibot specific conversions."""
+    if what != "module":
+        return
+
+    if os.path.sep + "scripts" + os.path.sep not in obj.__file__:
+        return
     for index, line in enumerate(lines):
         if line in ('&params;', '&pagegenerators_help;'):
             lines[index] = ('This script supports use of '

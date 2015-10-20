@@ -5,7 +5,7 @@
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 __version__ = '$Id$'
 
@@ -13,17 +13,19 @@ from requests.exceptions import Timeout
 
 from pywikibot.exceptions import ServerError
 from pywikibot.site_detect import MWSite
-from pywikibot.tools import MediaWikiVersion, PY2
+from pywikibot.tools import MediaWikiVersion
 
 from tests.aspects import unittest, TestCase
-
-if not PY2:
-    basestring = (str,)
 
 
 class TestWikiSiteDetection(TestCase):
 
     """Test Case for MediaWiki detection and site object creation."""
+
+    # This list is intentionally shared between all classes
+    _urls_tested = set()
+    # Whether it allows multiple tests of the same URL
+    allow_multiple = False
 
     def setUp(self):
         """Set up test."""
@@ -32,6 +34,8 @@ class TestWikiSiteDetection(TestCase):
         self.errors = {}
         self.passes = {}
         self.all = []
+        # reset after end of test
+        self._previous_multiple = self.allow_multiple
         super(TestWikiSiteDetection, self).setUp()
 
     def tearDown(self):
@@ -51,6 +55,7 @@ class TestWikiSiteDetection(TestCase):
             assert 0 <= pos < len(PREFIXES)
             return typ, url, res
 
+        self.allow_multiple = self._previous_multiple
         super(TestWikiSiteDetection, self).tearDown()
         print('Out of %d sites, %d tests passed, %d tests failed, '
               '%d tests skiped and %d tests raised an error'
@@ -70,6 +75,14 @@ class TestWikiSiteDetection(TestCase):
     def _wiki_detection(self, url, result):
         """Perform one load test."""
         self.all += [url]
+        if url in self._urls_tested:
+            msg = 'Testing URL "{0}" multiple times!'.format(url)
+            if self.allow_multiple:
+                print(msg)
+            else:
+                self.errors[url] = msg
+                return
+        self._urls_tested.add(url)
         try:
             site = MWSite(url)
         except (ServerError, Timeout) as e:
@@ -118,6 +131,8 @@ class InterWikiMapDetection(TestWikiSiteDetection):
     code = 'meta'
     net = True
 
+    allow_multiple = True
+
     def test_IWM(self):
         """Test the load_site method for MW sites on the IWM list."""
         data = self.get_site().siteinfo['interwikimap']
@@ -155,7 +170,6 @@ class SiteDetectionTestCase(TestWikiSiteDetection):
     def test_detect_site(self):
         """Test detection of MediaWiki sites."""
         self.assertSite('http://botwiki.sno.cc/wiki/$1')
-        self.assertSite('http://guildwars.wikia.com/wiki/$1')
         self.assertSite('http://www.hrwiki.org/index.php/$1')  # v 1.15
         self.assertSite('http://www.proofwiki.org/wiki/$1')
         self.assertSite(
